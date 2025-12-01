@@ -1,0 +1,55 @@
+{
+  "name": "mcp-everything",
+  "version": "1.0.0",
+  "description": "AI-native platform for automatically generating and hosting Model Context Protocol (MCP) servers",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace=@mcp-everything/backend",
+    "dev:frontend": "npm run start --workspace=@mcp-everything/frontend",
+    "dev:backend": "npm run start:dev --workspace=@mcp-everything/backend",
+    "build": "npm run build --workspaces",
+    "build:shared": "npm run build --workspace=@mcp-everything/shared",
+    "build:backend": "npm run build --workspace=@mcp-everything/backend",
+    "build:frontend": "npm run build --workspace=@mcp-everything/frontend",
+    "install:all": "npm install --workspaces",
+    "clean": "npm run clean --workspaces",
+    "lint": "npm run lint --workspaces",
+    "test": "npm run test --workspaces",
+    "test:github": "node scripts/test-github-analysis.js",
+    "validate:config": "curl -f http://localhost:3000/api/v1/health/config || echo 'Backend not running'",
+    "validate:setup": "npm run test:github && npm run validate:config",
+    "generate-mcp": "node scripts/generate-mcp.js",
+    "docker:build": "docker-compose build",
+    "docker:up": "docker-compose up -d",
+    "docker:down": "docker-compose down",
+    "setup:check": "node scripts/setup-check.js"
+  },
+  "dependencies": {
+    "rxjs": "~7.8.0"
+  },
+  "pnpm": {
+    "overrides": {
+      "rxjs": "$rxjs"
+    }
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.10.2",
+    "@playwright/test": "^1.56.0",
+    "@types/node": "^20.8.0",
+    "concurrently": "^8.2.0",
+    "typescript": "^5.5.0"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=9.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/4eyedengineer/mcp-everything.git"
+  },
+  "author": "MCP Everything Team",
+  "license": "MIT"
+}

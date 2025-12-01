@@ -1,0 +1,82 @@
+{
+  "buildkit": {
+    "enabled": true,
+    "features": [
+      "cache_mount",
+      "bind_mount",
+      "tmpfs_mount",
+      "secrets",
+      "ssh"
+    ]
+  },
+  "cache": {
+    "registry": {
+      "enabled": true,
+      "type": "registry",
+      "ref": "ghcr.io/4eyedengineer/mcp-everything-cache"
+    },
+    "local": {
+      "enabled": true,
+      "type": "local",
+      "dest": "/tmp/docker-cache",
+      "mode": "max"
+    }
+  },
+  "base_images": {
+    "node-alpine": {
+      "ref": "mcp-everything/node-alpine:latest",
+      "cache_from": ["mcp-everything/node-alpine:cache"],
+      "build_args": {
+        "BUILDKIT_INLINE_CACHE": "1"
+      }
+    },
+    "node-slim": {
+      "ref": "mcp-everything/node-slim:latest",
+      "cache_from": ["mcp-everything/node-slim:cache"],
+      "build_args": {
+        "BUILDKIT_INLINE_CACHE": "1"
+      }
+    },
+    "python-alpine": {
+      "ref": "mcp-everything/python-alpine:latest",
+      "cache_from": ["mcp-everything/python-alpine:cache"],
+      "build_args": {
+        "BUILDKIT_INLINE_CACHE": "1"
+      }
+    }
+  },
+  "build_strategies": {
+    "typescript": {
+      "template": "typescript-mcp.Dockerfile",
+      "base_image": "mcp-everything/node-alpine:latest",
+      "cache_mounts": [
+        "/root/.npm:/root/.npm:rw",
+        "/app/node_modules:/cache/node_modules:rw"
+      ],
+      "build_args": {
+        "NODE_ENV": "production"
+      }
+    },
+    "javascript": {
+      "template": "javascript-mcp.Dockerfile",
+      "base_image": "mcp-everything/node-slim:latest",
+      "cache_mounts": [
+        "/root/.npm:/root/.npm:rw"
+      ]
+    },
+    "python": {
+      "template": "python-mcp.Dockerfile",
+      "base_image": "mcp-everything/python-alpine:latest",
+      "cache_mounts": [
+        "/root/.cache/pip:/root/.cache/pip:rw"
+      ]
+    },
+    "api-proxy": {
+      "template": "api-proxy-mcp.Dockerfile",
+      "base_image": "mcp-everything/node-slim:latest",
+      "cache_mounts": [
+        "/root/.npm:/root/.npm:rw"
+      ]
+    }
+  }
+}

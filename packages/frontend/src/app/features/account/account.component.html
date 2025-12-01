@@ -1,0 +1,262 @@
+<!-- LibreChat-Style Account Page -->
+<div class="account-container">
+  <div class="account-content">
+    <!-- Page Header -->
+    <div class="page-header">
+      <h1>Account Settings</h1>
+      <p class="subtitle">Manage your profile, preferences, and account information</p>
+    </div>
+
+    <!-- Profile Section -->
+    <div class="settings-section">
+      <div class="section-header">
+        <div class="section-icon">
+          <mat-icon>person</mat-icon>
+        </div>
+        <div class="section-title">
+          <h2>Profile Information</h2>
+          <p>Update your personal details and contact information</p>
+        </div>
+      </div>
+
+      <div class="section-content">
+        <div class="profile-layout">
+          <div class="profile-avatar-section">
+            <div class="avatar-circle">
+              <mat-icon>account_circle</mat-icon>
+            </div>
+            <button class="text-button" disabled>
+              <span>Change Photo</span>
+            </button>
+          </div>
+
+          <div class="profile-fields">
+            <div class="form-group">
+              <label class="form-label">Full Name</label>
+              <input
+                type="text"
+                class="form-input"
+                [(ngModel)]="profile.name"
+                [disabled]="!isEditingProfile"
+                placeholder="Enter your full name">
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">Email Address</label>
+              <input
+                type="email"
+                class="form-input"
+                [(ngModel)]="profile.email"
+                [disabled]="!isEditingProfile"
+                placeholder="Enter your email">
+            </div>
+
+            <div class="form-actions">
+              <button
+                *ngIf="!isEditingProfile"
+                class="action-button primary"
+                (click)="editProfile()">
+                <mat-icon>edit</mat-icon>
+                <span>Edit Profile</span>
+              </button>
+              <button
+                *ngIf="isEditingProfile"
+                class="action-button primary"
+                (click)="saveProfile()">
+                <mat-icon>check</mat-icon>
+                <span>Save Changes</span>
+              </button>
+              <button
+                *ngIf="isEditingProfile"
+                class="action-button secondary"
+                (click)="cancelEdit()">
+                <span>Cancel</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- API Key Section -->
+    <div class="settings-section">
+      <div class="section-header">
+        <div class="section-icon">
+          <mat-icon>vpn_key</mat-icon>
+        </div>
+        <div class="section-title">
+          <h2>API Key</h2>
+          <p>Use this key for programmatic access to your account</p>
+        </div>
+      </div>
+
+      <div class="section-content">
+        <div class="api-key-container">
+          <div class="form-group">
+            <label class="form-label">Your API Key</label>
+            <div class="input-with-button">
+              <input
+                type="text"
+                class="form-input"
+                [value]="profile.apiKey"
+                readonly>
+              <button
+                class="icon-button"
+                (click)="copyApiKey()"
+                matTooltip="Copy to clipboard">
+                <mat-icon>content_copy</mat-icon>
+              </button>
+            </div>
+          </div>
+
+          <div class="warning-banner">
+            <mat-icon>warning</mat-icon>
+            <span>Keep your API key secure. Never share it publicly or commit it to version control.</span>
+          </div>
+
+          <div class="form-actions">
+            <button
+              class="action-button danger"
+              (click)="regenerateApiKey()">
+              <mat-icon>refresh</mat-icon>
+              <span>Regenerate Key</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Usage Statistics -->
+    <div class="settings-section">
+      <div class="section-header">
+        <div class="section-icon">
+          <mat-icon>bar_chart</mat-icon>
+        </div>
+        <div class="section-title">
+          <h2>Usage Statistics</h2>
+          <p>Track your account activity and resource usage</p>
+        </div>
+      </div>
+
+      <div class="section-content">
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-icon">
+              <mat-icon>memory</mat-icon>
+            </div>
+            <div class="stat-details">
+              <div class="stat-value">{{ profile.serversGenerated }}</div>
+              <div class="stat-label">Servers Generated</div>
+            </div>
+          </div>
+
+          <div class="stat-card">
+            <div class="stat-icon">
+              <mat-icon>storage</mat-icon>
+            </div>
+            <div class="stat-details">
+              <div class="stat-value">{{ profile.storageUsed }}</div>
+              <div class="stat-label">Storage Used</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Preferences Section -->
+    <div class="settings-section">
+      <div class="section-header">
+        <div class="section-icon">
+          <mat-icon>tune</mat-icon>
+        </div>
+        <div class="section-title">
+          <h2>Preferences</h2>
+          <p>Customize your experience with MCP Everything</p>
+        </div>
+      </div>
+
+      <div class="section-content">
+        <div class="preferences-list">
+          <div class="preference-item">
+            <div class="preference-info">
+              <div class="preference-label">Email Notifications</div>
+              <div class="preference-description">Receive updates about your MCP servers and important announcements</div>
+            </div>
+            <div class="preference-control">
+              <label class="toggle-switch">
+                <input
+                  type="checkbox"
+                  [(ngModel)]="settings.emailNotifications"
+                  (change)="saveSettings()">
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+          </div>
+
+          <div class="preference-item">
+            <div class="preference-info">
+              <div class="preference-label">Auto-save Conversations</div>
+              <div class="preference-description">Automatically save your chat history for future reference</div>
+            </div>
+            <div class="preference-control">
+              <label class="toggle-switch">
+                <input
+                  type="checkbox"
+                  [(ngModel)]="settings.autoSave"
+                  (change)="saveSettings()">
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+          </div>
+
+          <div class="preference-item disabled">
+            <div class="preference-info">
+              <div class="preference-label">Dark Mode</div>
+              <div class="preference-description">Use a dark color scheme (coming soon)</div>
+            </div>
+            <div class="preference-control">
+              <label class="toggle-switch">
+                <input
+                  type="checkbox"
+                  [(ngModel)]="settings.darkMode"
+                  disabled>
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Danger Zone -->
+    <div class="settings-section danger-section">
+      <div class="section-header">
+        <div class="section-icon danger">
+          <mat-icon>warning</mat-icon>
+        </div>
+        <div class="section-title">
+          <h2>Danger Zone</h2>
+          <p>Irreversible actions that permanently affect your account</p>
+        </div>
+      </div>
+
+      <div class="section-content">
+        <div class="danger-content">
+          <p class="danger-warning">
+            Once you delete your account, there is no going back. All your generated MCP servers,
+            conversation history, and account data will be permanently removed from our systems.
+          </p>
+
+          <div class="form-actions">
+            <button
+              class="action-button danger"
+              (click)="deleteAccount()">
+              <mat-icon>delete_forever</mat-icon>
+              <span>Delete Account</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

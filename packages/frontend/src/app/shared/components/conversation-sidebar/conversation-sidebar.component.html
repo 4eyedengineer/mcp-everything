@@ -1,0 +1,80 @@
+<!-- Overlay for mobile -->
+<div
+  class="sidebar-overlay"
+  *ngIf="isOpen"
+  (click)="onClose()"
+  [@fadeIn]></div>
+
+<!-- Sidebar -->
+<aside
+  class="conversation-sidebar"
+  [class.open]="isOpen"
+  [@slideIn]>
+
+  <!-- Sidebar Header -->
+  <div class="sidebar-header">
+    <button
+      mat-icon-button
+      (click)="onClose()"
+      class="close-button"
+      aria-label="Close sidebar">
+      <mat-icon>close</mat-icon>
+    </button>
+
+    <button
+      mat-button
+      (click)="onNewChat()"
+      class="new-chat-button">
+      <mat-icon>add</mat-icon>
+      New chat
+    </button>
+  </div>
+
+  <!-- Conversations List -->
+  <div class="conversations-list">
+    <div class="list-section">
+      <div class="section-title">Recent</div>
+
+      <div
+        *ngFor="let conversation of conversations"
+        class="conversation-item"
+        (click)="onSelectConversation(conversation.id)">
+
+        <div class="conversation-icon">
+          <mat-icon>chat_bubble_outline</mat-icon>
+        </div>
+
+        <div class="conversation-content">
+          <div class="conversation-title">{{ conversation.title }}</div>
+          <div class="conversation-time">{{ getRelativeTime(conversation.timestamp) }}</div>
+        </div>
+
+        <button
+          mat-icon-button
+          class="conversation-menu"
+          (click)="$event.stopPropagation()"
+          matTooltip="More options">
+          <mat-icon>more_vert</mat-icon>
+        </button>
+      </div>
+
+      <div *ngIf="conversations.length === 0" class="empty-state">
+        <mat-icon>chat_bubble_outline</mat-icon>
+        <p>No conversations yet</p>
+        <p class="empty-hint">Start a new chat to get started</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Sidebar Footer -->
+  <div class="sidebar-footer">
+    <button
+      mat-button
+      class="footer-button"
+      (click)="onSettings()"
+      aria-label="Open settings">
+      <mat-icon>settings</mat-icon>
+      Settings
+    </button>
+  </div>
+</aside>

@@ -1,0 +1,44 @@
+<nav class="top-nav">
+  <div class="nav-content">
+    <!-- Left Section: Hamburger Only -->
+    <div class="nav-left">
+      <button
+        mat-icon-button
+        (click)="onToggleSidebar()"
+        class="hamburger-button"
+        aria-label="Toggle sidebar"
+        matTooltip="Toggle sidebar">
+        <mat-icon>menu</mat-icon>
+      </button>
+    </div>
+
+    <!-- Center Section: Explore Link -->
+    <div class="nav-center">
+      <button
+        mat-button
+        routerLink="/explore"
+        routerLinkActive="active"
+        class="explore-button">
+        Explore
+      </button>
+    </div>
+
+    <!-- Right Section: Action Icons -->
+    <div class="nav-right">
+      <button
+        mat-icon-button
+        matTooltip="Documentation"
+        class="nav-icon-button">
+        <mat-icon>menu_book</mat-icon>
+      </button>
+
+      <button
+        mat-icon-button
+        routerLink="/account"
+        matTooltip="Account"
+        class="nav-icon-button">
+        <mat-icon>account_circle</mat-icon>
+      </button>
+    </div>
+  </div>
+</nav>

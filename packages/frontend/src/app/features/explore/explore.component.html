@@ -1,0 +1,79 @@
+<!-- LibreChat-Style Explore Page -->
+<div class="explore-container">
+  <div class="explore-content">
+    <!-- Page Header -->
+    <div class="page-header">
+      <h1>Explore MCP Servers</h1>
+      <p class="subtitle">Browse and discover AI-generated MCP servers from various sources</p>
+    </div>
+
+    <!-- Loading State -->
+    <div class="loading-state" *ngIf="isLoading">
+      <div class="spinner-container">
+        <mat-spinner diameter="40"></mat-spinner>
+      </div>
+      <p>Loading MCP servers...</p>
+    </div>
+
+    <!-- Empty State -->
+    <div class="empty-state" *ngIf="!isLoading && servers.length === 0">
+      <mat-icon class="empty-icon">inbox</mat-icon>
+      <h3>No MCP servers yet</h3>
+      <p>Start by generating your first MCP server using the chat interface</p>
+      <button class="primary-button" routerLink="/chat">
+        <mat-icon>chat</mat-icon>
+        <span>Start Chatting</span>
+      </button>
+    </div>
+
+    <!-- Servers Grid -->
+    <div class="servers-grid" *ngIf="!isLoading && servers.length > 0">
+      <div *ngFor="let server of servers" class="server-card">
+        <!-- Card Header -->
+        <div class="card-header">
+          <div class="card-icon">
+            <mat-icon>memory</mat-icon>
+          </div>
+          <div class="card-title-section">
+            <h3 class="card-title">{{ server.name }}</h3>
+            <p class="card-subtitle">{{ server.source }}</p>
+          </div>
+        </div>
+
+        <!-- Card Content -->
+        <div class="card-content">
+          <p class="server-description">{{ server.description }}</p>
+
+          <!-- Tags -->
+          <div class="server-tags">
+            <span *ngFor="let tag of server.tags" class="tag">{{ tag }}</span>
+          </div>
+
+          <!-- Metadata -->
+          <div class="server-meta">
+            <span class="meta-item">
+              <mat-icon>calendar_today</mat-icon>
+              <span>{{ server.createdAt | date:'mediumDate' }}</span>
+            </span>
+            <span class="meta-item">
+              <mat-icon>download</mat-icon>
+              <span>{{ server.downloadCount }} downloads</span>
+            </span>
+          </div>
+        </div>
+
+        <!-- Card Actions -->
+        <div class="card-actions">
+          <button class="action-button secondary" (click)="viewDetails(server)">
+            <mat-icon>visibility</mat-icon>
+            <span>View Details</span>
+          </button>
+          <button class="action-button primary" (click)="downloadServer(server)">
+            <mat-icon>download</mat-icon>
+            <span>Download</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

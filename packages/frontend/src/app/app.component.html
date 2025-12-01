@@ -1,0 +1,22 @@
+<!-- LibreChat-Style Layout -->
+<div class="app-container">
+  <!-- Conversation Sidebar (Collapsible) -->
+  <mcp-conversation-sidebar
+    [isOpen]="sidebarOpen"
+    [conversations]="conversations"
+    (close)="closeSidebar()"
+    (newChat)="onNewChat()"
+    (selectConversation)="onSelectConversation($event)">
+  </mcp-conversation-sidebar>
+
+  <!-- Main Content Area -->
+  <div class="main-container">
+    <!-- Top Navigation Bar -->
+    <mcp-top-nav (toggleSidebar)="toggleSidebar()"></mcp-top-nav>
+
+    <!-- Content Area (Router Outlet) -->
+    <main class="content-area">
+      <router-outlet></router-outlet>
+    </main>
+  </div>
+</div>

@@ -1,0 +1,176 @@
+{
+  "description": "Sample research data for testing ensemble agent prompts",
+  "repository": "octokit/rest.js",
+  "testData": {
+    "researchPhase": {
+      "webSearchFindings": {
+        "patterns": [
+          "REST API wrapper for GitHub API v3",
+          "Promise-based async operations",
+          "Automatic pagination support",
+          "OAuth authentication flow",
+          "Rate limiting with retry logic"
+        ],
+        "bestPractices": [
+          "Use typed responses for better IDE support",
+          "Cache frequently accessed data (user profiles, repo metadata)",
+          "Implement exponential backoff for rate limits",
+          "Validate input parameters before API calls",
+          "Handle errors gracefully with specific error types"
+        ]
+      },
+      "githubDeepDive": {
+        "basicInfo": {
+          "name": "rest.js",
+          "description": "GitHub REST API client for JavaScript",
+          "language": "TypeScript",
+          "stars": 6800
+        },
+        "codeExamples": [
+          {
+            "file": "src/repos/get.ts",
+            "content": "async function getRepository(owner: string, repo: string): Promise<Repository> {\n  const { data } = await octokit.rest.repos.get({ owner, repo });\n  return data;\n}",
+            "language": "typescript"
+          },
+          {
+            "file": "src/issues/create.ts",
+            "content": "async function createIssue(owner: string, repo: string, title: string, body?: string): Promise<Issue> {\n  const { data } = await octokit.rest.issues.create({ owner, repo, title, body });\n  return data;\n}",
+            "language": "typescript"
+          },
+          {
+            "file": "src/repos/list.ts",
+            "content": "async function listUserRepos(username: string, { page = 1, per_page = 30 } = {}): Promise<Repository[]> {\n  const { data } = await octokit.rest.repos.listForUser({ username, page, per_page });\n  return data;\n}",
+            "language": "typescript"
+          }
+        ],
+        "testPatterns": [
+          {
+            "framework": "jest",
+            "pattern": "Mock API responses with nock"
+          },
+          {
+            "framework": "jest",
+            "pattern": "Test error handling for 404, 403, 422 status codes"
+          }
+        ],
+        "apiUsagePatterns": [
+          {
+            "endpoint": "/repos/{owner}/{repo}",
+            "method": "GET"
+          },
+          {
+            "endpoint": "/repos/{owner}/{repo}/issues",
+            "method": "POST"
+          },
+          {
+            "endpoint": "/users/{username}/repos",
+            "method": "GET"
+          },
+          {
+            "endpoint": "/repos/{owner}/{repo}/pulls",
+            "method": "GET"
+          }
+        ],
+        "dependencies": {
+          "@octokit/core": "^4.2.0",
+          "@octokit/plugin-paginate-rest": "^6.0.0",
+          "@octokit/plugin-retry": "^5.0.0",
+          "@octokit/types": "^9.0.0"
+        }
+      },
+      "synthesizedPlan": {
+        "summary": "GitHub REST API wrapper providing typed access to repositories, issues, pull requests, and user operations. Well-documented with TypeScript types and comprehensive error handling.",
+        "keyInsights": [
+          "Repository operations (get, list, create) are core functionality",
+          "Issue management (create, update, list, comment) is frequently used",
+          "Pull request operations need review/merge capabilities",
+          "Pagination is critical for list operations",
+          "Rate limiting must be handled transparently"
+        ],
+        "recommendedApproach": "Generate MCP tools for most common GitHub operations: repository inspection, issue management, pull request workflows. Include pagination parameters for list operations. Add rate limit awareness.",
+        "confidence": 0.92
+      }
+    },
+    "extractedData": {
+      "githubUrl": "https://github.com/octokit/rest.js",
+      "repositoryName": "octokit/rest.js",
+      "targetFramework": "typescript"
+    }
+  },
+  "expectedBehavior": {
+    "architectAgent": {
+      "shouldRecommend": [
+        "get_repository",
+        "list_user_repositories",
+        "create_issue",
+        "list_issues",
+        "get_pull_request",
+        "list_pull_requests"
+      ],
+      "shouldFlag": [
+        "Consistent naming convention (get_, list_, create_)",
+        "Pagination parameters on list operations",
+        "Clear separation between read and write operations"
+      ]
+    },
+    "securityAgent": {
+      "shouldRecommend": [
+        "Input validation for owner/repo parameters (alphanumeric + dash/underscore)",
+        "Authentication token required for all operations",
+        "Rate limit awareness to prevent abuse"
+      ],
+      "shouldFlag": [
+        "owner/repo parameters need pattern validation (prevent injection)",
+        "Personal access token must be stored in environment variable",
+        "User-provided markdown (issue body) needs sanitization"
+      ]
+    },
+    "performanceAgent": {
+      "shouldRecommend": [
+        "Cache repository metadata (rarely changes)",
+        "Pagination with sensible defaults (limit=30)",
+        "Batch operations where possible"
+      ],
+      "shouldFlag": [
+        "List operations can be slow (1-2s) - add pagination",
+        "Rate limit: 5000 req/hour authenticated, 60 req/hour unauthenticated",
+        "Consider caching user profiles and repo metadata"
+      ]
+    },
+    "mcpSpecialistAgent": {
+      "shouldRecommend": [
+        "All tool names use lowercase_underscore",
+        "JSON schemas with proper types (string, integer, boolean)",
+        "Required fields: owner, repo (minimal)",
+        "Optional fields: page, per_page with defaults",
+        "Output format: JSON with explicit field types"
+      ],
+      "shouldFlag": [
+        "Ensure all parameters have descriptions",
+        "Validate JSON Schema Draft 7 compliance",
+        "Document error responses: {error: string, status: integer}"
+      ]
+    }
+  },
+  "votingExpectations": {
+    "topTools": [
+      {
+        "name": "get_repository",
+        "expectedVotes": "~3.8 (all agents recommend, high confidence)",
+        "expectedSources": ["architectAgent", "securityAgent", "performanceAgent", "mcpSpecialistAgent"]
+      },
+      {
+        "name": "create_issue",
+        "expectedVotes": "~3.5 (high priority, some security concerns)",
+        "expectedSources": ["architectAgent", "securityAgent", "mcpSpecialistAgent"]
+      },
+      {
+        "name": "list_user_repositories",
+        "expectedVotes": "~3.2 (pagination concerns, caching opportunity)",
+        "expectedSources": ["architectAgent", "performanceAgent", "mcpSpecialistAgent"]
+      }
+    ],
+    "consensusLevel": ">0.7 (well-documented repository with clear patterns)",
+    "overallConfidence": ">0.85 (high-quality API documentation and code examples)"
+  }
+}

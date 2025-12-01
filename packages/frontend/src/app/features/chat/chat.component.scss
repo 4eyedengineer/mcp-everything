@@ -1,0 +1,719 @@
+// LibreChat-Style Chat Layout
+.chat-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background-color: white;
+  position: relative;
+}
+
+// Messages Area
+.messages-area {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scroll-behavior: smooth;
+}
+
+.messages-wrapper {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+// Welcome Screen
+.welcome-screen {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 24px;
+  max-width: 800px;
+  margin: 0 auto;
+  width: 100%;
+
+  .greeting {
+    font-size: 32px;
+    font-weight: 600;
+    color: #1f1f1f;
+    margin: 0 0 8px 0;
+    text-align: center;
+  }
+
+  .tagline {
+    font-size: 16px;
+    color: #6b6b6b;
+    margin: 0 0 48px 0;
+    text-align: center;
+  }
+
+  .suggestion-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 16px;
+    width: 100%;
+    max-width: 900px;
+  }
+
+  .suggestion-card {
+    display: flex;
+    align-items: flex-start;
+    gap: 16px;
+    padding: 20px;
+    background-color: white;
+    border: 1px solid #e5e5e5;
+    border-radius: 12px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    text-align: left;
+
+    &:hover {
+      background-color: #f9f9f9;
+      border-color: #d1d1d1;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    }
+
+    mat-icon {
+      font-size: 24px;
+      width: 24px;
+      height: 24px;
+      color: #6b6b6b;
+      flex-shrink: 0;
+      margin-top: 2px;
+    }
+
+    .suggestion-text {
+      flex: 1;
+
+      .suggestion-title {
+        font-size: 15px;
+        font-weight: 600;
+        color: #1f1f1f;
+        margin-bottom: 4px;
+      }
+
+      .suggestion-desc {
+        font-size: 13px;
+        color: #6b6b6b;
+      }
+    }
+  }
+}
+
+// Messages List
+.messages-list {
+  display: flex;
+  flex-direction: column;
+  padding: 24px 0;
+  gap: 0;
+}
+
+.message-wrapper {
+  display: flex;
+  gap: 16px;
+  padding: 24px 16px;
+  max-width: 800px;
+  margin: 0 auto;
+  width: 100%;
+  border-bottom: 1px solid #f0f0f0;
+
+  &:last-child {
+    border-bottom: none;
+  }
+
+  &.user-message {
+    background-color: white;
+  }
+
+  &.assistant-message {
+    background-color: #f9f9f9;
+  }
+
+  &.progress-message {
+    background-color: #fffbeb;
+    border-bottom-color: #fef3c7;
+
+    .avatar-circle {
+      background-color: #fbbf24;
+      color: white;
+    }
+
+    .spinning {
+      animation: spin 1s linear infinite;
+    }
+  }
+
+  &.error-message {
+    background-color: #fef2f2;
+    border-bottom-color: #fecaca;
+
+    .avatar-circle {
+      background-color: #ef4444;
+      color: white;
+    }
+  }
+}
+
+.message-avatar {
+  flex-shrink: 0;
+
+  .avatar-circle {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: #6b6b6b;
+    color: white;
+
+    &.user-avatar {
+      background-color: #2d2d2d;
+    }
+
+    mat-icon {
+      font-size: 20px;
+      width: 20px;
+      height: 20px;
+    }
+  }
+}
+
+.message-content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+
+  .message-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+
+    .message-sender {
+      font-size: 14px;
+      font-weight: 600;
+      color: #1f1f1f;
+    }
+  }
+
+  .message-body {
+    font-size: 15px;
+    line-height: 1.6;
+    color: #1f1f1f;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+
+    p {
+      margin: 0 0 12px 0;
+
+      &:last-child {
+        margin-bottom: 0;
+      }
+    }
+
+    code {
+      background-color: #f5f5f5;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-family: 'Monaco', 'Menlo', monospace;
+      font-size: 13px;
+    }
+
+    pre {
+      background-color: #1f1f1f;
+      color: #e5e5e5;
+      padding: 16px;
+      border-radius: 8px;
+      overflow-x: auto;
+      margin: 12px 0;
+
+      code {
+        background: none;
+        padding: 0;
+        color: inherit;
+      }
+    }
+  }
+
+  .message-actions {
+    display: flex;
+    gap: 4px;
+    margin-top: 4px;
+
+    .action-button {
+      color: #6b6b6b;
+      transition: all 0.2s ease;
+
+      mat-icon {
+        font-size: 18px;
+        width: 18px;
+        height: 18px;
+      }
+
+      &:hover {
+        background-color: #e5e5e5;
+        color: #1f1f1f;
+      }
+    }
+  }
+
+  .download-button {
+    margin-top: 12px;
+    background-color: #2d2d2d;
+    color: white;
+    font-weight: 500;
+    padding: 8px 16px;
+    border-radius: 8px;
+    align-self: flex-start;
+
+    mat-icon {
+      margin-right: 8px;
+      font-size: 18px;
+      width: 18px;
+      height: 18px;
+    }
+
+    &:hover {
+      background-color: #171717;
+    }
+  }
+}
+
+// Input Area
+.input-area {
+  border-top: 1px solid #e5e5e5;
+  background-color: white;
+  padding: 16px 0 24px 0;
+}
+
+.input-container {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 0 16px;
+  width: 100%;
+}
+
+.input-wrapper {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  background-color: white;
+  border: 1px solid #d1d1d1;
+  border-radius: 24px;
+  padding: 8px 12px;
+  transition: all 0.2s ease;
+  box-shadow: 0 0 0 0 rgba(45, 45, 45, 0);
+
+  &:focus-within {
+    border-color: #6b6b6b;
+    box-shadow: 0 0 0 3px rgba(45, 45, 45, 0.1);
+  }
+
+  .input-icon-button {
+    color: #6b6b6b;
+    flex-shrink: 0;
+
+    mat-icon {
+      font-size: 22px;
+      width: 22px;
+      height: 22px;
+    }
+
+    &:hover {
+      background-color: #f5f5f5;
+    }
+  }
+
+  .message-input {
+    flex: 1;
+    min-height: 24px;
+    max-height: 200px;
+    padding: 8px 4px;
+    border: none;
+    outline: none;
+    resize: none;
+    font-size: 15px;
+    font-family: inherit;
+    line-height: 1.5;
+    background: transparent;
+    color: #1f1f1f;
+
+    &::placeholder {
+      color: #8e8e8e;
+    }
+
+    &:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+  }
+
+  .send-button {
+    color: #6b6b6b;
+    flex-shrink: 0;
+    transition: all 0.2s ease;
+
+    &:not(:disabled) {
+      color: #1f1f1f;
+
+      &:hover {
+        background-color: #f5f5f5;
+      }
+    }
+
+    &:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
+    mat-icon {
+      font-size: 22px;
+      width: 22px;
+      height: 22px;
+    }
+  }
+}
+
+.input-info {
+  margin-top: 12px;
+  text-align: center;
+  font-size: 12px;
+  color: #8e8e8e;
+}
+
+// Animations
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+// Custom Scrollbar
+.messages-area {
+  &::-webkit-scrollbar {
+    width: 8px;
+  }
+
+  &::-webkit-scrollbar-track {
+    background: #f9f9f9;
+  }
+
+  &::-webkit-scrollbar-thumb {
+    background: #d1d1d1;
+    border-radius: 4px;
+
+    &:hover {
+      background: #b8b8b8;
+    }
+  }
+}
+
+// Responsive Design
+@media (max-width: 768px) {
+  .welcome-screen {
+    padding: 32px 16px;
+
+    .greeting {
+      font-size: 24px;
+    }
+
+    .tagline {
+      font-size: 14px;
+      margin-bottom: 32px;
+    }
+
+    .suggestion-cards {
+      grid-template-columns: 1fr;
+      gap: 12px;
+    }
+
+    .suggestion-card {
+      padding: 16px;
+
+      mat-icon {
+        font-size: 20px;
+        width: 20px;
+        height: 20px;
+      }
+
+      .suggestion-text {
+        .suggestion-title {
+          font-size: 14px;
+        }
+
+        .suggestion-desc {
+          font-size: 12px;
+        }
+      }
+    }
+  }
+
+  .message-wrapper {
+    padding: 16px 12px;
+    gap: 12px;
+  }
+
+  .message-avatar {
+    .avatar-circle {
+      width: 32px;
+      height: 32px;
+
+      mat-icon {
+        font-size: 18px;
+        width: 18px;
+        height: 18px;
+      }
+    }
+  }
+
+  .message-content {
+    .message-body {
+      font-size: 14px;
+    }
+  }
+
+  .input-area {
+    padding: 12px 0 16px 0;
+  }
+
+  .input-container {
+    padding: 0 12px;
+  }
+
+  .input-wrapper {
+    padding: 6px 8px;
+
+    .message-input {
+      font-size: 14px;
+    }
+  }
+}
+
+// Tablet
+@media (min-width: 769px) and (max-width: 1024px) {
+  .message-wrapper {
+    padding: 20px 24px;
+  }
+
+  .welcome-screen {
+    padding: 40px 32px;
+
+    .greeting {
+      font-size: 28px;
+    }
+
+    .suggestion-cards {
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    }
+  }
+}
+
+// ============================================================================
+// Markdown & Code Highlighting Styles
+// ============================================================================
+
+.message-body {
+  // Typography
+  line-height: 1.6;
+  word-wrap: break-word;
+
+  // Headings
+  h1, h2, h3, h4, h5, h6 {
+    margin-top: 1.5em;
+    margin-bottom: 0.5em;
+    font-weight: 600;
+    line-height: 1.25;
+  }
+
+  h1 { font-size: 1.8em; border-bottom: 1px solid #eaecef; padding-bottom: 0.3em; }
+  h2 { font-size: 1.5em; border-bottom: 1px solid #eaecef; padding-bottom: 0.3em; }
+  h3 { font-size: 1.25em; }
+  h4 { font-size: 1em; }
+  h5 { font-size: 0.875em; }
+  h6 { font-size: 0.85em; color: #6a737d; }
+
+  // Paragraphs
+  p {
+    margin-top: 0;
+    margin-bottom: 1em;
+  }
+
+  // Lists
+  ul, ol {
+    margin-top: 0;
+    margin-bottom: 1em;
+    padding-left: 2em;
+  }
+
+  li {
+    margin-bottom: 0.25em;
+
+    > p {
+      margin-bottom: 0.5em;
+    }
+  }
+
+  // Links
+  a {
+    color: #0366d6;
+    text-decoration: none;
+
+    &:hover {
+      text-decoration: underline;
+    }
+
+    &:visited {
+      color: #6f42c1;
+    }
+  }
+
+  // Inline code
+  code {
+    padding: 0.2em 0.4em;
+    margin: 0;
+    font-size: 85%;
+    background-color: rgba(27, 31, 35, 0.05);
+    border-radius: 3px;
+    font-family: 'SFMono-Regular', 'Consolas', 'Liberation Mono', 'Menlo', monospace;
+  }
+
+  // Code blocks
+  pre {
+    padding: 16px;
+    overflow: auto;
+    font-size: 85%;
+    line-height: 1.45;
+    background-color: #f6f8fa;
+    border-radius: 6px;
+    margin-top: 0;
+    margin-bottom: 16px;
+
+    code {
+      display: block;
+      padding: 0;
+      margin: 0;
+      overflow: visible;
+      line-height: inherit;
+      word-wrap: normal;
+      background-color: transparent;
+      border: 0;
+      font-size: 100%;
+    }
+  }
+
+  // Blockquotes
+  blockquote {
+    padding: 0 1em;
+    color: #6a737d;
+    border-left: 0.25em solid #dfe2e5;
+    margin: 0 0 16px 0;
+
+    > :first-child {
+      margin-top: 0;
+    }
+
+    > :last-child {
+      margin-bottom: 0;
+    }
+  }
+
+  // Tables
+  table {
+    border-spacing: 0;
+    border-collapse: collapse;
+    margin-top: 0;
+    margin-bottom: 16px;
+    display: block;
+    width: 100%;
+    overflow: auto;
+
+    th {
+      font-weight: 600;
+      padding: 6px 13px;
+      border: 1px solid #dfe2e5;
+      background-color: #f6f8fa;
+    }
+
+    td {
+      padding: 6px 13px;
+      border: 1px solid #dfe2e5;
+    }
+
+    tr {
+      background-color: #fff;
+      border-top: 1px solid #c6cbd1;
+
+      &:nth-child(2n) {
+        background-color: #f6f8fa;
+      }
+    }
+  }
+
+  // Horizontal rules
+  hr {
+    height: 0.25em;
+    padding: 0;
+    margin: 24px 0;
+    background-color: #e1e4e8;
+    border: 0;
+  }
+
+  // Images
+  img {
+    max-width: 100%;
+    box-sizing: content-box;
+    background-color: #fff;
+  }
+
+  // Task lists
+  input[type="checkbox"] {
+    margin-right: 0.5em;
+  }
+
+  // Strong/bold
+  strong {
+    font-weight: 600;
+  }
+
+  // Emphasis/italic
+  em {
+    font-style: italic;
+  }
+
+  // Strikethrough
+  del {
+    text-decoration: line-through;
+  }
+}
+
+// ============================================================================
+// Syntax Highlighting (Highlight.js)
+// ============================================================================
+
+// Import highlight.js theme
+@import 'highlight.js/styles/github.css';
+
+// Custom adjustments for code blocks
+.message-body {
+  pre {
+    code.hljs {
+      padding: 0;
+      background: transparent;
+    }
+  }
+
+  // Ensure code blocks have proper spacing
+  .hljs {
+    display: block;
+    overflow-x: auto;
+    padding: 1em;
+    color: #333;
+    background: #f6f8fa;
+  }
+}
