@@ -294,6 +294,31 @@ export class HostingService {
     );
   }
 
+  /**
+   * Get server logs
+   * Note: Full K8s log streaming requires kubectl/K8s client integration.
+   * This is a stub that returns placeholder data.
+   */
+  async getServerLogs(
+    serverId: string,
+    options: { lines?: number; since?: string },
+  ): Promise<{ logs: string[]; message: string }> {
+    // Validate server exists
+    await this.getServerByIdOrFail(serverId);
+
+    // TODO: Implement K8s log fetching via kubectl or K8s client
+    // For now, return a placeholder indicating logs are not yet available
+    this.logger.debug(
+      `Log request for ${serverId}: lines=${options.lines}, since=${options.since}`,
+    );
+
+    return {
+      logs: [],
+      message:
+        'Log streaming not yet implemented. K8s integration required for live logs.',
+    };
+  }
+
   // --- Helper Methods ---
 
   private generateServerId(serverName: string): string {
