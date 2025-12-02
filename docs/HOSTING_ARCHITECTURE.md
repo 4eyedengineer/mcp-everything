@@ -4,6 +4,19 @@
 
 This document describes the architecture for dynamically hosting generated MCP servers on a self-managed Kubernetes cluster.
 
+## GitOps Repository
+
+The GitOps manifests are managed in a dedicated repository:
+
+**Repository**: [mcp-server-deployments](https://github.com/4eyedengineer/mcp-server-deployments)
+
+This repository contains:
+- **base/**: Kustomize base resources (namespace, quotas, limits, network policies)
+- **argocd/**: ArgoCD ApplicationSet for dynamic server discovery
+- **servers/**: Auto-generated per-server K8s manifests
+
+See the [mcp-server-deployments README](https://github.com/4eyedengineer/mcp-server-deployments#readme) for setup instructions.
+
 ## High-Level Flow
 
 ```
