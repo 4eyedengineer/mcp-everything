@@ -1,0 +1,64 @@
+# Let's Encrypt ClusterIssuer with DNS-01 challenge (Cloudflare)
+#
+# Prerequisites:
+# 1. cert-manager installed
+# 2. Cloudflare API token secret created in cert-manager namespace
+#
+# Apply with: kubectl apply -f cluster-issuer.yaml
+#
+# Note: Wildcard certificates require DNS-01 challenge.
+# HTTP-01 challenge does NOT support wildcards.
+
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+spec:
+  acme:
+    # Let's Encrypt production server
+    server: https://acme-v02.api.letsencrypt.org/directory
+
+    # Email for certificate expiration notifications
+    # IMPORTANT: Replace with your actual email
+    email: admin@yourdomain.com
+
+    # Secret to store the ACME account private key
+    privateKeySecretRef:
+      name: letsencrypt-prod-account-key
+
+    # DNS-01 challenge solver configuration
+    solvers:
+      - dns01:
+          cloudflare:
+            # Reference to the secret containing the API token
+            apiTokenSecretRef:
+              name: cloudflare-api-token
+              key: api-token
+        # Optional: Only use this solver for specific domains
+        # selector:
+        #   dnsZones:
+        #     - "yourdomain.com"
+
+---
+# Optional: Staging issuer for testing (higher rate limits)
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-staging
+spec:
+  acme:
+    # Let's Encrypt staging server (for testing)
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+
+    # Email for certificate expiration notifications
+    email: admin@yourdomain.com
+
+    privateKeySecretRef:
+      name: letsencrypt-staging-account-key
+
+    solvers:
+      - dns01:
+          cloudflare:
+            apiTokenSecretRef:
+              name: cloudflare-api-token
+              key: api-token

@@ -1,0 +1,56 @@
+# cert-manager Helm values
+# See: https://github.com/cert-manager/cert-manager/tree/master/deploy/charts/cert-manager
+
+# Install CRDs (Certificate, ClusterIssuer, etc.)
+installCRDs: true
+
+# Replicas for high availability
+replicaCount: 1
+
+# Resource limits for cert-manager controller
+resources:
+  requests:
+    cpu: 10m
+    memory: 32Mi
+  limits:
+    cpu: 100m
+    memory: 128Mi
+
+# Webhook configuration
+webhook:
+  replicaCount: 1
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 128Mi
+
+# CA Injector configuration
+cainjector:
+  replicaCount: 1
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 128Mi
+
+# Enable Prometheus metrics
+prometheus:
+  enabled: true
+  servicemonitor:
+    enabled: false  # Set to true if using Prometheus Operator
+
+# Pod Security Standards
+global:
+  podSecurityPolicy:
+    enabled: false
+    useAppArmor: false
+
+# Logging
+# Available levels: 0-6 (higher = more verbose)
+extraArgs:
+  - --v=2

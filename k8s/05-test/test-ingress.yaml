@@ -1,0 +1,40 @@
+# Test Ingress Resource
+#
+# This creates a test ingress to verify:
+# 1. nginx-ingress is routing traffic correctly
+# 2. Wildcard certificate is working
+#
+# After applying, test with:
+#   curl -v https://test.mcp.yourdomain.com
+#
+# Expected result: 503 Service Unavailable (no backend service exists)
+# This confirms: ingress routing and SSL are working
+#
+# IMPORTANT: Replace 'yourdomain.com' with your actual domain
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: test-ingress
+  namespace: mcp-servers
+  annotations:
+    # Use nginx ingress controller
+    kubernetes.io/ingress.class: nginx
+spec:
+  # Use the wildcard certificate
+  tls:
+    - hosts:
+        - test.mcp.yourdomain.com
+      secretName: mcp-wildcard-tls
+  rules:
+    - host: test.mcp.yourdomain.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                # This service doesn't exist - expected to return 503
+                name: test-service
+                port:
+                  number: 80
