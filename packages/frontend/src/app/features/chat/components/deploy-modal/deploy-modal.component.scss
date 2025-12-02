@@ -1,0 +1,187 @@
+.deploy-modal {
+  min-width: 400px;
+  max-width: 500px;
+
+  h2[mat-dialog-title] {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0;
+    padding: 16px 24px;
+    font-size: 20px;
+    font-weight: 600;
+    color: #1f1f1f;
+    border-bottom: 1px solid #e0e0e0;
+
+    mat-icon {
+      color: #667eea;
+    }
+  }
+
+  mat-dialog-content {
+    padding: 24px;
+    max-height: 60vh;
+
+    .full-width {
+      width: 100%;
+      margin-bottom: 16px;
+    }
+
+    .env-vars-section {
+      margin-top: 8px;
+      margin-bottom: 16px;
+      padding: 16px;
+      background: #f9f9f9;
+      border-radius: 8px;
+      border: 1px solid #e0e0e0;
+
+      .env-vars-header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 14px;
+        font-weight: 600;
+        color: #1f1f1f;
+        margin-bottom: 8px;
+
+        mat-icon {
+          color: #e65100;
+          font-size: 20px;
+          width: 20px;
+          height: 20px;
+        }
+      }
+
+      .env-vars-info {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+        color: #4caf50;
+        margin-bottom: 16px;
+
+        mat-icon {
+          font-size: 14px;
+          width: 14px;
+          height: 14px;
+        }
+      }
+
+      .env-var-field {
+        margin-bottom: 8px;
+
+        &:last-child {
+          margin-bottom: 0;
+        }
+
+        mat-form-field {
+          margin-bottom: 0;
+        }
+      }
+    }
+
+    .cost-estimate {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 16px;
+      background: linear-gradient(135deg, #e3f2fd 0%, #e8f5e9 100%);
+      border-radius: 8px;
+      border: 1px solid #bbdefb;
+
+      .cost-label {
+        font-size: 14px;
+        color: #6b6b6b;
+      }
+
+      .cost-value {
+        font-size: 16px;
+        color: #1f1f1f;
+
+        strong {
+          color: #2e7d32;
+        }
+
+        .cost-note {
+          font-size: 12px;
+          color: #6b6b6b;
+          margin-left: 4px;
+        }
+      }
+    }
+
+    .error-message {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 16px;
+      padding: 12px;
+      background: #ffebee;
+      border-radius: 6px;
+      color: #c62828;
+      font-size: 14px;
+
+      mat-icon {
+        font-size: 20px;
+        width: 20px;
+        height: 20px;
+      }
+    }
+  }
+
+  mat-dialog-actions {
+    padding: 16px 24px;
+    border-top: 1px solid #e0e0e0;
+    gap: 12px;
+
+    .cancel-button {
+      color: #6b6b6b;
+    }
+
+    .deploy-button {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      min-width: 140px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+
+      &:hover:not(:disabled) {
+        background: linear-gradient(135deg, #5a6fd6 0%, #6a4190 100%);
+      }
+
+      &:disabled {
+        opacity: 0.7;
+      }
+
+      mat-spinner {
+        ::ng-deep circle {
+          stroke: white;
+        }
+      }
+
+      mat-icon {
+        font-size: 18px;
+        width: 18px;
+        height: 18px;
+      }
+    }
+  }
+}
+
+// Responsive adjustments
+@media (max-width: 480px) {
+  .deploy-modal {
+    min-width: unset;
+    width: 100%;
+
+    mat-dialog-actions {
+      flex-direction: column;
+
+      button {
+        width: 100%;
+      }
+    }
+  }
+}

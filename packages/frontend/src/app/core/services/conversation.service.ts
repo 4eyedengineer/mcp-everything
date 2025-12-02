@@ -26,6 +26,24 @@ export interface CreateConversationResponse {
   conversation: Conversation;
 }
 
+/**
+ * Tool definition from deployment
+ */
+export interface DeploymentTool {
+  name: string;
+  description: string;
+  inputSchema?: Record<string, unknown>;
+}
+
+/**
+ * Environment variable definition from deployment
+ */
+export interface DeploymentEnvVar {
+  name: string;
+  required: boolean;
+  description?: string;
+}
+
 export interface Deployment {
   id: string;
   conversationId: string;
@@ -35,9 +53,14 @@ export interface Deployment {
   codespaceUrl?: string;
   status: 'pending' | 'success' | 'failed';
   errorMessage?: string;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
   createdAt: Date;
   deployedAt?: Date;
+  // Server metadata for cloud hosting
+  serverName?: string;
+  description?: string;
+  tools?: DeploymentTool[];
+  envVars?: DeploymentEnvVar[];
 }
 
 @Injectable({

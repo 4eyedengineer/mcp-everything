@@ -1,0 +1,140 @@
+.server-card {
+  margin-top: 16px;
+  background: linear-gradient(135deg, #f5f7fa 0%, #e4e8ec 100%);
+  border: 1px solid #d0d5dd;
+  border-radius: 12px;
+
+  mat-card-header {
+    .server-icon {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 8px;
+
+      mat-icon {
+        color: white;
+        font-size: 24px;
+        width: 24px;
+        height: 24px;
+      }
+    }
+
+    mat-card-title {
+      font-size: 18px;
+      font-weight: 600;
+      color: #1f1f1f;
+    }
+
+    mat-card-subtitle {
+      color: #6b6b6b;
+      font-size: 14px;
+      margin-top: 4px;
+    }
+  }
+
+  mat-card-content {
+    padding-top: 12px;
+
+    .tools-section {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 12px;
+
+      .tools-label {
+        font-size: 14px;
+        color: #6b6b6b;
+        font-weight: 500;
+      }
+
+      .tools-chips {
+        mat-chip {
+          font-size: 12px;
+          min-height: 24px;
+          padding: 4px 8px;
+        }
+
+        .more-chip {
+          background: #e0e0e0;
+          color: #666;
+          font-style: italic;
+        }
+      }
+    }
+
+    .env-vars-notice {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      background: #fff3e0;
+      border-radius: 6px;
+      font-size: 13px;
+      color: #e65100;
+
+      mat-icon {
+        font-size: 18px;
+        width: 18px;
+        height: 18px;
+      }
+    }
+  }
+
+  mat-card-actions {
+    padding: 12px 16px;
+    gap: 8px;
+
+    .download-button {
+      color: #6b6b6b;
+
+      mat-icon {
+        margin-right: 4px;
+      }
+    }
+
+    .host-button {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+
+      &:hover:not(:disabled) {
+        background: linear-gradient(135deg, #5a6fd6 0%, #6a4190 100%);
+      }
+
+      &:disabled {
+        opacity: 0.7;
+      }
+
+      mat-icon {
+        margin-right: 4px;
+      }
+    }
+  }
+}
+
+// Responsive adjustments
+@media (max-width: 480px) {
+  .server-card {
+    mat-card-actions {
+      flex-direction: column;
+
+      button {
+        width: 100%;
+        margin: 0 !important;
+        margin-bottom: 8px !important;
+
+        &:last-child {
+          margin-bottom: 0 !important;
+        }
+      }
+    }
+
+    mat-card-content {
+      .tools-section {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+    }
+  }
+}

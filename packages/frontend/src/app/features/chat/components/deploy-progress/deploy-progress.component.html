@@ -1,0 +1,70 @@
+<mat-card class="deploy-progress-card">
+  <!-- Header -->
+  <mat-card-header>
+    <mat-icon mat-card-avatar class="progress-icon" [class.success]="deployed" [class.error]="failed">
+      {{ deployed ? 'cloud_done' : failed ? 'cloud_off' : 'cloud_upload' }}
+    </mat-icon>
+    <mat-card-title>
+      {{ deployed ? 'Deployed Successfully!' : failed ? 'Deployment Failed' : 'Deploying ' + serverName + '...' }}
+    </mat-card-title>
+    <mat-card-subtitle *ngIf="statusMessage && !deployed && !failed">
+      {{ statusMessage }}
+    </mat-card-subtitle>
+  </mat-card-header>
+
+  <mat-card-content>
+    <!-- Progress Steps -->
+    <div class="progress-steps">
+      <div
+        *ngFor="let step of steps; let last = last"
+        class="progress-step"
+        [class.active]="step.status === 'active'"
+        [class.completed]="step.status === 'completed'"
+        [class.error]="step.status === 'error'"
+        [class.pending]="step.status === 'pending'"
+      >
+        <div class="step-indicator">
+          <mat-icon *ngIf="step.status !== 'active'">{{ getStepIcon(step) }}</mat-icon>
+          <mat-spinner *ngIf="step.status === 'active'" diameter="20"></mat-spinner>
+        </div>
+        <span class="step-label">{{ step.label }}</span>
+        <div class="step-line" *ngIf="!last"></div>
+      </div>
+    </div>
+
+    <!-- Error Message -->
+    <div class="error-section" *ngIf="failed">
+      <mat-icon>error_outline</mat-icon>
+      <span>{{ error }}</span>
+      <button mat-raised-button color="primary" (click)="onRetry()" class="retry-button">
+        <mat-icon>refresh</mat-icon>
+        Retry
+      </button>
+    </div>
+
+    <!-- Success Section -->
+    <div class="success-section" *ngIf="deployed">
+      <!-- Endpoint URL -->
+      <div class="endpoint-info">
+        <label>Endpoint URL:</label>
+        <div class="endpoint-value">
+          <code>{{ endpointUrl }}</code>
+          <button mat-icon-button (click)="copyEndpoint()" matTooltip="Copy URL">
+            <mat-icon>content_copy</mat-icon>
+          </button>
+        </div>
+      </div>
+
+      <!-- Claude Desktop Config -->
+      <div class="config-section">
+        <label>Configure Claude Desktop:</label>
+        <div class="config-code">
+          <pre><code>{{ claudeDesktopConfig }}</code></pre>
+          <button mat-icon-button (click)="copyConfig()" matTooltip="Copy config" class="copy-config-btn">
+            <mat-icon>content_copy</mat-icon>
+          </button>
+        </div>
+      </div>
+    </div>
+  </mat-card-content>
+</mat-card>

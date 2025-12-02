@@ -1,0 +1,266 @@
+.deploy-progress-card {
+  margin-top: 16px;
+  background: linear-gradient(135deg, #f5f7fa 0%, #e4e8ec 100%);
+  border: 1px solid #d0d5dd;
+  border-radius: 12px;
+
+  mat-card-header {
+    .progress-icon {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 50%;
+      width: 40px;
+      height: 40px;
+
+      &.success {
+        background: linear-gradient(135deg, #4caf50 0%, #2e7d32 100%);
+      }
+
+      &.error {
+        background: linear-gradient(135deg, #f44336 0%, #c62828 100%);
+      }
+    }
+
+    mat-card-title {
+      font-size: 16px;
+      font-weight: 600;
+      color: #1f1f1f;
+    }
+
+    mat-card-subtitle {
+      color: #6b6b6b;
+      font-size: 13px;
+    }
+  }
+
+  mat-card-content {
+    padding: 16px 24px 24px;
+
+    .progress-steps {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      margin-bottom: 16px;
+
+      .progress-step {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 8px 0;
+        position: relative;
+
+        .step-indicator {
+          width: 24px;
+          height: 24px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          flex-shrink: 0;
+
+          mat-icon {
+            font-size: 20px;
+            width: 20px;
+            height: 20px;
+          }
+
+          mat-spinner {
+            ::ng-deep circle {
+              stroke: #667eea;
+            }
+          }
+        }
+
+        .step-label {
+          font-size: 14px;
+          color: #6b6b6b;
+        }
+
+        .step-line {
+          position: absolute;
+          left: 11px;
+          top: 36px;
+          width: 2px;
+          height: 20px;
+          background: #e0e0e0;
+        }
+
+        &.active {
+          .step-label {
+            color: #667eea;
+            font-weight: 500;
+          }
+        }
+
+        &.completed {
+          .step-indicator mat-icon {
+            color: #4caf50;
+          }
+
+          .step-label {
+            color: #4caf50;
+          }
+
+          .step-line {
+            background: #4caf50;
+          }
+        }
+
+        &.error {
+          .step-indicator mat-icon {
+            color: #f44336;
+          }
+
+          .step-label {
+            color: #f44336;
+          }
+        }
+
+        &.pending {
+          .step-indicator mat-icon {
+            color: #e0e0e0;
+          }
+
+          .step-label {
+            color: #9e9e9e;
+          }
+        }
+      }
+    }
+
+    .error-section {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 16px;
+      background: #ffebee;
+      border-radius: 8px;
+      color: #c62828;
+
+      mat-icon {
+        font-size: 24px;
+        width: 24px;
+        height: 24px;
+      }
+
+      span {
+        flex: 1;
+        font-size: 14px;
+      }
+
+      .retry-button {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+
+        mat-icon {
+          color: white;
+          font-size: 18px;
+          width: 18px;
+          height: 18px;
+          margin-right: 4px;
+        }
+      }
+    }
+
+    .success-section {
+      .endpoint-info {
+        margin-bottom: 16px;
+
+        label {
+          display: block;
+          font-size: 12px;
+          color: #6b6b6b;
+          margin-bottom: 4px;
+        }
+
+        .endpoint-value {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          padding: 8px 12px;
+          background: white;
+          border: 1px solid #e0e0e0;
+          border-radius: 6px;
+
+          code {
+            flex: 1;
+            font-family: 'Fira Code', 'Consolas', monospace;
+            font-size: 13px;
+            color: #667eea;
+            word-break: break-all;
+          }
+
+          button {
+            flex-shrink: 0;
+          }
+        }
+      }
+
+      .config-section {
+        label {
+          display: block;
+          font-size: 12px;
+          color: #6b6b6b;
+          margin-bottom: 4px;
+        }
+
+        .config-code {
+          position: relative;
+          background: #1e1e1e;
+          border-radius: 8px;
+          overflow: hidden;
+
+          pre {
+            margin: 0;
+            padding: 16px;
+            overflow-x: auto;
+
+            code {
+              font-family: 'Fira Code', 'Consolas', monospace;
+              font-size: 12px;
+              color: #d4d4d4;
+              line-height: 1.5;
+            }
+          }
+
+          .copy-config-btn {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            color: #9e9e9e;
+
+            &:hover {
+              color: white;
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// Responsive adjustments
+@media (max-width: 480px) {
+  .deploy-progress-card {
+    .error-section {
+      flex-direction: column;
+      text-align: center;
+
+      .retry-button {
+        width: 100%;
+      }
+    }
+
+    .success-section {
+      .config-code pre {
+        padding: 12px;
+
+        code {
+          font-size: 11px;
+        }
+      }
+    }
+  }
+}
