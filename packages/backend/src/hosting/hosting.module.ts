@@ -1,9 +1,10 @@
 import { Module, OnModuleInit, Logger } from '@nestjs/common';
 import { ContainerRegistryService } from './services/container-registry.service';
+import { ManifestGeneratorService } from './services/manifest-generator.service';
 
 @Module({
-  providers: [ContainerRegistryService],
-  exports: [ContainerRegistryService],
+  providers: [ContainerRegistryService, ManifestGeneratorService],
+  exports: [ContainerRegistryService, ManifestGeneratorService],
 })
 export class HostingModule implements OnModuleInit {
   private readonly logger = new Logger(HostingModule.name);
