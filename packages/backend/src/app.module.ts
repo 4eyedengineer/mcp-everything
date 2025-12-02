@@ -14,6 +14,7 @@ import { DeploymentModule } from './deployment/deployment.module';
 import { ValidationModule } from './validation/validation.module';
 import { UserModule } from './user/user.module';
 import { SubscriptionModule } from './subscription/subscription.module';
+import { HostingModule } from './hosting/hosting.module';
 import { Conversation, ConversationMemory, Deployment, User, Subscription, UsageRecord, HostedServer } from './database/entities';
 
 // Basic DTO for generate endpoint
@@ -297,6 +298,7 @@ main().catch((error) => {
     ValidationModule,
     UserModule,
     SubscriptionModule,
+    HostingModule,
   ],
   controllers: [AppController],
   providers: [
