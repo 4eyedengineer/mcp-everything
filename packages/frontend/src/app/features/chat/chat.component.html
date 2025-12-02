@@ -82,15 +82,110 @@
               </button>
             </div>
 
-            <!-- Download Button -->
-            <button
-              *ngIf="message.generatedCode"
-              mat-raised-button
-              (click)="downloadGeneratedCode(message)"
-              class="download-button">
-              <mat-icon>download</mat-icon>
-              Download MCP Server
-            </button>
+            <!-- Deployment Actions (when generatedCode exists and not yet deployed) -->
+            <div *ngIf="message.generatedCode && !message.deploymentResult" class="deployment-actions">
+              <button mat-raised-button color="primary"
+                      (click)="deployToGitHub(message)"
+                      [disabled]="isDeploying(message)"
+                      class="deploy-button">
+                <mat-icon>{{ isDeploying(message) ? 'hourglass_empty' : 'cloud_upload' }}</mat-icon>
+                {{ isDeploying(message) ? 'Deploying...' : 'Deploy as Repo' }}
+              </button>
+              <button mat-raised-button
+                      (click)="deployToGist(message)"
+                      [disabled]="isDeploying(message)"
+                      class="deploy-button gist-button">
+                <mat-icon>code</mat-icon>
+                Deploy as Gist
+              </button>
+              <button mat-button
+                      (click)="downloadAsZip(message)"
+                      class="download-zip-button">
+                <mat-icon>download</mat-icon>
+                Download ZIP
+              </button>
+            </div>
+
+            <!-- Deployment Result Card (when deployment succeeded) -->
+            <div *ngIf="message.deploymentResult?.success" class="deployment-result-card">
+              <div class="result-header">
+                <mat-icon class="success-icon">check_circle</mat-icon>
+                <span>MCP Server Deployed Successfully!</span>
+              </div>
+
+              <!-- Repository deployment result -->
+              <ng-container *ngIf="message.deploymentResult?.type === 'repo'">
+                <div class="deployment-url">
+                  <a [href]="message.deploymentResult?.urls?.repository" target="_blank" rel="noopener">
+                    {{ message.deploymentResult?.urls?.repository }}
+                  </a>
+                </div>
+
+                <div class="deployment-buttons">
+                  <a mat-raised-button color="primary"
+                     [href]="message.deploymentResult?.urls?.codespace"
+                     target="_blank" rel="noopener"
+                     class="action-link">
+                    <mat-icon>rocket_launch</mat-icon>
+                    Open in Codespace
+                  </a>
+                  <a mat-raised-button
+                     [href]="message.deploymentResult?.urls?.repository"
+                     target="_blank" rel="noopener"
+                     class="action-link">
+                    <mat-icon>visibility</mat-icon>
+                    View on GitHub
+                  </a>
+                </div>
+
+                <div class="clone-command" *ngIf="message.deploymentResult?.urls?.clone">
+                  <code>git clone {{ message.deploymentResult?.urls?.clone }}</code>
+                  <button mat-icon-button
+                          (click)="copyToClipboard('git clone ' + message.deploymentResult?.urls?.clone)"
+                          matTooltip="Copy clone command">
+                    <mat-icon>content_copy</mat-icon>
+                  </button>
+                </div>
+              </ng-container>
+
+              <!-- Gist deployment result -->
+              <ng-container *ngIf="message.deploymentResult?.type === 'gist'">
+                <div class="deployment-url">
+                  <a [href]="message.deploymentResult?.urls?.gist" target="_blank" rel="noopener">
+                    {{ message.deploymentResult?.urls?.gist }}
+                  </a>
+                </div>
+
+                <div class="deployment-buttons">
+                  <a mat-raised-button color="primary"
+                     [href]="message.deploymentResult?.urls?.gist"
+                     target="_blank" rel="noopener"
+                     class="action-link">
+                    <mat-icon>visibility</mat-icon>
+                    View Gist
+                  </a>
+                </div>
+              </ng-container>
+            </div>
+
+            <!-- Deployment Error Card -->
+            <div *ngIf="message.deploymentResult?.success === false" class="deployment-error-card">
+              <div class="error-header">
+                <mat-icon class="error-icon">error</mat-icon>
+                <span>Deployment Failed</span>
+              </div>
+              <p class="error-message">{{ message.deploymentResult?.error }}</p>
+              <div class="error-actions">
+                <button mat-button (click)="deployToGitHub(message)" class="retry-button">
+                  <mat-icon>refresh</mat-icon>
+                  Retry as Repo
+                </button>
+                <button mat-button (click)="deployToGist(message)" class="retry-button">
+                  <mat-icon>refresh</mat-icon>
+                  Retry as Gist
+                </button>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -102,8 +197,8 @@
           </div>
           <div class="deployment-actions">
             <a
-              *ngIf="latestDeployment.repositoryUrl"
-              [href]="latestDeployment.repositoryUrl"
+              *ngIf="latestDeployment?.repositoryUrl"
+              [href]="latestDeployment?.repositoryUrl"
               target="_blank"
               rel="noopener noreferrer"
               mat-raised-button
@@ -113,8 +208,8 @@
               View on GitHub
             </a>
             <a
-              *ngIf="latestDeployment.gistUrl"
-              [href]="latestDeployment.gistUrl"
+              *ngIf="latestDeployment?.gistUrl"
+              [href]="latestDeployment?.gistUrl"
               target="_blank"
               rel="noopener noreferrer"
               mat-raised-button
@@ -123,8 +218,8 @@
               View Gist
             </a>
             <a
-              *ngIf="latestDeployment.codespaceUrl"
-              [href]="latestDeployment.codespaceUrl"
+              *ngIf="latestDeployment?.codespaceUrl"
+              [href]="latestDeployment?.codespaceUrl"
               target="_blank"
               rel="noopener noreferrer"
               mat-raised-button
@@ -142,7 +237,7 @@
             <mat-icon>error_outline</mat-icon>
             <span>Deployment failed</span>
           </div>
-          <p class="error-message">{{ latestDeployment.errorMessage }}</p>
+          <p class="error-message">{{ latestDeployment?.errorMessage }}</p>
         </div>
       </div>
     </div>
