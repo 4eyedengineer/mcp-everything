@@ -10,6 +10,8 @@ import { DeploymentOrchestratorService } from './deployment.service';
 import { GitHubRepoProvider } from './providers/github-repo.provider';
 import { GistProvider } from './providers/gist.provider';
 import { DevContainerProvider } from './providers/devcontainer.provider';
+import { GitignoreProvider } from './providers/gitignore.provider';
+import { CIWorkflowProvider } from './providers/ci-workflow.provider';
 
 @Module({
   imports: [TypeOrmModule.forFeature([Deployment, Conversation])],
@@ -19,6 +21,8 @@ import { DevContainerProvider } from './providers/devcontainer.provider';
     GitHubRepoProvider,
     GistProvider,
     DevContainerProvider,
+    GitignoreProvider,
+    CIWorkflowProvider,
   ],
   exports: [DeploymentOrchestratorService],
 })

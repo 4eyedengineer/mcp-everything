@@ -17,6 +17,7 @@ export interface DeploymentUrls {
   gist?: string;
   gistRaw?: string;
   codespace?: string;
+  clone?: string;
 }
 
 export interface DeploymentOptions {
@@ -47,6 +48,7 @@ export interface DeploymentStatusResponse {
 export interface GitHubRepoResult {
   success: boolean;
   repositoryUrl?: string;
+  cloneUrl?: string;
   codespaceUrl?: string;
   error?: string;
 }

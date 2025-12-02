@@ -9,6 +9,8 @@ import { Conversation } from '../database/entities/conversation.entity';
 import { GitHubRepoProvider } from './providers/github-repo.provider';
 import { GistProvider, McpToolInfo } from './providers/gist.provider';
 import { DevContainerProvider } from './providers/devcontainer.provider';
+import { GitignoreProvider } from './providers/gitignore.provider';
+import { CIWorkflowProvider } from './providers/ci-workflow.provider';
 import {
   DeploymentResult,
   DeploymentStatusResponse,
@@ -29,6 +31,8 @@ export class DeploymentOrchestratorService {
     private readonly gitHubRepoProvider: GitHubRepoProvider,
     private readonly gistProvider: GistProvider,
     private readonly devContainerProvider: DevContainerProvider,
+    private readonly gitignoreProvider: GitignoreProvider,
+    private readonly ciWorkflowProvider: CIWorkflowProvider,
   ) {
     this.generatedServersDir = join(process.cwd(), '../../generated-servers');
   }
@@ -68,21 +72,29 @@ export class DeploymentOrchestratorService {
         throw new Error('No generated files found for this conversation');
       }
 
+      const serverName = this.getServerName(conversation);
+
+      // Always add .gitignore
+      files.push(...this.gitignoreProvider.generateGitignoreFiles());
+
+      // Always add CI workflow for GitHub repos
+      files.push(...this.ciWorkflowProvider.generateCIWorkflowFiles(serverName));
+
       // Add devcontainer if requested
       if (options.includeDevContainer) {
         const devContainerFiles = this.devContainerProvider.generateDevContainerFiles(
-          this.getServerName(conversation),
+          serverName,
           'typescript',
         );
         files.push(...devContainerFiles);
       }
 
-      // Deploy to GitHub
+      // Deploy to GitHub (default to private repos)
       const result = await this.gitHubRepoProvider.deploy(
-        this.getServerName(conversation),
+        serverName,
         files,
         options.description || `MCP Server generated from conversation ${conversationId}`,
-        options.isPrivate ?? false,
+        options.isPrivate ?? true,
       );
 
       if (result.success) {
@@ -100,6 +112,7 @@ export class DeploymentOrchestratorService {
           type: 'repo',
           urls: {
             repository: result.repositoryUrl,
+            clone: result.cloneUrl,
             codespace: result.codespaceUrl,
           },
         };
