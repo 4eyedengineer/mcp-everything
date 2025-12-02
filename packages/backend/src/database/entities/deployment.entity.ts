@@ -92,4 +92,20 @@ export class Deployment {
 
   @Column({ type: 'varchar', nullable: true })
   workflowRunId?: string;
+
+  // Server metadata for cloud hosting
+  @Column({ type: 'varchar', length: 100, nullable: true })
+  serverName?: string;
+
+  @Column({ type: 'text', nullable: true })
+  description?: string;
+
+  @Column({ type: 'jsonb', nullable: true })
+  tools?: Array<{ name: string; description: string; inputSchema: any }>;
+
+  @Column({ type: 'jsonb', nullable: true })
+  envVars?: Array<{ name: string; required: boolean; description?: string }>;
+
+  @Column({ type: 'text', nullable: true })
+  localPath?: string;
 }
