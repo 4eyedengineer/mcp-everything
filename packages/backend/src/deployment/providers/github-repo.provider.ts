@@ -37,8 +37,8 @@ export class GitHubRepoProvider {
     name: string,
     description: string,
     isPrivate: boolean = false,
-  ): Promise<{ owner: string; repo: string; url: string }> {
-    try {
+  ): Promise<{ owner: string; repo: string; url: string; cloneUrl: string }> {
+    return this.withRateLimitRetry(async () => {
       const { data } = await this.octokit.rest.repos.createForAuthenticatedUser({
         name,
         description,
@@ -52,11 +52,9 @@ export class GitHubRepoProvider {
         owner: data.owner.login,
         repo: data.name,
         url: data.html_url,
+        cloneUrl: data.clone_url,
       };
-    } catch (error) {
-      this.logger.error(`Failed to create repository: ${error.message}`);
-      throw error;
-    }
+    });
   }
 
   /**
@@ -153,10 +151,31 @@ export class GitHubRepoProvider {
   ): Promise<GitHubRepoResult> {
     try {
       // Sanitize repository name
-      const repoName = this.sanitizeRepoName(serverName);
+      const baseRepoName = this.sanitizeRepoName(serverName);
+
+      // Get authenticated user for conflict checking
+      const authenticatedUser = await this.getAuthenticatedUser();
+
+      // Handle naming conflicts by trying with timestamp suffixes
+      let repoName = baseRepoName;
+      let attempts = 0;
+      const maxAttempts = 3;
+
+      while (attempts < maxAttempts) {
+        const exists = await this.repositoryExists(authenticatedUser, repoName);
+        if (!exists) break;
+
+        this.logger.warn(`Repository ${repoName} already exists, trying with timestamp suffix`);
+        repoName = `${baseRepoName}-${Date.now()}`;
+        attempts++;
+      }
+
+      if (attempts >= maxAttempts) {
+        throw new Error(`Failed to find unique repository name after ${maxAttempts} attempts`);
+      }
 
       // Create repository
-      const { owner, repo, url } = await this.createRepository(
+      const { owner, repo, url, cloneUrl } = await this.createRepository(
         repoName,
         description,
         isPrivate,
@@ -174,6 +193,7 @@ export class GitHubRepoProvider {
       return {
         success: true,
         repositoryUrl: url,
+        cloneUrl,
         codespaceUrl,
       };
     } catch (error) {
@@ -211,5 +231,57 @@ export class GitHubRepoProvider {
 
   private delay(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  /**
+   * Execute a function with rate limit retry logic
+   */
+  private async withRateLimitRetry<T>(
+    fn: () => Promise<T>,
+    maxRetries: number = 3,
+  ): Promise<T> {
+    let lastError: Error;
+
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        return await fn();
+      } catch (error) {
+        lastError = error;
+
+        // Check if it's a rate limit error (403 or 429)
+        const status = error.status || error.response?.status;
+        if (status !== 403 && status !== 429) {
+          throw error;
+        }
+
+        if (attempt >= maxRetries) {
+          this.logger.error(`Rate limit exceeded after ${maxRetries + 1} attempts`);
+          throw error;
+        }
+
+        // Get retry delay from headers or use exponential backoff
+        let delayMs = Math.pow(2, attempt + 1) * 1000; // 2s, 4s, 8s
+
+        const resetHeader =
+          error.response?.headers?.['x-ratelimit-reset'] ||
+          error.headers?.['x-ratelimit-reset'];
+
+        if (resetHeader) {
+          const resetTime = parseInt(resetHeader, 10) * 1000;
+          const waitTime = resetTime - Date.now();
+          if (waitTime > 0 && waitTime < 60000) {
+            // Cap at 60 seconds
+            delayMs = waitTime + 1000; // Add 1s buffer
+          }
+        }
+
+        this.logger.warn(
+          `Rate limit hit, waiting ${delayMs}ms before retry ${attempt + 1}/${maxRetries}`,
+        );
+        await this.delay(delayMs);
+      }
+    }
+
+    throw lastError;
   }
 }
