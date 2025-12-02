@@ -12,10 +12,14 @@ import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatChipsModule } from '@angular/material/chips';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
+import { MatDialog, MatDialogModule } from '@angular/material/dialog';
 import { ChatService, ChatMessage } from '../../core/services/chat.service';
 import { ConversationService, Deployment } from '../../core/services/conversation.service';
 import { DeploymentService, DeploymentResponse, ValidationResponse } from '../../core/services/deployment.service';
+import { HostingApiService } from '../../core/services/hosting-api.service';
 import { SafeMarkdownPipe } from '../../shared/pipes/safe-markdown.pipe';
+import { DeployModalComponent, DeployModalResult } from './components/deploy-modal/deploy-modal.component';
+import { DeployProgressComponent, DeploymentCompleteEvent } from './components/deploy-progress/deploy-progress.component';
 import { v4 as uuidv4 } from 'uuid';
 import { Subscription } from 'rxjs';
 import * as JSZip from 'jszip';
@@ -49,7 +53,9 @@ interface ExtendedChatMessage extends ChatMessage {
     MatChipsModule,
     MatTooltipModule,
     MatSnackBarModule,
-    SafeMarkdownPipe
+    MatDialogModule,
+    SafeMarkdownPipe,
+    DeployProgressComponent
   ],
   templateUrl: './chat.component.html',
   styleUrls: ['./chat.component.scss']
@@ -71,15 +77,23 @@ export class ChatComponent implements OnInit, OnDestroy {
   deploymentState: 'idle' | 'deploying' | 'success' | 'failed' = 'idle';
   deployingMessageIndex?: number;
 
+  // Cloud hosting state
+  cloudDeploymentState: 'idle' | 'configuring' | 'deploying' | 'success' | 'failed' = 'idle';
+  cloudServerId?: string;
+  cloudServerName?: string;
+  cloudEndpointUrl?: string;
+
   constructor(
     private chatService: ChatService,
     private conversationService: ConversationService,
     private deploymentService: DeploymentService,
+    private hostingApiService: HostingApiService,
     private http: HttpClient,
     private route: ActivatedRoute,
     private router: Router,
     private zone: NgZone,
-    private snackBar: MatSnackBar
+    private snackBar: MatSnackBar,
+    private dialog: MatDialog
   ) {
     // Generate or restore session ID
     this.sessionId = this.getOrCreateSessionId();
@@ -608,5 +622,67 @@ export class ChatComponent implements OnInit, OnDestroy {
     textarea.style.height = 'auto';
     const newHeight = Math.min(textarea.scrollHeight, 200);
     textarea.style.height = newHeight + 'px';
+  }
+
+  /**
+   * Open the Host on Cloud modal
+   */
+  openHostOnCloudModal(message: ExtendedChatMessage): void {
+    if (!this.conversationId || !this.latestDeployment) {
+      this.snackBar.open('No deployment available for hosting', 'Close', { duration: 3000 });
+      return;
+    }
+
+    const dialogRef = this.dialog.open(DeployModalComponent, {
+      width: '500px',
+      panelClass: 'deploy-modal-panel',
+      data: {
+        conversationId: this.conversationId,
+        serverName: this.latestDeployment.serverName || 'My MCP Server',
+        description: this.latestDeployment.description || '',
+        tools: this.latestDeployment.tools || [],
+        envVars: this.latestDeployment.envVars || []
+      }
+    });
+
+    dialogRef.afterClosed().subscribe((result: DeployModalResult | undefined) => {
+      if (result?.success && result.serverId) {
+        this.cloudDeploymentState = 'deploying';
+        this.cloudServerId = result.serverId;
+        this.cloudServerName = this.latestDeployment?.serverName || 'MCP Server';
+        this.snackBar.open('Deployment started...', 'Close', { duration: 2000 });
+      }
+    });
+  }
+
+  /**
+   * Handle cloud deployment completion
+   */
+  onCloudDeploymentComplete(event: DeploymentCompleteEvent): void {
+    if (event.success) {
+      this.cloudDeploymentState = 'success';
+      this.cloudEndpointUrl = event.endpointUrl;
+      this.snackBar.open('Successfully deployed to cloud!', 'Close', { duration: 3000 });
+    } else {
+      this.cloudDeploymentState = 'failed';
+      this.snackBar.open(event.error || 'Cloud deployment failed', 'Close', { duration: 5000 });
+    }
+  }
+
+  /**
+   * Retry cloud deployment
+   */
+  retryCloudDeployment(): void {
+    this.cloudDeploymentState = 'idle';
+    this.cloudServerId = undefined;
+    this.cloudServerName = undefined;
+    this.cloudEndpointUrl = undefined;
+  }
+
+  /**
+   * Check if cloud deployment is in progress
+   */
+  isCloudDeploying(): boolean {
+    return this.cloudDeploymentState === 'deploying';
   }
 }

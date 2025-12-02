@@ -104,7 +104,24 @@
                 <mat-icon>download</mat-icon>
                 Download ZIP
               </button>
+              <button mat-raised-button
+                      (click)="openHostOnCloudModal(message)"
+                      [disabled]="isDeploying(message) || isCloudDeploying()"
+                      class="deploy-button cloud-button">
+                <mat-icon>cloud</mat-icon>
+                Host on Cloud ($3/mo)
+              </button>
             </div>
+
+            <!-- Cloud Deployment Progress -->
+            <mcp-deploy-progress
+              *ngIf="cloudDeploymentState === 'deploying' && cloudServerId"
+              [serverId]="cloudServerId"
+              [serverName]="cloudServerName || 'MCP Server'"
+              [conversationId]="conversationId!"
+              (deploymentComplete)="onCloudDeploymentComplete($event)"
+              (retry)="retryCloudDeployment()">
+            </mcp-deploy-progress>
 
             <!-- Deployment Result Card (when deployment succeeded) -->
             <div *ngIf="message.deploymentResult?.success" class="deployment-result-card">

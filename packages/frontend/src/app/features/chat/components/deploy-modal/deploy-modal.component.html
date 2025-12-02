@@ -1,0 +1,98 @@
+<div class="deploy-modal">
+  <h2 mat-dialog-title>
+    <mat-icon>cloud</mat-icon>
+    Deploy to Cloud
+  </h2>
+
+  <mat-dialog-content>
+    <form [formGroup]="form" (ngSubmit)="onSubmit()">
+      <!-- Server Name -->
+      <mat-form-field appearance="outline" class="full-width">
+        <mat-label>Server Name</mat-label>
+        <input matInput formControlName="serverName" placeholder="My MCP Server" />
+        <mat-error *ngIf="form.get('serverName')?.hasError('required')">
+          Server name is required
+        </mat-error>
+        <mat-error *ngIf="form.get('serverName')?.hasError('maxlength')">
+          Server name must be 100 characters or less
+        </mat-error>
+      </mat-form-field>
+
+      <!-- Description -->
+      <mat-form-field appearance="outline" class="full-width">
+        <mat-label>Description (optional)</mat-label>
+        <textarea
+          matInput
+          formControlName="description"
+          placeholder="Describe what your MCP server does..."
+          rows="2"
+        ></textarea>
+        <mat-error *ngIf="form.get('description')?.hasError('maxlength')">
+          Description must be 500 characters or less
+        </mat-error>
+      </mat-form-field>
+
+      <!-- Environment Variables -->
+      <div class="env-vars-section" *ngIf="hasEnvVars">
+        <div class="env-vars-header">
+          <mat-icon>vpn_key</mat-icon>
+          <span>Required API Keys</span>
+        </div>
+        <div class="env-vars-info">
+          <mat-icon>lock</mat-icon>
+          Keys are encrypted and stored securely
+        </div>
+
+        <div *ngFor="let envVar of data.envVars" class="env-var-field">
+          <mat-form-field appearance="outline" class="full-width">
+            <mat-label>{{ envVar.name }}</mat-label>
+            <input
+              matInput
+              [formControlName]="'env_' + envVar.name"
+              type="password"
+              [placeholder]="envVar.description || 'Enter value...'"
+            />
+            <mat-hint *ngIf="envVar.description">{{ envVar.description }}</mat-hint>
+            <mat-error *ngIf="getEnvVarControl(envVar.name)?.hasError('required')">
+              {{ envVar.name }} is required
+            </mat-error>
+          </mat-form-field>
+        </div>
+      </div>
+
+      <!-- Cost Estimate -->
+      <div class="cost-estimate">
+        <div class="cost-label">Estimated Cost:</div>
+        <div class="cost-value">
+          <strong>$3/month</strong>
+          <span class="cost-note">(scales to zero when idle)</span>
+        </div>
+      </div>
+
+      <!-- Error Message -->
+      <div class="error-message" *ngIf="error">
+        <mat-icon>error</mat-icon>
+        {{ error }}
+      </div>
+    </form>
+  </mat-dialog-content>
+
+  <mat-dialog-actions align="end">
+    <button mat-button (click)="onCancel()" [disabled]="isSubmitting" class="cancel-button">
+      Cancel
+    </button>
+    <button
+      mat-raised-button
+      color="primary"
+      (click)="onSubmit()"
+      [disabled]="form.invalid || isSubmitting"
+      class="deploy-button"
+    >
+      <mat-spinner *ngIf="isSubmitting" diameter="20"></mat-spinner>
+      <ng-container *ngIf="!isSubmitting">
+        <mat-icon>rocket_launch</mat-icon>
+        Deploy ($3/mo)
+      </ng-container>
+    </button>
+  </mat-dialog-actions>
+</div>

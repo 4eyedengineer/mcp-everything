@@ -1,0 +1,52 @@
+<mat-card class="server-card">
+  <mat-card-header>
+    <div class="server-icon" mat-card-avatar>
+      <mat-icon>dns</mat-icon>
+    </div>
+    <mat-card-title>{{ serverName }}</mat-card-title>
+    <mat-card-subtitle *ngIf="description">{{ description }}</mat-card-subtitle>
+  </mat-card-header>
+
+  <mat-card-content>
+    <!-- Tools section -->
+    <div class="tools-section" *ngIf="tools.length > 0">
+      <span class="tools-label">Tools:</span>
+      <mat-chip-set class="tools-chips">
+        <mat-chip *ngFor="let tool of visibleTools" [matTooltip]="tool.description">
+          {{ tool.name }}
+        </mat-chip>
+        <mat-chip *ngIf="additionalToolsCount > 0" class="more-chip">
+          +{{ additionalToolsCount }} more
+        </mat-chip>
+      </mat-chip-set>
+    </div>
+
+    <!-- Required env vars notice -->
+    <div class="env-vars-notice" *ngIf="hasRequiredEnvVars">
+      <mat-icon>vpn_key</mat-icon>
+      <span>Requires API keys to deploy</span>
+    </div>
+  </mat-card-content>
+
+  <mat-card-actions align="end">
+    <button
+      mat-button
+      (click)="onDownload()"
+      [disabled]="isDeploying"
+      class="download-button"
+    >
+      <mat-icon>download</mat-icon>
+      Download
+    </button>
+    <button
+      mat-raised-button
+      color="primary"
+      (click)="onHostOnCloud()"
+      [disabled]="isDeploying"
+      class="host-button"
+    >
+      <mat-icon>cloud</mat-icon>
+      Host on Cloud ($3/mo)
+    </button>
+  </mat-card-actions>
+</mat-card>
