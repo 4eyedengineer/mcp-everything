@@ -1,0 +1,64 @@
+<div class="modal-overlay" (click)="onOverlayClick($event)">
+  <div class="modal-content logs-modal">
+    <header class="modal-header">
+      <div class="header-title">
+        <mat-icon>article</mat-icon>
+        <h2>Logs: {{ server.serverId }}</h2>
+      </div>
+      <button mat-icon-button (click)="onClose()" class="close-btn">
+        <mat-icon>close</mat-icon>
+      </button>
+    </header>
+
+    <div class="modal-body">
+      <!-- Loading State -->
+      <div *ngIf="isLoading" class="loading-state">
+        <mat-spinner diameter="32"></mat-spinner>
+        <p>Loading logs...</p>
+      </div>
+
+      <!-- Error State -->
+      <div *ngIf="error && !isLoading" class="error-state">
+        <mat-icon>error_outline</mat-icon>
+        <p>{{ error }}</p>
+      </div>
+
+      <!-- Logs Content -->
+      <div *ngIf="!isLoading && !error" class="logs-container">
+        <div *ngIf="message" class="logs-message">
+          <mat-icon>info</mat-icon>
+          <span>{{ message }}</span>
+        </div>
+
+        <div *ngIf="logs.length === 0" class="empty-logs">
+          <mat-icon>description</mat-icon>
+          <p>No logs available</p>
+        </div>
+
+        <pre *ngIf="logs.length > 0" class="logs-content"><ng-container *ngFor="let line of logs">{{ line }}
+</ng-container></pre>
+      </div>
+    </div>
+
+    <footer class="modal-footer">
+      <mat-form-field appearance="outline" class="line-count-select">
+        <mat-select [(value)]="lineCount" (selectionChange)="refreshLogs()">
+          <mat-option *ngFor="let option of lineCountOptions" [value]="option.value">
+            {{ option.label }}
+          </mat-option>
+        </mat-select>
+      </mat-form-field>
+
+      <div class="footer-actions">
+        <button mat-button (click)="refreshLogs()" class="btn-secondary">
+          <mat-icon>refresh</mat-icon>
+          Refresh
+        </button>
+        <button mat-button (click)="downloadLogs()" class="btn-secondary" [disabled]="logs.length === 0">
+          <mat-icon>download</mat-icon>
+          Download
+        </button>
+      </div>
+    </footer>
+  </div>
+</div>

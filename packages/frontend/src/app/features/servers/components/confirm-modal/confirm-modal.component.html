@@ -1,0 +1,21 @@
+<div class="modal-overlay" (click)="onOverlayClick($event)">
+  <div class="modal-content confirm-modal">
+    <header class="modal-header">
+      <mat-icon [class.danger]="isDanger">{{ isDanger ? 'warning' : 'help_outline' }}</mat-icon>
+      <h2>{{ title }}</h2>
+    </header>
+
+    <div class="modal-body">
+      <p>{{ message }}</p>
+    </div>
+
+    <footer class="modal-footer">
+      <button mat-button (click)="onCancel()" class="btn-cancel">
+        {{ cancelText }}
+      </button>
+      <button mat-raised-button (click)="onConfirm()" [class.btn-danger]="isDanger" [class.btn-primary]="!isDanger">
+        {{ confirmText }}
+      </button>
+    </footer>
+  </div>
+</div>

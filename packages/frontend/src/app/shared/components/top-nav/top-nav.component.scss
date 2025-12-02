@@ -35,8 +35,9 @@
   transform: translateX(-50%);
   display: flex;
   align-items: center;
+  gap: 8px;
 
-  .explore-button {
+  .nav-button {
     font-size: 14px;
     font-weight: 500;
     color: #6b6b6b;
