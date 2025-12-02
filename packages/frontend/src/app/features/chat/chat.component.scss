@@ -344,24 +344,208 @@
     }
   }
 
-  .download-button {
-    margin-top: 12px;
-    background-color: #2d2d2d;
-    color: white;
-    font-weight: 500;
-    padding: 8px 16px;
-    border-radius: 8px;
-    align-self: flex-start;
+  // Deployment Actions (Deploy buttons)
+  .deployment-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-top: 16px;
+    align-items: center;
 
-    mat-icon {
-      margin-right: 8px;
-      font-size: 18px;
-      width: 18px;
-      height: 18px;
+    .deploy-button {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 500;
+      padding: 8px 20px;
+      border-radius: 8px;
+
+      mat-icon {
+        font-size: 18px;
+        width: 18px;
+        height: 18px;
+      }
+
+      &:disabled {
+        opacity: 0.7;
+        cursor: wait;
+      }
     }
 
-    &:hover {
-      background-color: #171717;
+    .gist-button {
+      background-color: #2d2d2d;
+      color: white;
+
+      &:hover:not(:disabled) {
+        background-color: #171717;
+      }
+    }
+
+    .download-zip-button {
+      color: #6b6b6b;
+
+      mat-icon {
+        font-size: 18px;
+        width: 18px;
+        height: 18px;
+        margin-right: 4px;
+      }
+
+      &:hover {
+        background-color: #f5f5f5;
+        color: #1f1f1f;
+      }
+    }
+  }
+
+  // Deployment Result Card (Success)
+  .deployment-result-card {
+    margin-top: 16px;
+    padding: 20px;
+    background: linear-gradient(135deg, #e8f5e9 0%, #f1f8e9 100%);
+    border: 1px solid #c8e6c9;
+    border-radius: 12px;
+
+    .result-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 16px;
+      font-weight: 600;
+      font-size: 16px;
+      color: #2e7d32;
+
+      .success-icon {
+        font-size: 24px;
+        width: 24px;
+        height: 24px;
+        color: #4caf50;
+      }
+    }
+
+    .deployment-url {
+      margin-bottom: 16px;
+
+      a {
+        color: #1565c0;
+        font-size: 14px;
+        word-break: break-all;
+        text-decoration: none;
+
+        &:hover {
+          text-decoration: underline;
+        }
+      }
+    }
+
+    .deployment-buttons {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-bottom: 16px;
+
+      .action-link {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        text-decoration: none;
+
+        mat-icon {
+          font-size: 18px;
+          width: 18px;
+          height: 18px;
+        }
+      }
+    }
+
+    .clone-command {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background-color: rgba(255, 255, 255, 0.7);
+      padding: 12px 16px;
+      border-radius: 8px;
+      border: 1px solid #c8e6c9;
+
+      code {
+        flex: 1;
+        font-family: 'Monaco', 'Menlo', monospace;
+        font-size: 13px;
+        color: #1f1f1f;
+        word-break: break-all;
+      }
+
+      button {
+        flex-shrink: 0;
+        color: #6b6b6b;
+
+        &:hover {
+          color: #1f1f1f;
+          background-color: rgba(0, 0, 0, 0.05);
+        }
+
+        mat-icon {
+          font-size: 18px;
+          width: 18px;
+          height: 18px;
+        }
+      }
+    }
+  }
+
+  // Deployment Error Card
+  .deployment-error-card {
+    margin-top: 16px;
+    padding: 20px;
+    background: linear-gradient(135deg, #ffebee 0%, #fce4ec 100%);
+    border: 1px solid #ffcdd2;
+    border-radius: 12px;
+
+    .error-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 12px;
+      font-weight: 600;
+      font-size: 16px;
+      color: #c62828;
+
+      .error-icon {
+        font-size: 24px;
+        width: 24px;
+        height: 24px;
+        color: #ef5350;
+      }
+    }
+
+    .error-message {
+      margin: 0 0 16px 0;
+      font-size: 14px;
+      color: #b71c1c;
+      background-color: rgba(255, 255, 255, 0.5);
+      padding: 12px;
+      border-radius: 6px;
+    }
+
+    .error-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+
+      .retry-button {
+        color: #c62828;
+
+        mat-icon {
+          font-size: 18px;
+          width: 18px;
+          height: 18px;
+          margin-right: 4px;
+        }
+
+        &:hover {
+          background-color: rgba(198, 40, 40, 0.1);
+        }
+      }
     }
   }
 }
@@ -559,6 +743,47 @@
   .message-content {
     .message-body {
       font-size: 14px;
+    }
+
+    // Mobile responsive deployment styles
+    .deployment-actions {
+      flex-direction: column;
+      gap: 8px;
+
+      .deploy-button,
+      .download-zip-button {
+        width: 100%;
+        justify-content: center;
+      }
+    }
+
+    .deployment-result-card,
+    .deployment-error-card {
+      padding: 16px;
+
+      .deployment-buttons {
+        flex-direction: column;
+        gap: 8px;
+
+        .action-link {
+          width: 100%;
+          justify-content: center;
+        }
+      }
+
+      .clone-command {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 8px;
+
+        code {
+          font-size: 12px;
+        }
+
+        button {
+          align-self: flex-end;
+        }
+      }
     }
   }
 

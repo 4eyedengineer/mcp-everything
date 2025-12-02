@@ -11,11 +11,14 @@ import { MatInputModule } from '@angular/material/input';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatChipsModule } from '@angular/material/chips';
 import { MatTooltipModule } from '@angular/material/tooltip';
+import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { ChatService, ChatMessage } from '../../core/services/chat.service';
 import { ConversationService, Deployment } from '../../core/services/conversation.service';
+import { DeploymentService, DeploymentResponse } from '../../core/services/deployment.service';
 import { SafeMarkdownPipe } from '../../shared/pipes/safe-markdown.pipe';
 import { v4 as uuidv4 } from 'uuid';
 import { Subscription } from 'rxjs';
+import * as JSZip from 'jszip';
 
 interface StreamUpdate {
   type: 'progress' | 'result' | 'complete' | 'error';
@@ -28,6 +31,7 @@ interface StreamUpdate {
 interface ExtendedChatMessage extends ChatMessage {
   type?: 'user' | 'assistant' | 'progress' | 'error';
   generatedCode?: any;
+  deploymentResult?: DeploymentResponse;
 }
 
 @Component({
@@ -44,6 +48,7 @@ interface ExtendedChatMessage extends ChatMessage {
     MatProgressSpinnerModule,
     MatChipsModule,
     MatTooltipModule,
+    MatSnackBarModule,
     SafeMarkdownPipe
   ],
   templateUrl: './chat.component.html',
@@ -62,13 +67,19 @@ export class ChatComponent implements OnInit, OnDestroy {
   private routeSubscription?: Subscription;
   private messagesSubscription?: Subscription;
 
+  // Deployment state
+  deploymentState: 'idle' | 'deploying' | 'success' | 'failed' = 'idle';
+  deployingMessageIndex?: number;
+
   constructor(
     private chatService: ChatService,
     private conversationService: ConversationService,
+    private deploymentService: DeploymentService,
     private http: HttpClient,
     private route: ActivatedRoute,
     private router: Router,
-    private zone: NgZone
+    private zone: NgZone,
+    private snackBar: MatSnackBar
   ) {
     // Generate or restore session ID
     this.sessionId = this.getOrCreateSessionId();
@@ -250,7 +261,7 @@ export class ChatComponent implements OnInit, OnDestroy {
       this.conversationId = update.data.conversationId;
 
       // Load deployment info after completion
-      this.conversationService.getLatestDeployment(this.conversationId).subscribe({
+      this.conversationService.getLatestDeployment(this.conversationId!).subscribe({
         next: (deployment) => {
           this.latestDeployment = deployment;
           console.log('Loaded deployment after completion:', deployment);
@@ -318,30 +329,169 @@ export class ChatComponent implements OnInit, OnDestroy {
     });
   }
 
-  downloadGeneratedCode(message: ExtendedChatMessage): void {
+  /**
+   * Deploy generated MCP server to GitHub repository
+   */
+  deployToGitHub(message: ExtendedChatMessage): void {
+    if (!message.generatedCode || !this.conversationId) {
+      this.snackBar.open('No generated code or conversation available', 'Close', { duration: 3000 });
+      return;
+    }
+
+    const messageIndex = this.messages.indexOf(message);
+    this.deploymentState = 'deploying';
+    this.deployingMessageIndex = messageIndex;
+
+    this.deploymentService.deployToGitHub(this.conversationId).subscribe({
+      next: (response) => {
+        this.deploymentState = response.success ? 'success' : 'failed';
+        message.deploymentResult = response;
+        this.deployingMessageIndex = undefined;
+
+        if (response.success) {
+          this.snackBar.open('Successfully deployed to GitHub!', 'Close', { duration: 3000 });
+          // Reload deployment info
+          this.conversationService.getLatestDeployment(this.conversationId!).subscribe({
+            next: (deployment) => {
+              this.latestDeployment = deployment;
+            }
+          });
+        } else {
+          this.snackBar.open(response.error || 'Deployment failed', 'Close', { duration: 5000 });
+        }
+      },
+      error: (error: DeploymentResponse) => {
+        this.deploymentState = 'failed';
+        message.deploymentResult = error;
+        this.deployingMessageIndex = undefined;
+        this.snackBar.open(error.error || 'Deployment failed', 'Close', { duration: 5000 });
+      }
+    });
+  }
+
+  /**
+   * Deploy generated MCP server to GitHub Gist
+   */
+  deployToGist(message: ExtendedChatMessage): void {
+    if (!message.generatedCode || !this.conversationId) {
+      this.snackBar.open('No generated code or conversation available', 'Close', { duration: 3000 });
+      return;
+    }
+
+    const messageIndex = this.messages.indexOf(message);
+    this.deploymentState = 'deploying';
+    this.deployingMessageIndex = messageIndex;
+
+    this.deploymentService.deployToGist(this.conversationId).subscribe({
+      next: (response) => {
+        this.deploymentState = response.success ? 'success' : 'failed';
+        message.deploymentResult = response;
+        this.deployingMessageIndex = undefined;
+
+        if (response.success) {
+          this.snackBar.open('Successfully deployed to Gist!', 'Close', { duration: 3000 });
+          // Reload deployment info
+          this.conversationService.getLatestDeployment(this.conversationId!).subscribe({
+            next: (deployment) => {
+              this.latestDeployment = deployment;
+            }
+          });
+        } else {
+          this.snackBar.open(response.error || 'Deployment failed', 'Close', { duration: 5000 });
+        }
+      },
+      error: (error: DeploymentResponse) => {
+        this.deploymentState = 'failed';
+        message.deploymentResult = error;
+        this.deployingMessageIndex = undefined;
+        this.snackBar.open(error.error || 'Deployment failed', 'Close', { duration: 5000 });
+      }
+    });
+  }
+
+  /**
+   * Download generated MCP server as ZIP file
+   */
+  async downloadAsZip(message: ExtendedChatMessage): Promise<void> {
     if (!message.generatedCode) {
       return;
     }
 
-    // Create a ZIP-like structure (simplified - could use JSZip library)
+    const zip = new JSZip();
     const files = message.generatedCode.supportingFiles || {};
     const mainFile = message.generatedCode.mainFile || '';
     const documentation = message.generatedCode.documentation || '';
 
-    // For now, download as JSON
-    const dataStr = JSON.stringify({
-      mainFile,
-      supportingFiles: files,
-      documentation
-    }, null, 2);
+    // Add main file (usually index.ts)
+    if (mainFile) {
+      zip.file('src/index.ts', mainFile);
+    }
 
-    const dataUri = 'data:application/json;charset=utf-8,' + encodeURIComponent(dataStr);
-    const exportFileDefaultName = 'mcp-server.json';
+    // Add supporting files
+    for (const [filename, content] of Object.entries(files)) {
+      if (typeof content === 'string') {
+        // Preserve file paths or put in src directory
+        const filePath = filename.startsWith('src/') ? filename : `src/${filename}`;
+        zip.file(filePath, content);
+      }
+    }
 
-    const linkElement = document.createElement('a');
-    linkElement.setAttribute('href', dataUri);
-    linkElement.setAttribute('download', exportFileDefaultName);
-    linkElement.click();
+    // Add documentation as README
+    if (documentation) {
+      zip.file('README.md', documentation);
+    }
+
+    // Add package.json if not present
+    if (!files['package.json']) {
+      const packageJson = {
+        name: 'mcp-server',
+        version: '1.0.0',
+        type: 'module',
+        main: 'dist/index.js',
+        scripts: {
+          build: 'tsc',
+          start: 'node dist/index.js'
+        },
+        dependencies: {
+          '@modelcontextprotocol/sdk': '^1.0.0'
+        },
+        devDependencies: {
+          typescript: '^5.0.0',
+          '@types/node': '^20.0.0'
+        }
+      };
+      zip.file('package.json', JSON.stringify(packageJson, null, 2));
+    }
+
+    // Generate and download ZIP
+    const content = await zip.generateAsync({ type: 'blob' });
+    const url = URL.createObjectURL(content);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'mcp-server.zip';
+    link.click();
+    URL.revokeObjectURL(url);
+
+    this.snackBar.open('ZIP file downloaded', 'Close', { duration: 2000 });
+  }
+
+  /**
+   * Copy text to clipboard
+   */
+  copyToClipboard(text: string): void {
+    navigator.clipboard.writeText(text).then(() => {
+      this.snackBar.open('Copied to clipboard!', 'Close', { duration: 2000 });
+    }).catch(() => {
+      this.snackBar.open('Failed to copy', 'Close', { duration: 2000 });
+    });
+  }
+
+  /**
+   * Check if a specific message is currently deploying
+   */
+  isDeploying(message: ExtendedChatMessage): boolean {
+    const messageIndex = this.messages.indexOf(message);
+    return this.deploymentState === 'deploying' && this.deployingMessageIndex === messageIndex;
   }
 
   clearSession(): void {
