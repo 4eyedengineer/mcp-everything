@@ -1,4 +1,4 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, NotImplementedException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { existsSync, readdirSync, readFileSync } from 'fs';
@@ -16,6 +16,12 @@ import {
   DeploymentStatusResponse,
   DeploymentFile,
   DeploymentOptions,
+  DeploymentFilters,
+  PaginatedDeployments,
+  DeleteDeploymentResult,
+  DeploymentType,
+  DeploymentStatus,
+  EnterpriseDeploymentOptions,
 } from './types/deployment.types';
 
 @Injectable()
@@ -288,6 +294,243 @@ export class DeploymentOrchestratorService {
       where: { conversationId },
       order: { createdAt: 'DESC' },
     });
+  }
+
+  /**
+   * Get a single deployment by ID
+   */
+  async getDeploymentById(deploymentId: string): Promise<DeploymentStatusResponse | null> {
+    const deployment = await this.deploymentRepository.findOneBy({ id: deploymentId });
+
+    if (!deployment) {
+      return null;
+    }
+
+    return {
+      deploymentId: deployment.id,
+      conversationId: deployment.conversationId,
+      type: deployment.deploymentType,
+      status: deployment.status,
+      urls: {
+        repository: deployment.repositoryUrl,
+        gist: deployment.gistUrl,
+        gistRaw: deployment.metadata?.rawUrl as string | undefined,
+        codespace: deployment.codespaceUrl,
+      },
+      errorMessage: deployment.errorMessage,
+      createdAt: deployment.createdAt,
+      deployedAt: deployment.deployedAt,
+    };
+  }
+
+  /**
+   * List all deployments with filtering and pagination
+   */
+  async listDeployments(filters: DeploymentFilters = {}): Promise<PaginatedDeployments> {
+    const { type, status, limit = 20, offset = 0 } = filters;
+
+    // Build query conditions
+    const where: Record<string, unknown> = {};
+    if (type) {
+      where.deploymentType = type;
+    }
+    if (status) {
+      where.status = status;
+    }
+
+    // Get total count
+    const total = await this.deploymentRepository.count({ where });
+
+    // Get paginated results
+    const deployments = await this.deploymentRepository.find({
+      where,
+      order: { createdAt: 'DESC' },
+      take: Math.min(limit, 100), // Cap at 100
+      skip: offset,
+    });
+
+    return {
+      deployments: deployments.map((d) => ({
+        deploymentId: d.id,
+        conversationId: d.conversationId,
+        type: d.deploymentType,
+        status: d.status,
+        urls: {
+          repository: d.repositoryUrl,
+          gist: d.gistUrl,
+          gistRaw: d.metadata?.rawUrl as string | undefined,
+          codespace: d.codespaceUrl,
+        },
+        errorMessage: d.errorMessage,
+        createdAt: d.createdAt,
+        deployedAt: d.deployedAt,
+      })),
+      total,
+      limit: Math.min(limit, 100),
+      offset,
+    };
+  }
+
+  /**
+   * Update a Gist deployment (description only)
+   */
+  async updateGistDeployment(
+    deploymentId: string,
+    description?: string,
+  ): Promise<DeploymentResult> {
+    const deployment = await this.deploymentRepository.findOneBy({ id: deploymentId });
+
+    if (!deployment) {
+      throw new NotFoundException(`Deployment not found: ${deploymentId}`);
+    }
+
+    if (deployment.deploymentType !== 'gist') {
+      throw new Error('Can only update Gist deployments');
+    }
+
+    const gistId = deployment.metadata?.gistId as string | undefined;
+    if (!gistId) {
+      throw new Error('Gist ID not found in deployment metadata');
+    }
+
+    try {
+      // Get the conversation to re-read files if needed
+      const conversation = await this.conversationRepository.findOneBy({
+        id: deployment.conversationId,
+      });
+
+      if (!conversation) {
+        throw new Error('Conversation not found');
+      }
+
+      // Re-read files and update gist
+      const files = await this.getGeneratedFiles(deployment.conversationId);
+      const result = await this.gistProvider.updateGist(gistId, files, description);
+
+      if (result.success) {
+        // Update deployment metadata
+        const updatedMetadata = {
+          ...(deployment.metadata || {}),
+          rawUrl: result.rawUrl,
+        };
+        await this.deploymentRepository.update(deploymentId, {
+          metadata: updatedMetadata as Record<string, any>,
+        });
+
+        return {
+          success: true,
+          deploymentId,
+          type: 'gist',
+          urls: {
+            gist: result.gistUrl,
+            gistRaw: result.rawUrl,
+          },
+        };
+      } else {
+        throw new Error(result.error || 'Failed to update Gist');
+      }
+    } catch (error) {
+      this.logger.error(`Failed to update Gist deployment: ${error.message}`);
+      return {
+        success: false,
+        deploymentId,
+        type: 'gist',
+        urls: {},
+        error: error.message,
+      };
+    }
+  }
+
+  /**
+   * Delete a Gist deployment
+   */
+  async deleteGistDeployment(deploymentId: string): Promise<DeleteDeploymentResult> {
+    const deployment = await this.deploymentRepository.findOneBy({ id: deploymentId });
+
+    if (!deployment) {
+      throw new NotFoundException(`Deployment not found: ${deploymentId}`);
+    }
+
+    if (deployment.deploymentType !== 'gist') {
+      throw new Error('Can only delete Gist deployments with this method');
+    }
+
+    const gistId = deployment.metadata?.gistId as string | undefined;
+    if (!gistId) {
+      // No gist to delete, just remove the record
+      await this.deploymentRepository.delete(deploymentId);
+      return { success: true };
+    }
+
+    try {
+      const deleted = await this.gistProvider.deleteGist(gistId);
+      if (deleted) {
+        await this.deploymentRepository.delete(deploymentId);
+        return { success: true };
+      } else {
+        return { success: false, error: 'Failed to delete Gist from GitHub' };
+      }
+    } catch (error) {
+      this.logger.error(`Failed to delete Gist deployment: ${error.message}`);
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
+   * Delete a repository deployment
+   */
+  async deleteRepoDeployment(deploymentId: string): Promise<DeleteDeploymentResult> {
+    const deployment = await this.deploymentRepository.findOneBy({ id: deploymentId });
+
+    if (!deployment) {
+      throw new NotFoundException(`Deployment not found: ${deploymentId}`);
+    }
+
+    if (deployment.deploymentType !== 'repo') {
+      throw new Error('Can only delete repository deployments with this method');
+    }
+
+    if (!deployment.repositoryUrl) {
+      // No repo to delete, just remove the record
+      await this.deploymentRepository.delete(deploymentId);
+      return { success: true };
+    }
+
+    try {
+      // Parse owner/repo from URL
+      const parsed = this.gitHubRepoProvider.parseRepoUrl(deployment.repositoryUrl);
+      if (!parsed) {
+        throw new Error(`Invalid repository URL: ${deployment.repositoryUrl}`);
+      }
+
+      const deleted = await this.gitHubRepoProvider.deleteRepository(parsed.owner, parsed.repo);
+      if (deleted) {
+        await this.deploymentRepository.delete(deploymentId);
+        return { success: true };
+      } else {
+        return { success: false, error: 'Failed to delete repository from GitHub' };
+      }
+    } catch (error) {
+      this.logger.error(`Failed to delete repository deployment: ${error.message}`);
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
+   * Deploy to enterprise (stub - not yet implemented)
+   */
+  async deployToEnterprise(
+    conversationId: string,
+    options: EnterpriseDeploymentOptions = {},
+  ): Promise<DeploymentResult> {
+    this.logger.log(`Enterprise deployment requested for conversation: ${conversationId}`);
+    this.logger.log(`Options: ${JSON.stringify(options)}`);
+
+    throw new NotImplementedException(
+      'Enterprise deployment is not yet available. ' +
+      'This feature will include custom domains, CDN support, and regional deployments. ' +
+      'Please use GitHub repository or Gist deployment for now.',
+    );
   }
 
   /**

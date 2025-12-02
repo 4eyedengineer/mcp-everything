@@ -6,7 +6,7 @@
 
 import { CollectedEnvVar } from '../../types/env-variable.types';
 
-export type DeploymentType = 'gist' | 'repo' | 'none';
+export type DeploymentType = 'gist' | 'repo' | 'enterprise' | 'none';
 export type DeploymentStatus = 'pending' | 'success' | 'failed';
 
 export interface DeploymentFile {
@@ -20,6 +20,7 @@ export interface DeploymentUrls {
   gistRaw?: string;
   codespace?: string;
   clone?: string;
+  enterprise?: string;
 }
 
 export interface DeploymentOptions {
@@ -77,4 +78,41 @@ export interface DevContainerConfig {
   };
   postCreateCommand: string;
   remoteUser: string;
+}
+
+/**
+ * Enterprise deployment options (stub for future implementation)
+ */
+export interface EnterpriseDeploymentOptions {
+  customDomain?: string;
+  region?: string;
+  enableCdn?: boolean;
+}
+
+/**
+ * Filters for listing deployments
+ */
+export interface DeploymentFilters {
+  type?: DeploymentType;
+  status?: DeploymentStatus;
+  limit?: number;
+  offset?: number;
+}
+
+/**
+ * Paginated deployment list result
+ */
+export interface PaginatedDeployments {
+  deployments: DeploymentStatusResponse[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+/**
+ * Delete deployment result
+ */
+export interface DeleteDeploymentResult {
+  success: boolean;
+  error?: string;
 }

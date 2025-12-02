@@ -1,7 +1,7 @@
 /// <reference types="jest" />
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { NotFoundException } from '@nestjs/common';
+import { NotFoundException, NotImplementedException } from '@nestjs/common';
 import { DeploymentOrchestratorService } from './deployment.service';
 import { Deployment } from '../database/entities/deployment.entity';
 import { Conversation } from '../database/entities/conversation.entity';
@@ -39,9 +39,11 @@ describe('DeploymentOrchestratorService', () => {
       create: jest.fn().mockReturnValue(mockDeployment),
       save: jest.fn().mockResolvedValue(mockDeployment),
       update: jest.fn().mockResolvedValue({}),
+      delete: jest.fn().mockResolvedValue({}),
       find: jest.fn().mockResolvedValue([mockDeployment]),
       findOne: jest.fn().mockResolvedValue(mockDeployment),
       findOneBy: jest.fn().mockResolvedValue(mockDeployment),
+      count: jest.fn().mockResolvedValue(1),
     };
 
     mockConversationRepository = {
@@ -55,6 +57,8 @@ describe('DeploymentOrchestratorService', () => {
         cloneUrl: 'https://github.com/test-user/test-repo.git',
         codespaceUrl: 'https://github.com/codespaces/new?repo=test-user/test-repo',
       }),
+      deleteRepository: jest.fn().mockResolvedValue(true),
+      parseRepoUrl: jest.fn().mockReturnValue({ owner: 'test-user', repo: 'test-repo' }),
     };
 
     mockGistProvider = {
@@ -63,6 +67,19 @@ describe('DeploymentOrchestratorService', () => {
         gistUrl: 'https://gist.github.com/abc123',
         gistId: 'abc123',
       }),
+      deploySingleFile: jest.fn().mockResolvedValue({
+        success: true,
+        gistUrl: 'https://gist.github.com/abc123',
+        gistId: 'abc123',
+        rawUrl: 'https://gist.githubusercontent.com/abc123/raw',
+      }),
+      updateGist: jest.fn().mockResolvedValue({
+        success: true,
+        gistUrl: 'https://gist.github.com/abc123',
+        gistId: 'abc123',
+        rawUrl: 'https://gist.githubusercontent.com/abc123/raw',
+      }),
+      deleteGist: jest.fn().mockResolvedValue(true),
     };
 
     mockDevContainerProvider = {
@@ -338,6 +355,266 @@ describe('DeploymentOrchestratorService', () => {
       const result = await service.getLatestDeployment('conv-123');
 
       expect(result).toBeNull();
+    });
+  });
+
+  describe('getDeploymentById', () => {
+    it('should return deployment by ID', async () => {
+      mockDeploymentRepository.findOneBy.mockResolvedValue({
+        id: 'deploy-123',
+        conversationId: 'conv-123',
+        deploymentType: 'repo',
+        status: 'success',
+        repositoryUrl: 'https://github.com/test-user/test-repo',
+        metadata: {},
+        createdAt: new Date(),
+      });
+
+      const result = await service.getDeploymentById('deploy-123');
+
+      expect(result).not.toBeNull();
+      expect(result?.deploymentId).toBe('deploy-123');
+      expect(result?.type).toBe('repo');
+    });
+
+    it('should return null if deployment does not exist', async () => {
+      mockDeploymentRepository.findOneBy.mockResolvedValue(null);
+
+      const result = await service.getDeploymentById('nonexistent');
+
+      expect(result).toBeNull();
+    });
+  });
+
+  describe('listDeployments', () => {
+    it('should list all deployments with default pagination', async () => {
+      mockDeploymentRepository.find.mockResolvedValue([
+        {
+          id: 'deploy-123',
+          conversationId: 'conv-123',
+          deploymentType: 'repo',
+          status: 'success',
+          metadata: {},
+          createdAt: new Date(),
+        },
+      ]);
+
+      const result = await service.listDeployments({});
+
+      expect(result.deployments).toHaveLength(1);
+      expect(result.total).toBe(1);
+      expect(result.limit).toBe(20);
+      expect(result.offset).toBe(0);
+    });
+
+    it('should filter by deployment type', async () => {
+      await service.listDeployments({ type: 'gist' });
+
+      expect(mockDeploymentRepository.find).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { deploymentType: 'gist' },
+        }),
+      );
+    });
+
+    it('should filter by status', async () => {
+      await service.listDeployments({ status: 'failed' });
+
+      expect(mockDeploymentRepository.find).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { status: 'failed' },
+        }),
+      );
+    });
+
+    it('should respect pagination parameters', async () => {
+      await service.listDeployments({ limit: 10, offset: 5 });
+
+      expect(mockDeploymentRepository.find).toHaveBeenCalledWith(
+        expect.objectContaining({
+          take: 10,
+          skip: 5,
+        }),
+      );
+    });
+
+    it('should cap limit at 100', async () => {
+      await service.listDeployments({ limit: 500 });
+
+      expect(mockDeploymentRepository.find).toHaveBeenCalledWith(
+        expect.objectContaining({
+          take: 100,
+        }),
+      );
+    });
+  });
+
+  describe('updateGistDeployment', () => {
+    it('should update a Gist deployment', async () => {
+      mockDeploymentRepository.findOneBy.mockResolvedValue({
+        id: 'deploy-123',
+        conversationId: 'conv-123',
+        deploymentType: 'gist',
+        status: 'success',
+        metadata: { gistId: 'abc123' },
+      });
+
+      const result = await service.updateGistDeployment('deploy-123', 'New description');
+
+      expect(result.success).toBe(true);
+      expect(mockGistProvider.updateGist).toHaveBeenCalledWith(
+        'abc123',
+        expect.any(Array),
+        'New description',
+      );
+    });
+
+    it('should throw NotFoundException if deployment does not exist', async () => {
+      mockDeploymentRepository.findOneBy.mockResolvedValue(null);
+
+      await expect(service.updateGistDeployment('nonexistent')).rejects.toThrow(NotFoundException);
+    });
+
+    it('should throw error if not a Gist deployment', async () => {
+      mockDeploymentRepository.findOneBy.mockResolvedValue({
+        ...mockDeployment,
+        deploymentType: 'repo',
+      });
+
+      await expect(service.updateGistDeployment('deploy-123')).rejects.toThrow(
+        'Can only update Gist deployments',
+      );
+    });
+
+    it('should throw error if gistId is missing', async () => {
+      mockDeploymentRepository.findOneBy.mockResolvedValue({
+        id: 'deploy-123',
+        conversationId: 'conv-123',
+        deploymentType: 'gist',
+        metadata: {},
+      });
+
+      await expect(service.updateGistDeployment('deploy-123')).rejects.toThrow(
+        'Gist ID not found',
+      );
+    });
+  });
+
+  describe('deleteGistDeployment', () => {
+    it('should delete a Gist deployment', async () => {
+      mockDeploymentRepository.findOneBy.mockResolvedValue({
+        id: 'deploy-123',
+        conversationId: 'conv-123',
+        deploymentType: 'gist',
+        metadata: { gistId: 'abc123' },
+      });
+
+      const result = await service.deleteGistDeployment('deploy-123');
+
+      expect(result.success).toBe(true);
+      expect(mockGistProvider.deleteGist).toHaveBeenCalledWith('abc123');
+      expect(mockDeploymentRepository.delete).toHaveBeenCalledWith('deploy-123');
+    });
+
+    it('should throw NotFoundException if deployment does not exist', async () => {
+      mockDeploymentRepository.findOneBy.mockResolvedValue(null);
+
+      await expect(service.deleteGistDeployment('nonexistent')).rejects.toThrow(NotFoundException);
+    });
+
+    it('should throw error if not a Gist deployment', async () => {
+      mockDeploymentRepository.findOneBy.mockResolvedValue({
+        ...mockDeployment,
+        deploymentType: 'repo',
+      });
+
+      await expect(service.deleteGistDeployment('deploy-123')).rejects.toThrow(
+        'Can only delete Gist deployments',
+      );
+    });
+
+    it('should delete record even if no gistId', async () => {
+      mockDeploymentRepository.findOneBy.mockResolvedValue({
+        id: 'deploy-123',
+        conversationId: 'conv-123',
+        deploymentType: 'gist',
+        metadata: {},
+      });
+
+      const result = await service.deleteGistDeployment('deploy-123');
+
+      expect(result.success).toBe(true);
+      expect(mockGistProvider.deleteGist).not.toHaveBeenCalled();
+      expect(mockDeploymentRepository.delete).toHaveBeenCalledWith('deploy-123');
+    });
+  });
+
+  describe('deleteRepoDeployment', () => {
+    it('should delete a repository deployment', async () => {
+      mockDeploymentRepository.findOneBy.mockResolvedValue({
+        id: 'deploy-123',
+        conversationId: 'conv-123',
+        deploymentType: 'repo',
+        repositoryUrl: 'https://github.com/test-user/test-repo',
+      });
+
+      const result = await service.deleteRepoDeployment('deploy-123');
+
+      expect(result.success).toBe(true);
+      expect(mockGitHubRepoProvider.parseRepoUrl).toHaveBeenCalledWith(
+        'https://github.com/test-user/test-repo',
+      );
+      expect(mockGitHubRepoProvider.deleteRepository).toHaveBeenCalledWith('test-user', 'test-repo');
+      expect(mockDeploymentRepository.delete).toHaveBeenCalledWith('deploy-123');
+    });
+
+    it('should throw NotFoundException if deployment does not exist', async () => {
+      mockDeploymentRepository.findOneBy.mockResolvedValue(null);
+
+      await expect(service.deleteRepoDeployment('nonexistent')).rejects.toThrow(NotFoundException);
+    });
+
+    it('should throw error if not a repo deployment', async () => {
+      mockDeploymentRepository.findOneBy.mockResolvedValue({
+        ...mockDeployment,
+        deploymentType: 'gist',
+      });
+
+      await expect(service.deleteRepoDeployment('deploy-123')).rejects.toThrow(
+        'Can only delete repository deployments',
+      );
+    });
+
+    it('should delete record even if no repositoryUrl', async () => {
+      mockDeploymentRepository.findOneBy.mockResolvedValue({
+        id: 'deploy-123',
+        conversationId: 'conv-123',
+        deploymentType: 'repo',
+        repositoryUrl: null,
+      });
+
+      const result = await service.deleteRepoDeployment('deploy-123');
+
+      expect(result.success).toBe(true);
+      expect(mockGitHubRepoProvider.deleteRepository).not.toHaveBeenCalled();
+      expect(mockDeploymentRepository.delete).toHaveBeenCalledWith('deploy-123');
+    });
+  });
+
+  describe('deployToEnterprise', () => {
+    it('should throw NotImplementedException', async () => {
+      await expect(service.deployToEnterprise('conv-123', {})).rejects.toThrow(
+        NotImplementedException,
+      );
+    });
+
+    it('should include helpful message in error', async () => {
+      try {
+        await service.deployToEnterprise('conv-123', {});
+      } catch (error) {
+        expect(error.message).toContain('Enterprise deployment is not yet available');
+        expect(error.message).toContain('custom domains');
+      }
     });
   });
 });
