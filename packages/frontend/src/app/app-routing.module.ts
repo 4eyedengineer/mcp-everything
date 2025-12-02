@@ -25,6 +25,14 @@ const routes: Routes = [
     }
   },
   {
+    path: 'servers',
+    loadChildren: () => import('./features/servers/servers.module').then(m => m.ServersModule),
+    data: {
+      title: 'My Servers',
+      description: 'Manage your hosted MCP servers'
+    }
+  },
+  {
     path: 'account',
     loadChildren: () => import('./features/account/account.module').then(m => m.AccountModule),
     data: {

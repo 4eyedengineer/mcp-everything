@@ -1,0 +1,70 @@
+<div class="servers-page">
+  <header class="servers-header">
+    <h1>My Hosted Servers</h1>
+    <div class="header-actions">
+      <button mat-icon-button (click)="refreshServers()" class="refresh-button" title="Refresh">
+        <mat-icon>refresh</mat-icon>
+      </button>
+      <button mat-raised-button routerLink="/chat" class="btn-primary">
+        <mat-icon>add</mat-icon>
+        New Server
+      </button>
+    </div>
+  </header>
+
+  <!-- Loading State -->
+  <div *ngIf="isLoading" class="loading-state">
+    <mat-spinner diameter="40"></mat-spinner>
+    <p>Loading servers...</p>
+  </div>
+
+  <!-- Error State -->
+  <div *ngIf="error && !isLoading" class="error-state">
+    <mat-icon>error_outline</mat-icon>
+    <p>{{ error }}</p>
+    <button mat-button (click)="refreshServers()">Try Again</button>
+  </div>
+
+  <!-- Empty State -->
+  <div *ngIf="!isLoading && !error && servers.length === 0" class="empty-state">
+    <mat-icon class="empty-icon">cloud_off</mat-icon>
+    <h2>No Hosted Servers Yet</h2>
+    <p>You haven't deployed any MCP servers to the cloud.</p>
+    <p>Create a new server through the chat interface and deploy it to get started.</p>
+    <button mat-raised-button routerLink="/chat" class="btn-primary">
+      <mat-icon>add</mat-icon>
+      Create Your First Server
+    </button>
+  </div>
+
+  <!-- Servers List -->
+  <div *ngIf="!isLoading && !error && servers.length > 0" class="servers-list">
+    <mcp-server-management-card
+      *ngFor="let server of servers"
+      [server]="server"
+      (start)="startServer($event)"
+      (stop)="stopServer($event)"
+      (delete)="openDeleteConfirmation($event)"
+      (viewLogs)="openLogs($event)">
+    </mcp-server-management-card>
+  </div>
+
+  <!-- Logs Modal -->
+  <mcp-logs-modal
+    *ngIf="selectedServerForLogs"
+    [server]="selectedServerForLogs"
+    (close)="closeLogs()">
+  </mcp-logs-modal>
+
+  <!-- Delete Confirmation Modal -->
+  <mcp-confirm-modal
+    *ngIf="serverToDelete"
+    title="Delete Server"
+    [message]="'Are you sure you want to delete \'' + serverToDelete.serverName + '\'? This action cannot be undone and will permanently remove the server and all its data.'"
+    confirmText="Delete"
+    cancelText="Cancel"
+    [isDanger]="true"
+    (confirm)="confirmDelete()"
+    (cancel)="cancelDelete()">
+  </mcp-confirm-modal>
+</div>

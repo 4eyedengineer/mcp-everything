@@ -201,6 +201,23 @@ export class HostingApiService {
   }
 
   /**
+   * Get server logs
+   * @param serverId The server ID
+   * @param lines Number of log lines to retrieve (default: 100)
+   */
+  getLogs(
+    serverId: string,
+    lines: number = 100
+  ): Observable<{ logs: string[]; message: string }> {
+    return this.http
+      .get<{ logs: string[]; message: string }>(
+        `${this.baseUrl}/servers/${serverId}/logs`,
+        { params: { lines: lines.toString() } }
+      )
+      .pipe(catchError((error) => this.handleError(error, 'getLogs')));
+  }
+
+  /**
    * Handle HTTP errors
    */
   private handleError(error: HttpErrorResponse, operation: string): Observable<never> {

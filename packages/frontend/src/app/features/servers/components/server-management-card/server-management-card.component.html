@@ -1,0 +1,101 @@
+<div class="server-card" [ngClass]="statusClass">
+  <div class="status-indicator"></div>
+
+  <div class="server-info">
+    <div class="server-header">
+      <div class="server-id">
+        <mat-icon [class]="statusClass">{{ statusIcon }}</mat-icon>
+        <span class="server-id-text">{{ server.serverId }}</span>
+      </div>
+    </div>
+
+    <h3 class="server-name">{{ server.serverName }}</h3>
+    <p class="server-description" *ngIf="server.description">{{ server.description }}</p>
+
+    <!-- Deploying State -->
+    <div class="deploy-progress" *ngIf="isDeploying">
+      <p class="deploy-message">{{ server.statusMessage || 'Deploying...' }}</p>
+      <mat-progress-bar mode="determinate" [value]="deployProgress"></mat-progress-bar>
+      <span class="progress-text">{{ deployProgress | number:'1.0-0' }}%</span>
+    </div>
+
+    <!-- Running/Stopped State -->
+    <ng-container *ngIf="!isDeploying">
+      <div class="server-endpoint">
+        <label>Endpoint:</label>
+        <code>{{ server.endpointUrl }}</code>
+        <button mat-icon-button (click)="copyEndpoint()" matTooltip="Copy endpoint URL" class="copy-btn">
+          <mat-icon>content_copy</mat-icon>
+        </button>
+      </div>
+
+      <div class="server-stats">
+        <span class="stat">
+          <mat-icon>{{ statusIcon }}</mat-icon>
+          <strong>{{ statusLabel }}</strong>
+        </span>
+        <span class="stat">
+          <mat-icon>analytics</mat-icon>
+          {{ server.requestCount | number }} requests
+        </span>
+        <span class="stat" *ngIf="server.lastRequestAt">
+          <mat-icon>schedule</mat-icon>
+          Last: {{ server.lastRequestAt | timeAgo }}
+        </span>
+      </div>
+
+      <div class="server-tools" *ngIf="server.tools && server.tools.length > 0">
+        <label>Tools:</label>
+        <div class="tools-list">
+          <span class="tool-tag" *ngFor="let tool of server.tools.slice(0, 5)">{{ tool.name }}</span>
+          <span class="tool-tag more" *ngIf="server.tools.length > 5">+{{ server.tools.length - 5 }} more</span>
+        </div>
+      </div>
+    </ng-container>
+  </div>
+
+  <div class="server-actions" *ngIf="!isDeploying">
+    <button
+      *ngIf="server.status === 'running'"
+      mat-button
+      (click)="onStop()"
+      class="action-btn"
+      matTooltip="Stop server">
+      <mat-icon>pause</mat-icon>
+      Stop
+    </button>
+    <button
+      *ngIf="server.status === 'stopped'"
+      mat-button
+      (click)="onStart()"
+      class="action-btn"
+      matTooltip="Start server">
+      <mat-icon>play_arrow</mat-icon>
+      Start
+    </button>
+    <button
+      mat-button
+      (click)="copyClaudeConfig()"
+      class="action-btn"
+      matTooltip="Copy Claude Desktop config">
+      <mat-icon>integration_instructions</mat-icon>
+      Config
+    </button>
+    <button
+      mat-button
+      (click)="onViewLogs()"
+      class="action-btn"
+      matTooltip="View logs">
+      <mat-icon>article</mat-icon>
+      Logs
+    </button>
+    <button
+      mat-button
+      (click)="onDelete()"
+      class="action-btn action-delete"
+      matTooltip="Delete server">
+      <mat-icon>delete</mat-icon>
+      Delete
+    </button>
+  </div>
+</div>
