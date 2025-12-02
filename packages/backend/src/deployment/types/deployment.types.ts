@@ -15,6 +15,7 @@ export interface DeploymentFile {
 export interface DeploymentUrls {
   repository?: string;
   gist?: string;
+  gistRaw?: string;
   codespace?: string;
 }
 
@@ -54,6 +55,7 @@ export interface GistResult {
   success: boolean;
   gistUrl?: string;
   gistId?: string;
+  rawUrl?: string;
   error?: string;
 }
 
