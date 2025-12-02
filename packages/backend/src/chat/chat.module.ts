@@ -8,6 +8,7 @@ import { GitHubAnalysisService } from '../github-analysis.service';
 import { ToolDiscoveryService } from '../tool-discovery.service';
 import { McpGenerationService } from '../mcp-generation.service';
 import { ConversationService } from '../conversation.service';
+import { EnvVariableService } from '../env-variable.service';
 import { Conversation, ConversationMemory, ResearchCache, Deployment } from '../database/entities';
 // Ensemble architecture services
 import { ResearchService } from '../orchestration/research.service';
@@ -32,6 +33,8 @@ import { McpTestingService } from '../testing/mcp-testing.service';
     ToolDiscoveryService,
     McpGenerationService,
     ConversationService,
+    // Environment variable management
+    EnvVariableService,
     // Ensemble architecture services
     ResearchService,
     EnsembleService,

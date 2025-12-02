@@ -28,6 +28,8 @@
     "setup:check": "node scripts/setup-check.js"
   },
   "dependencies": {
+    "@types/libsodium-wrappers": "^0.7.14",
+    "libsodium-wrappers": "^0.7.15",
     "rxjs": "~7.8.0"
   },
   "pnpm": {
