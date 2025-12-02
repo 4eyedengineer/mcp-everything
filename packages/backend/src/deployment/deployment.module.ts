@@ -14,9 +14,11 @@ import { DevContainerProvider } from './providers/devcontainer.provider';
 import { GitignoreProvider } from './providers/gitignore.provider';
 import { CIWorkflowProvider } from './providers/ci-workflow.provider';
 import { ValidationModule } from '../validation/validation.module';
+import { UserModule } from '../user/user.module';
 
 import { DeploymentRetryService } from './services/retry.service';
 import { DeploymentRollbackService } from './services/rollback.service';
+import { DeploymentRouterService } from './services/deployment-router.service';
 
 @Module({
   imports: [
@@ -28,6 +30,8 @@ import { DeploymentRollbackService } from './services/rollback.service';
     }]),
     // Import ValidationModule for post-deployment validation
     forwardRef(() => ValidationModule),
+    // Import UserModule for tier-based routing
+    forwardRef(() => UserModule),
   ],
   controllers: [DeploymentController],
   providers: [
@@ -39,7 +43,8 @@ import { DeploymentRollbackService } from './services/rollback.service';
     CIWorkflowProvider,
     DeploymentRetryService,
     DeploymentRollbackService,
+    DeploymentRouterService,
   ],
-  exports: [DeploymentOrchestratorService, DeploymentRetryService],
+  exports: [DeploymentOrchestratorService, DeploymentRetryService, DeploymentRouterService],
 })
 export class DeploymentModule {}

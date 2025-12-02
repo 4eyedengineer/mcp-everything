@@ -8,6 +8,7 @@ import {
   Index,
 } from 'typeorm';
 import { Conversation } from './conversation.entity';
+import { User } from './user.entity';
 
 @Entity('deployments')
 export class Deployment {
@@ -21,6 +22,17 @@ export class Deployment {
   @ManyToOne(() => Conversation, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'conversationId' })
   conversation: Conversation;
+
+  @Column({ type: 'uuid', nullable: true })
+  @Index('IDX_deployments_userId')
+  userId?: string;
+
+  @ManyToOne(() => User, { nullable: true, onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'userId' })
+  user?: User;
+
+  @Column({ type: 'varchar', length: 20, nullable: true })
+  userTier?: 'free' | 'pro' | 'enterprise';
 
   @Column({ type: 'varchar', length: 20 })
   deploymentType: 'gist' | 'repo' | 'none';

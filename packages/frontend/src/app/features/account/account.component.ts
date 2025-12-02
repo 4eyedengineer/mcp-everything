@@ -1,8 +1,10 @@
-import { Component } from '@angular/core';
+import { Component, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { MatIconModule } from '@angular/material/icon';
 import { MatTooltipModule } from '@angular/material/tooltip';
+import { Observable } from 'rxjs';
+import { SubscriptionService, TierInfo, SubscriptionInfo, UsageInfo } from '../../core/services/subscription.service';
 
 interface UserProfile {
   email: string;
@@ -30,7 +32,7 @@ interface Settings {
   templateUrl: './account.component.html',
   styleUrls: ['./account.component.scss']
 })
-export class AccountComponent {
+export class AccountComponent implements OnInit {
   // Placeholder data - will be replaced with actual user data
   profile: UserProfile = {
     email: 'user@example.com',
@@ -47,6 +49,28 @@ export class AccountComponent {
   };
 
   isEditingProfile = false;
+
+  // Subscription data
+  tierInfo$: Observable<TierInfo | null>;
+  subscription$: Observable<SubscriptionInfo | null>;
+  usage$: Observable<UsageInfo | null>;
+  isUpgrading = false;
+
+  constructor(private subscriptionService: SubscriptionService) {
+    this.tierInfo$ = this.subscriptionService.tierInfo$;
+    this.subscription$ = this.subscriptionService.subscription$;
+    this.usage$ = this.subscriptionService.usage$;
+  }
+
+  ngOnInit(): void {
+    this.loadSubscriptionData();
+  }
+
+  private loadSubscriptionData(): void {
+    this.subscriptionService.getTierInfo().subscribe();
+    this.subscriptionService.getSubscription().subscribe();
+    this.subscriptionService.getUsage().subscribe();
+  }
 
   editProfile(): void {
     this.isEditingProfile = true;
@@ -84,5 +108,41 @@ export class AccountComponent {
       console.log('Deleting account');
       // TODO: Implement account deletion
     }
+  }
+
+  // Subscription management methods
+  async upgradeToPro(): Promise<void> {
+    this.isUpgrading = true;
+    try {
+      const result = await this.subscriptionService.createCheckout('pro').toPromise();
+      if (result?.url) {
+        window.location.href = result.url;
+      }
+    } catch (error) {
+      console.error('Checkout failed:', error);
+      // TODO: Show error notification
+    } finally {
+      this.isUpgrading = false;
+    }
+  }
+
+  async manageSubscription(): Promise<void> {
+    try {
+      const result = await this.subscriptionService.createPortal().toPromise();
+      if (result?.url) {
+        window.location.href = result.url;
+      }
+    } catch (error) {
+      console.error('Portal session failed:', error);
+      // TODO: Show error notification
+    }
+  }
+
+  getTierDisplayName(tier: string): string {
+    return this.subscriptionService.getTierDisplayName(tier);
+  }
+
+  isUnlimited(limit: number): boolean {
+    return this.subscriptionService.isUnlimited(limit);
   }
 }
