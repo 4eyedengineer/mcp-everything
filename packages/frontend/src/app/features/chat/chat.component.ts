@@ -14,7 +14,7 @@ import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { ChatService, ChatMessage } from '../../core/services/chat.service';
 import { ConversationService, Deployment } from '../../core/services/conversation.service';
-import { DeploymentService, DeploymentResponse } from '../../core/services/deployment.service';
+import { DeploymentService, DeploymentResponse, ValidationResponse } from '../../core/services/deployment.service';
 import { SafeMarkdownPipe } from '../../shared/pipes/safe-markdown.pipe';
 import { v4 as uuidv4 } from 'uuid';
 import { Subscription } from 'rxjs';
@@ -525,6 +525,82 @@ export class ChatComponent implements OnInit, OnDestroy {
   useSuggestion(suggestion: string): void {
     this.currentMessage = suggestion;
     this.sendMessage();
+  }
+
+  /**
+   * Get CSS class for validation status badge
+   */
+  getValidationStatusClass(status?: string): string {
+    switch (status) {
+      case 'passed': return 'validation-passed';
+      case 'failed': return 'validation-failed';
+      case 'running': return 'validation-running';
+      case 'skipped': return 'validation-skipped';
+      default: return 'validation-pending';
+    }
+  }
+
+  /**
+   * Get icon for validation status
+   */
+  getValidationIcon(status?: string): string {
+    switch (status) {
+      case 'passed': return 'check_circle';
+      case 'failed': return 'error';
+      case 'running': return 'sync';
+      case 'skipped': return 'skip_next';
+      default: return 'schedule';
+    }
+  }
+
+  /**
+   * Get label for validation status
+   */
+  getValidationLabel(status?: string): string {
+    switch (status) {
+      case 'passed': return 'Validated';
+      case 'failed': return 'Validation Failed';
+      case 'running': return 'Validating...';
+      case 'skipped': return 'Skipped';
+      default: return 'Pending Validation';
+    }
+  }
+
+  /**
+   * Re-validate a deployment
+   */
+  revalidateDeployment(message: ExtendedChatMessage): void {
+    if (!message.deploymentResult?.deploymentId) {
+      this.snackBar.open('No deployment to validate', 'Close', { duration: 3000 });
+      return;
+    }
+
+    // Update status to running
+    if (message.deploymentResult) {
+      message.deploymentResult.validationStatus = 'running';
+    }
+
+    this.deploymentService.validateDeployment(message.deploymentResult.deploymentId, true).subscribe({
+      next: (response) => {
+        if (message.deploymentResult) {
+          message.deploymentResult.validationStatus = response.validationStatus;
+          message.deploymentResult.toolsPassedCount = response.toolsPassedCount;
+          message.deploymentResult.toolsTestedCount = response.toolsTestedCount;
+        }
+
+        if (response.success) {
+          this.snackBar.open('Validation passed!', 'Close', { duration: 3000 });
+        } else {
+          this.snackBar.open(`Validation failed: ${response.message}`, 'Close', { duration: 5000 });
+        }
+      },
+      error: (error) => {
+        if (message.deploymentResult) {
+          message.deploymentResult.validationStatus = 'failed';
+        }
+        this.snackBar.open('Validation error', 'Close', { duration: 3000 });
+      }
+    });
   }
 
   autoResize(event: Event): void {

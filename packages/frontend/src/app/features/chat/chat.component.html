@@ -166,6 +166,24 @@
                   </a>
                 </div>
               </ng-container>
+
+              <!-- Validation Status Badge -->
+              <div class="validation-status" *ngIf="message.deploymentResult?.deploymentId">
+                <div class="validation-badge" [ngClass]="getValidationStatusClass(message.deploymentResult?.validationStatus)">
+                  <mat-icon>{{ getValidationIcon(message.deploymentResult?.validationStatus) }}</mat-icon>
+                  <span class="status-label">{{ getValidationLabel(message.deploymentResult?.validationStatus) }}</span>
+                  <span *ngIf="message.deploymentResult?.toolsTestedCount" class="tools-count">
+                    ({{ message.deploymentResult?.toolsPassedCount || 0 }}/{{ message.deploymentResult?.toolsTestedCount }} tools)
+                  </span>
+                </div>
+                <button mat-button
+                        *ngIf="message.deploymentResult?.validationStatus === 'failed' || message.deploymentResult?.validationStatus === 'pending'"
+                        (click)="revalidateDeployment(message)"
+                        class="revalidate-button">
+                  <mat-icon>refresh</mat-icon>
+                  {{ message.deploymentResult?.validationStatus === 'failed' ? 'Re-validate' : 'Validate Now' }}
+                </button>
+              </div>
             </div>
 
             <!-- Deployment Error Card -->

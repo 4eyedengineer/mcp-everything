@@ -11,6 +11,7 @@ import { ToolDiscoveryService } from './tool-discovery.service';
 import { McpGenerationService } from './mcp-generation.service';
 import { ChatModule } from './chat/chat.module';
 import { DeploymentModule } from './deployment/deployment.module';
+import { ValidationModule } from './validation/validation.module';
 import { Conversation, ConversationMemory, Deployment } from './database/entities';
 
 // Basic DTO for generate endpoint
@@ -291,6 +292,7 @@ main().catch((error) => {
     TypeOrmModule.forFeature([Conversation, ConversationMemory, Deployment]),
     ChatModule,
     DeploymentModule,
+    ValidationModule,
   ],
   controllers: [AppController],
   providers: [

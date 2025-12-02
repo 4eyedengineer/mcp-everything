@@ -26,6 +26,59 @@ export interface DeploymentUrls {
 }
 
 /**
+ * Validation status for deployed MCP servers
+ */
+export type ValidationStatus = 'pending' | 'running' | 'passed' | 'failed' | 'skipped';
+
+/**
+ * Tool validation result
+ */
+export interface ToolValidationResult {
+  toolName: string;
+  success: boolean;
+  error?: string;
+  executionTime: number;
+}
+
+/**
+ * Validation result details
+ */
+export interface ValidationResult {
+  buildSuccess: boolean;
+  buildDuration?: number;
+  buildError?: string;
+  toolResults: ToolValidationResult[];
+  errors?: string[];
+  source: 'local_docker' | 'github_actions' | 'manual';
+}
+
+/**
+ * Validation response from API
+ */
+export interface ValidationResponse {
+  success: boolean;
+  deploymentId: string;
+  validationStatus: ValidationStatus;
+  message: string;
+  result?: ValidationResult;
+  validatedAt?: Date;
+  toolsPassedCount?: number;
+  toolsTestedCount?: number;
+}
+
+/**
+ * Validation status response
+ */
+export interface ValidationStatusResponse {
+  deploymentId: string;
+  validationStatus: ValidationStatus;
+  validatedAt?: Date;
+  toolsPassedCount?: number;
+  toolsTestedCount?: number;
+  validationResults?: ValidationResult;
+}
+
+/**
  * Response from deployment API
  */
 export interface DeploymentResponse {
@@ -34,6 +87,11 @@ export interface DeploymentResponse {
   type?: 'gist' | 'repo' | 'enterprise' | 'none';
   urls?: DeploymentUrls;
   error?: string;
+  // Validation fields
+  validationStatus?: ValidationStatus;
+  validatedAt?: Date;
+  toolsPassedCount?: number;
+  toolsTestedCount?: number;
 }
 
 /**
@@ -49,6 +107,7 @@ interface DeployRequest {
 })
 export class DeploymentService {
   private readonly baseUrl = 'http://localhost:3000/api/deploy';
+  private readonly validationUrl = 'http://localhost:3000/api/validation';
 
   constructor(private http: HttpClient) {}
 
@@ -111,6 +170,41 @@ export class DeploymentService {
     ).pipe(
       map(response => this.transformResponse(response)),
       catchError(error => this.handleError(error, 'retryDeployment'))
+    );
+  }
+
+  /**
+   * Trigger validation for a deployment
+   */
+  validateDeployment(deploymentId: string, forceRevalidate = false): Observable<ValidationResponse> {
+    return this.http.post<ValidationResponse>(
+      `${this.validationUrl}/${deploymentId}/validate`,
+      { forceRevalidate }
+    ).pipe(
+      catchError(error => this.handleError(error, 'validateDeployment'))
+    );
+  }
+
+  /**
+   * Get validation status for a deployment
+   */
+  getValidationStatus(deploymentId: string): Observable<ValidationStatusResponse> {
+    return this.http.get<ValidationStatusResponse>(
+      `${this.validationUrl}/${deploymentId}/status`
+    ).pipe(
+      catchError(error => this.handleError(error, 'getValidationStatus'))
+    );
+  }
+
+  /**
+   * Poll GitHub Actions for validation results
+   */
+  pollGitHubActionsValidation(deploymentId: string): Observable<ValidationResponse> {
+    return this.http.post<ValidationResponse>(
+      `${this.validationUrl}/${deploymentId}/poll-github`,
+      {}
+    ).pipe(
+      catchError(error => this.handleError(error, 'pollGitHubActionsValidation'))
     );
   }
 

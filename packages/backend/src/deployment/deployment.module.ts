@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ThrottlerModule } from '@nestjs/throttler';
 
@@ -13,6 +13,7 @@ import { GistProvider } from './providers/gist.provider';
 import { DevContainerProvider } from './providers/devcontainer.provider';
 import { GitignoreProvider } from './providers/gitignore.provider';
 import { CIWorkflowProvider } from './providers/ci-workflow.provider';
+import { ValidationModule } from '../validation/validation.module';
 
 import { DeploymentRetryService } from './services/retry.service';
 import { DeploymentRollbackService } from './services/rollback.service';
@@ -25,6 +26,8 @@ import { DeploymentRollbackService } from './services/rollback.service';
       ttl: 60000,
       limit: 10,
     }]),
+    // Import ValidationModule for post-deployment validation
+    forwardRef(() => ValidationModule),
   ],
   controllers: [DeploymentController],
   providers: [

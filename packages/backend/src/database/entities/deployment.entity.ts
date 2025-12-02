@@ -49,4 +49,35 @@ export class Deployment {
 
   @Column({ type: 'timestamp', nullable: true })
   deployedAt?: Date;
+
+  // Validation fields
+  @Column({ type: 'varchar', length: 20, default: 'pending' })
+  @Index()
+  validationStatus: 'pending' | 'running' | 'passed' | 'failed' | 'skipped';
+
+  @Column({ type: 'timestamp', nullable: true })
+  validatedAt?: Date;
+
+  @Column({ type: 'int', nullable: true })
+  toolsPassedCount?: number;
+
+  @Column({ type: 'int', nullable: true })
+  toolsTestedCount?: number;
+
+  @Column({ type: 'jsonb', nullable: true })
+  validationResults?: {
+    buildSuccess: boolean;
+    buildDuration?: number;
+    toolResults: Array<{
+      toolName: string;
+      success: boolean;
+      error?: string;
+      executionTime: number;
+    }>;
+    errors?: string[];
+    source: 'local_docker' | 'github_actions' | 'manual';
+  };
+
+  @Column({ type: 'varchar', nullable: true })
+  workflowRunId?: string;
 }
