@@ -2,11 +2,14 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Octokit } from '@octokit/rest';
 import { GeneratedManifests } from './manifest-generator.service';
+import * as fs from 'fs/promises';
+import * as path from 'path';
 
 export interface GitOpsCommitResult {
   success: boolean;
   commitSha?: string;
   commitUrl?: string;
+  localPath?: string;
   error?: string;
 }
 
@@ -17,6 +20,7 @@ export class GitOpsService {
   private readonly owner: string;
   private readonly repo: string;
   private readonly branch: string;
+  private readonly localGitOpsPath: string;
 
   constructor(private configService: ConfigService) {
     this.octokit = new Octokit({
@@ -25,12 +29,78 @@ export class GitOpsService {
     this.owner = this.configService.get('GITOPS_OWNER', '4eyedengineer');
     this.repo = this.configService.get('GITOPS_REPO', 'mcp-server-deployments');
     this.branch = this.configService.get('GITOPS_BRANCH', 'main');
+    // Local GitOps path for LOCAL_DEV mode
+    this.localGitOpsPath = this.configService.get(
+      'LOCAL_GITOPS_PATH',
+      path.join(process.cwd(), 'k8s', 'local-gitops', 'servers'),
+    );
   }
 
   /**
-   * Deploy server by committing manifests to GitOps repo
+   * Check if running in local development mode
+   */
+  private isLocalDev(): boolean {
+    return this.configService.get<string>('LOCAL_DEV') === 'true';
+  }
+
+  /**
+   * Deploy server by writing manifests (to local filesystem or GitHub repo)
    */
   async deployServer(
+    serverId: string,
+    manifests: GeneratedManifests,
+    kustomization: string,
+  ): Promise<GitOpsCommitResult> {
+    // LOCAL_DEV mode: write to local filesystem
+    if (this.isLocalDev()) {
+      return this.deployServerLocal(serverId, manifests, kustomization);
+    }
+
+    // Production mode: commit to GitHub
+    return this.deployServerGitHub(serverId, manifests, kustomization);
+  }
+
+  /**
+   * Deploy server manifests to local filesystem (LOCAL_DEV mode)
+   */
+  private async deployServerLocal(
+    serverId: string,
+    manifests: GeneratedManifests,
+    kustomization: string,
+  ): Promise<GitOpsCommitResult> {
+    try {
+      const serverDir = path.join(this.localGitOpsPath, serverId);
+
+      // Create server directory
+      await fs.mkdir(serverDir, { recursive: true });
+
+      // Write manifest files
+      await Promise.all([
+        fs.writeFile(path.join(serverDir, 'deployment.yaml'), manifests.deployment),
+        fs.writeFile(path.join(serverDir, 'service.yaml'), manifests.service),
+        fs.writeFile(path.join(serverDir, 'ingress.yaml'), manifests.ingress),
+        fs.writeFile(path.join(serverDir, 'kustomization.yaml'), kustomization),
+      ]);
+
+      this.logger.log(`LOCAL_DEV: Wrote manifests for ${serverId} to ${serverDir}`);
+
+      return {
+        success: true,
+        localPath: serverDir,
+      };
+    } catch (error) {
+      this.logger.error(`Failed to write local manifests for ${serverId}: ${error.message}`);
+      return {
+        success: false,
+        error: error.message,
+      };
+    }
+  }
+
+  /**
+   * Deploy server by committing manifests to GitOps GitHub repo
+   */
+  private async deployServerGitHub(
     serverId: string,
     manifests: GeneratedManifests,
     kustomization: string,
@@ -122,9 +192,47 @@ export class GitOpsService {
   }
 
   /**
-   * Remove server by deleting its directory from GitOps repo
+   * Remove server by deleting its manifests (from local filesystem or GitHub repo)
    */
   async removeServer(serverId: string): Promise<GitOpsCommitResult> {
+    // LOCAL_DEV mode: delete from local filesystem
+    if (this.isLocalDev()) {
+      return this.removeServerLocal(serverId);
+    }
+
+    // Production mode: remove from GitHub
+    return this.removeServerGitHub(serverId);
+  }
+
+  /**
+   * Remove server manifests from local filesystem (LOCAL_DEV mode)
+   */
+  private async removeServerLocal(serverId: string): Promise<GitOpsCommitResult> {
+    try {
+      const serverDir = path.join(this.localGitOpsPath, serverId);
+
+      // Remove the server directory
+      await fs.rm(serverDir, { recursive: true, force: true });
+
+      this.logger.log(`LOCAL_DEV: Removed manifests for ${serverId} from ${serverDir}`);
+
+      return {
+        success: true,
+        localPath: serverDir,
+      };
+    } catch (error) {
+      this.logger.error(`Failed to remove local manifests for ${serverId}: ${error.message}`);
+      return {
+        success: false,
+        error: error.message,
+      };
+    }
+  }
+
+  /**
+   * Remove server by deleting its directory from GitOps GitHub repo
+   */
+  private async removeServerGitHub(serverId: string): Promise<GitOpsCommitResult> {
     try {
       const basePath = `servers/${serverId}`;
 
