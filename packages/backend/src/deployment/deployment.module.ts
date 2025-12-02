@@ -14,6 +14,9 @@ import { DevContainerProvider } from './providers/devcontainer.provider';
 import { GitignoreProvider } from './providers/gitignore.provider';
 import { CIWorkflowProvider } from './providers/ci-workflow.provider';
 
+import { DeploymentRetryService } from './services/retry.service';
+import { DeploymentRollbackService } from './services/rollback.service';
+
 @Module({
   imports: [
     TypeOrmModule.forFeature([Deployment, Conversation]),
@@ -31,7 +34,9 @@ import { CIWorkflowProvider } from './providers/ci-workflow.provider';
     DevContainerProvider,
     GitignoreProvider,
     CIWorkflowProvider,
+    DeploymentRetryService,
+    DeploymentRollbackService,
   ],
-  exports: [DeploymentOrchestratorService],
+  exports: [DeploymentOrchestratorService, DeploymentRetryService],
 })
 export class DeploymentModule {}

@@ -5,6 +5,7 @@
  */
 
 import { CollectedEnvVar } from '../../types/env-variable.types';
+import { DeploymentErrorCode, RetryStrategy } from './deployment-errors.types';
 
 export type DeploymentType = 'gist' | 'repo' | 'enterprise' | 'none';
 export type DeploymentStatus = 'pending' | 'success' | 'failed';
@@ -39,6 +40,14 @@ export interface DeploymentResult {
   type: DeploymentType;
   urls: DeploymentUrls;
   error?: string;
+  /** Structured error code for programmatic handling */
+  errorCode?: DeploymentErrorCode;
+  /** Recommended retry strategy for this error */
+  retryStrategy?: RetryStrategy;
+  /** Milliseconds to wait before retrying (for rate limits) */
+  retryAfterMs?: number;
+  /** Alternative server names when naming conflict occurs */
+  suggestedNames?: string[];
 }
 
 export interface DeploymentStatusResponse {
@@ -48,6 +57,12 @@ export interface DeploymentStatusResponse {
   status: DeploymentStatus;
   urls: DeploymentUrls;
   errorMessage?: string;
+  /** Structured error code */
+  errorCode?: DeploymentErrorCode;
+  /** Number of retry attempts made */
+  retryCount?: number;
+  /** Whether this deployment can be retried */
+  canRetry?: boolean;
   createdAt: Date;
   deployedAt?: Date;
 }
@@ -117,4 +132,14 @@ export interface PaginatedDeployments {
 export interface DeleteDeploymentResult {
   success: boolean;
   error?: string;
+}
+
+/**
+ * Options for retrying a deployment
+ */
+export interface RetryDeploymentOptions {
+  /** Force retry even if retry strategy says not to */
+  forceRetry?: boolean;
+  /** New server name to use (for naming conflicts) */
+  newServerName?: string;
 }

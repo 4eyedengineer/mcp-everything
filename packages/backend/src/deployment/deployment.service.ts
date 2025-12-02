@@ -11,6 +11,8 @@ import { GistProvider, McpToolInfo } from './providers/gist.provider';
 import { DevContainerProvider } from './providers/devcontainer.provider';
 import { GitignoreProvider } from './providers/gitignore.provider';
 import { CIWorkflowProvider } from './providers/ci-workflow.provider';
+import { DeploymentRetryService } from './services/retry.service';
+import { DeploymentRollbackService } from './services/rollback.service';
 import {
   DeploymentResult,
   DeploymentStatusResponse,
@@ -23,6 +25,11 @@ import {
   DeploymentStatus,
   EnterpriseDeploymentOptions,
 } from './types/deployment.types';
+import {
+  DeploymentErrorCode,
+  ERROR_RETRY_CONFIG,
+  RetryStrategy,
+} from './types/deployment-errors.types';
 
 @Injectable()
 export class DeploymentOrchestratorService {
@@ -39,6 +46,8 @@ export class DeploymentOrchestratorService {
     private readonly devContainerProvider: DevContainerProvider,
     private readonly gitignoreProvider: GitignoreProvider,
     private readonly ciWorkflowProvider: CIWorkflowProvider,
+    private readonly retryService: DeploymentRetryService,
+    private readonly rollbackService: DeploymentRollbackService,
   ) {
     this.generatedServersDir = join(process.cwd(), '../../generated-servers');
   }
@@ -125,11 +134,29 @@ export class DeploymentOrchestratorService {
         throw new Error(result.error || 'GitHub deployment failed');
       }
     } catch (error) {
-      // Update deployment record with failure
+      const err = error as Error;
+      const deploymentError = this.retryService.parseGitHubError(error);
+
+      // Generate suggested names for naming conflicts
+      const suggestedNames =
+        deploymentError.code === DeploymentErrorCode.REPOSITORY_NAME_CONFLICT
+          ? this.retryService.generateAlternativeNames(
+              options.serverName || 'mcp-server',
+            )
+          : undefined;
+
+      // Update deployment record with failure and error details
+      const updatedMetadata = {
+        ...(savedDeployment.metadata || {}),
+        errorCode: deploymentError.code,
+        retryStrategy: deploymentError.retryStrategy,
+        suggestedNames,
+      };
       await this.deploymentRepository.update(savedDeployment.id, {
         status: 'failed',
-        errorMessage: error.message,
+        errorMessage: deploymentError.userMessage,
         deployedAt: new Date(),
+        metadata: updatedMetadata as Record<string, any>,
       });
 
       return {
@@ -137,7 +164,11 @@ export class DeploymentOrchestratorService {
         deploymentId: savedDeployment.id,
         type: 'repo',
         urls: {},
-        error: error.message,
+        error: deploymentError.userMessage,
+        errorCode: deploymentError.code,
+        retryStrategy: deploymentError.retryStrategy,
+        retryAfterMs: deploymentError.retryAfterMs,
+        suggestedNames,
       };
     }
   }
@@ -218,11 +249,20 @@ export class DeploymentOrchestratorService {
         throw new Error(result.error || 'Gist deployment failed');
       }
     } catch (error) {
-      // Update deployment record with failure
+      const err = error as Error;
+      const deploymentError = this.retryService.parseGitHubError(error);
+
+      // Update deployment record with failure and error details
+      const updatedMetadata = {
+        ...(savedDeployment.metadata || {}),
+        errorCode: deploymentError.code,
+        retryStrategy: deploymentError.retryStrategy,
+      };
       await this.deploymentRepository.update(savedDeployment.id, {
         status: 'failed',
-        errorMessage: error.message,
+        errorMessage: deploymentError.userMessage,
         deployedAt: new Date(),
+        metadata: updatedMetadata as Record<string, any>,
       });
 
       return {
@@ -230,7 +270,10 @@ export class DeploymentOrchestratorService {
         deploymentId: savedDeployment.id,
         type: 'gist',
         urls: {},
-        error: error.message,
+        error: deploymentError.userMessage,
+        errorCode: deploymentError.code,
+        retryStrategy: deploymentError.retryStrategy,
+        retryAfterMs: deploymentError.retryAfterMs,
       };
     }
   }
@@ -263,8 +306,15 @@ export class DeploymentOrchestratorService {
 
   /**
    * Retry a failed deployment
+   * @param deploymentId The ID of the failed deployment to retry
+   * @param newServerName Optional new server name (useful for naming conflicts)
+   * @param forceRetry Force retry even if the error type suggests not to
    */
-  async retryDeployment(deploymentId: string): Promise<DeploymentResult> {
+  async retryDeployment(
+    deploymentId: string,
+    newServerName?: string,
+    forceRetry?: boolean,
+  ): Promise<DeploymentResult> {
     const deployment = await this.deploymentRepository.findOneBy({ id: deploymentId });
 
     if (!deployment) {
@@ -275,7 +325,40 @@ export class DeploymentOrchestratorService {
       throw new Error('Can only retry failed deployments');
     }
 
-    const options = (deployment.metadata?.options as DeploymentOptions) || {};
+    // Check if retry is allowed based on error type
+    const errorCode = deployment.metadata?.errorCode as DeploymentErrorCode | undefined;
+    if (errorCode && !forceRetry) {
+      const config = ERROR_RETRY_CONFIG[errorCode];
+      if (config.strategy === RetryStrategy.NONE) {
+        return {
+          success: false,
+          deploymentId,
+          type: deployment.deploymentType as 'repo' | 'gist',
+          urls: {},
+          error: `Cannot retry this error type (${errorCode}). Use forceRetry to override.`,
+          errorCode,
+          retryStrategy: config.strategy,
+        };
+      }
+    }
+
+    // Build options, potentially with new server name
+    const originalOptions = (deployment.metadata?.options as DeploymentOptions) || {};
+    const options: DeploymentOptions = {
+      ...originalOptions,
+      ...(newServerName ? { serverName: newServerName } : {}),
+    };
+
+    // Track retry attempt in metadata
+    const retryCount = ((deployment.metadata?.retryCount as number) || 0) + 1;
+    const retryMetadata = {
+      ...(deployment.metadata || {}),
+      retryCount,
+      lastRetryAt: new Date().toISOString(),
+    };
+    await this.deploymentRepository.update(deploymentId, {
+      metadata: retryMetadata as Record<string, any>,
+    });
 
     if (deployment.deploymentType === 'repo') {
       return this.deployToGitHub(deployment.conversationId, options);

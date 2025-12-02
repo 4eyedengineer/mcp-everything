@@ -24,8 +24,11 @@ import {
   UpdateGistDto,
   ListDeploymentsQueryDto,
   PaginatedDeploymentsDto,
+  RetryDeploymentDto,
 } from './dto/deploy-request.dto';
 import { DeploymentType, DeploymentStatus } from './types/deployment.types';
+import { DeploymentRetryService } from './services/retry.service';
+import { DeploymentErrorCode } from './types/deployment-errors.types';
 
 // TODO: Uncomment when authentication is implemented
 // import { AuthGuard } from '@nestjs/passport';
@@ -45,6 +48,7 @@ export class DeploymentController {
 
   constructor(
     private readonly deploymentService: DeploymentOrchestratorService,
+    private readonly retryService: DeploymentRetryService,
   ) {}
 
   /**
@@ -69,12 +73,20 @@ export class DeploymentController {
         type: result.type,
         urls: result.urls,
         error: result.error,
+        errorCode: result.errorCode,
+        retryStrategy: result.retryStrategy,
+        retryAfterMs: result.retryAfterMs,
+        suggestedNames: result.suggestedNames,
+        canRetry: result.errorCode
+          ? this.retryService.canRetry(result.errorCode)
+          : undefined,
       };
     } catch (error) {
-      this.logger.error(`GitHub deployment failed: ${error.message}`);
+      const err = error as Error;
+      this.logger.error(`GitHub deployment failed: ${err.message}`);
       return {
         success: false,
-        error: error.message,
+        error: err.message,
       };
     }
   }
@@ -101,12 +113,20 @@ export class DeploymentController {
         type: result.type,
         urls: result.urls,
         error: result.error,
+        errorCode: result.errorCode,
+        retryStrategy: result.retryStrategy,
+        retryAfterMs: result.retryAfterMs,
+        suggestedNames: result.suggestedNames,
+        canRetry: result.errorCode
+          ? this.retryService.canRetry(result.errorCode)
+          : undefined,
       };
     } catch (error) {
-      this.logger.error(`Gist deployment failed: ${error.message}`);
+      const err = error as Error;
+      this.logger.error(`Gist deployment failed: ${err.message}`);
       return {
         success: false,
-        error: error.message,
+        error: err.message,
       };
     }
   }
@@ -128,12 +148,13 @@ export class DeploymentController {
   }
 
   /**
-   * Retry a failed deployment
+   * Retry a failed deployment by conversation ID
    */
   @Post(':conversationId/retry')
   @HttpCode(HttpStatus.OK)
-  async retryDeployment(
+  async retryDeploymentByConversation(
     @Param('conversationId') conversationId: string,
+    @Body() dto?: RetryDeploymentDto,
   ): Promise<DeploymentResponseDto> {
     this.logger.log(`Retry deployment request for conversation: ${conversationId}`);
 
@@ -152,6 +173,8 @@ export class DeploymentController {
 
       const result = await this.deploymentService.retryDeployment(
         latestDeployment.id,
+        dto?.newServerName,
+        dto?.forceRetry,
       );
 
       return {
@@ -160,12 +183,60 @@ export class DeploymentController {
         type: result.type,
         urls: result.urls,
         error: result.error,
+        errorCode: result.errorCode,
+        retryStrategy: result.retryStrategy,
+        suggestedNames: result.suggestedNames,
+        canRetry: result.errorCode
+          ? this.retryService.canRetry(result.errorCode)
+          : undefined,
       };
     } catch (error) {
-      this.logger.error(`Retry deployment failed: ${error.message}`);
+      const err = error as Error;
+      this.logger.error(`Retry deployment failed: ${err.message}`);
       return {
         success: false,
-        error: error.message,
+        error: err.message,
+      };
+    }
+  }
+
+  /**
+   * Retry a failed deployment by deployment ID
+   */
+  @Post('retry/:deploymentId')
+  @HttpCode(HttpStatus.OK)
+  async retryDeploymentById(
+    @Param('deploymentId') deploymentId: string,
+    @Body() dto?: RetryDeploymentDto,
+  ): Promise<DeploymentResponseDto> {
+    this.logger.log(`Retry deployment by ID: ${deploymentId}`);
+
+    try {
+      const result = await this.deploymentService.retryDeployment(
+        deploymentId,
+        dto?.newServerName,
+        dto?.forceRetry,
+      );
+
+      return {
+        success: result.success,
+        deploymentId: result.deploymentId,
+        type: result.type,
+        urls: result.urls,
+        error: result.error,
+        errorCode: result.errorCode,
+        retryStrategy: result.retryStrategy,
+        suggestedNames: result.suggestedNames,
+        canRetry: result.errorCode
+          ? this.retryService.canRetry(result.errorCode)
+          : undefined,
+      };
+    } catch (error) {
+      const err = error as Error;
+      this.logger.error(`Retry deployment failed: ${err.message}`);
+      return {
+        success: false,
+        error: err.message,
       };
     }
   }

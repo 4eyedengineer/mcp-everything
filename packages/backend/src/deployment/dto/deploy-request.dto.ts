@@ -66,6 +66,15 @@ export class DeployToGistDto {
 export class RetryDeploymentDto {
   @IsUUID()
   deploymentId: string;
+
+  @IsOptional()
+  @IsBoolean()
+  forceRetry?: boolean;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  newServerName?: string;
 }
 
 /**
@@ -78,10 +87,21 @@ export class DeploymentResponseDto {
   urls?: {
     repository?: string;
     gist?: string;
+    gistRaw?: string;
     codespace?: string;
     enterprise?: string;
   };
   error?: string;
+  /** Structured error code for programmatic handling */
+  errorCode?: string;
+  /** Recommended retry strategy: 'immediate' | 'exponential_backoff' | 'manual' | 'none' */
+  retryStrategy?: string;
+  /** Milliseconds to wait before retrying (for rate limits) */
+  retryAfterMs?: number;
+  /** Alternative server names when naming conflict occurs */
+  suggestedNames?: string[];
+  /** Whether this deployment can be retried */
+  canRetry?: boolean;
 }
 
 /**
@@ -100,6 +120,12 @@ export class DeploymentStatusDto {
     enterprise?: string;
   };
   errorMessage?: string;
+  /** Structured error code */
+  errorCode?: string;
+  /** Number of retry attempts made */
+  retryCount?: number;
+  /** Whether this deployment can be retried */
+  canRetry?: boolean;
   createdAt: Date;
   deployedAt?: Date;
 }
