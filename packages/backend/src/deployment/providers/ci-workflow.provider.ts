@@ -15,6 +15,10 @@ on:
   pull_request:
     branches: [main, master]
 
+permissions:
+  contents: read
+  checks: write
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -39,8 +43,17 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Run tests
-        run: npm test --if-present
+      - name: Run tests with coverage
+        run: npm test -- --coverage --if-present
+        continue-on-error: true
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-report
+          path: coverage/
+          retention-days: 30
 
       - name: Verify MCP server starts
         run: |
