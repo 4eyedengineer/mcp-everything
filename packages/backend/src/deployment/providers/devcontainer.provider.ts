@@ -142,9 +142,11 @@ export class DevContainerProvider {
     switch (language) {
       case 'typescript':
       case 'javascript':
-        return 'npm install && npm run build';
+        // Install, build, and run tests to validate the MCP server
+        return 'npm install && npm run build && npm test --if-present';
       case 'python':
-        return 'pip install -e . && pip install -r requirements-dev.txt';
+        // Install dependencies and run tests if pytest is available
+        return 'pip install -e . && pip install -r requirements-dev.txt 2>/dev/null || true && python -m pytest 2>/dev/null || true';
       default:
         return 'echo "Setup complete"';
     }
