@@ -4,8 +4,11 @@ import {
   GraphState,
   KnowledgeGap,
   ClarificationQuestion,
+  RequiredEnvVar,
 } from './types';
 import { getPlatformContextPrompt, getClarificationThresholdPrompt } from './platform-context';
+import { EnvVariableService } from '../env-variable.service';
+import { CollectedEnvVar } from '../types/env-variable.types';
 
 /**
  * Clarification Service
@@ -39,7 +42,7 @@ export class ClarificationService {
   private readonly logger = new Logger(ClarificationService.name);
   private readonly llm: ChatAnthropic;
 
-  constructor() {
+  constructor(private readonly envVariableService: EnvVariableService) {
     // Initialize Claude Haiku for gap detection and question formulation
     this.llm = new ChatAnthropic({
       modelName: 'claude-3-5-haiku-20241022',
@@ -402,5 +405,139 @@ Return ONLY valid JSON with detected gaps.`;
     }
 
     return 0; // No improvement
+  }
+
+  // ===== ENVIRONMENT VARIABLE COLLECTION =====
+
+  /**
+   * Check if environment variables need to be collected
+   *
+   * Called after tool discovery to determine if we need to ask
+   * the user for API keys and other credentials.
+   *
+   * @param state - Current graph state with detected env vars
+   * @returns Whether env var collection is needed
+   */
+  needsEnvVarCollection(state: GraphState): boolean {
+    const detectedVars = state.detectedEnvVars || [];
+    const collectedVars = state.collectedEnvVars || [];
+
+    // Check if there are required env vars that haven't been collected
+    const requiredVars = detectedVars.filter(v => v.required);
+    const collectedNames = new Set(collectedVars.map(v => v.name));
+
+    const uncollected = requiredVars.filter(v => !collectedNames.has(v.name));
+
+    return uncollected.length > 0;
+  }
+
+  /**
+   * Generate Environment Variable Clarification Questions
+   *
+   * Creates specific questions for each detected environment variable
+   * that needs to be collected from the user.
+   *
+   * @param state - Current graph state
+   * @returns Clarification result with env var questions
+   */
+  async generateEnvVarQuestions(state: GraphState): Promise<{
+    complete: boolean;
+    questions: ClarificationQuestion[];
+    needsUserInput: boolean;
+    envVarNames: string[];
+  }> {
+    const detectedVars = state.detectedEnvVars || [];
+    const collectedVars = state.collectedEnvVars || [];
+    const collectedNames = new Set(collectedVars.map(v => v.name));
+
+    // Find vars that still need to be collected
+    const uncollectedVars = detectedVars.filter(v => !collectedNames.has(v.name));
+
+    if (uncollectedVars.length === 0) {
+      this.logger.log('All environment variables have been collected');
+      return { complete: true, questions: [], needsUserInput: false, envVarNames: [] };
+    }
+
+    this.logger.log(`Need to collect ${uncollectedVars.length} environment variables`);
+
+    // Generate questions using the EnvVariableService
+    const envVarQuestions = this.envVariableService.generateClarificationQuestions(uncollectedVars);
+
+    // Convert to ClarificationQuestion format (max 2 at a time)
+    const questions: ClarificationQuestion[] = envVarQuestions.slice(0, 2).map(q => ({
+      question: q.question,
+      context: q.context,
+      options: q.options,
+      required: uncollectedVars.find(v => v.name === q.envVarName)?.required ?? true,
+    }));
+
+    const envVarNames = envVarQuestions.slice(0, 2).map(q => q.envVarName);
+
+    return {
+      complete: false,
+      questions,
+      needsUserInput: true,
+      envVarNames,
+    };
+  }
+
+  /**
+   * Process User's Environment Variable Response
+   *
+   * Validates and stores the environment variable values provided by the user.
+   *
+   * @param envVarName - Name of the environment variable
+   * @param value - Value provided by the user
+   * @param state - Current graph state
+   * @returns Updated collected env vars and validation result
+   */
+  processEnvVarResponse(
+    envVarName: string,
+    value: string,
+    state: GraphState,
+  ): {
+    collectedEnvVars: CollectedEnvVar[];
+    validationResult: { isValid: boolean; errorMessage?: string };
+  } {
+    const collectedVars = [...(state.collectedEnvVars || [])];
+
+    // Check if user chose to skip
+    const isSkipped = value.toLowerCase() === 'skip' || value === '';
+
+    // Validate the value
+    const validationResult = isSkipped
+      ? { isValid: true }
+      : this.envVariableService.validateEnvVarFormat(envVarName, value);
+
+    // Add to collected vars
+    collectedVars.push({
+      name: envVarName,
+      value: isSkipped ? '' : value,
+      validated: validationResult.isValid,
+      skipped: isSkipped,
+    });
+
+    return {
+      collectedEnvVars: collectedVars,
+      validationResult,
+    };
+  }
+
+  /**
+   * Create Env Var Knowledge Gaps
+   *
+   * Converts detected environment variables into knowledge gaps
+   * that can be included in the standard clarification flow.
+   *
+   * @param envVars - Detected environment variables
+   * @returns Knowledge gaps for env vars
+   */
+  createEnvVarGaps(envVars: RequiredEnvVar[]): KnowledgeGap[] {
+    return envVars.filter(v => v.required).map(envVar => ({
+      issue: `Missing ${envVar.description}`,
+      priority: 'HIGH' as const,
+      suggestedQuestion: `Please provide your ${envVar.description}${envVar.documentationUrl ? `. You can get it from: ${envVar.documentationUrl}` : ''}`,
+      context: `Required for the MCP server to function properly. ${envVar.sensitive ? 'This value will be securely stored.' : ''}`,
+    }));
   }
 }

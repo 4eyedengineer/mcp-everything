@@ -1,7 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Octokit } from '@octokit/rest';
+import * as sodium from 'libsodium-wrappers';
 import { GitHubRepoResult, DeploymentFile } from '../types/deployment.types';
+import { CollectedEnvVar } from '../../types/env-variable.types';
 
 @Injectable()
 export class GitHubRepoProvider {
@@ -148,6 +150,7 @@ export class GitHubRepoProvider {
     files: DeploymentFile[],
     description: string,
     isPrivate: boolean = false,
+    envVars?: CollectedEnvVar[],
   ): Promise<GitHubRepoResult> {
     try {
       // Sanitize repository name
@@ -187,6 +190,12 @@ export class GitHubRepoProvider {
       // Push files
       await this.pushFiles(owner, repo, files, `Add generated MCP server: ${serverName}`);
 
+      // Create secrets for environment variables if provided
+      if (envVars && envVars.length > 0) {
+        this.logger.log(`Creating ${envVars.length} repository secrets`);
+        await this.createSecrets(owner, repo, envVars);
+      }
+
       // Generate Codespace URL
       const codespaceUrl = `https://github.com/codespaces/new?repo=${owner}/${repo}`;
 
@@ -201,6 +210,77 @@ export class GitHubRepoProvider {
       return {
         success: false,
         error: error.message,
+      };
+    }
+  }
+
+  /**
+   * Create repository secrets for environment variables
+   *
+   * Uses GitHub's encrypted secrets API with libsodium for encryption.
+   * Secrets are stored encrypted and can only be accessed by GitHub Actions.
+   */
+  async createSecrets(
+    owner: string,
+    repo: string,
+    envVars: CollectedEnvVar[],
+  ): Promise<{ success: boolean; created: string[]; failed: string[] }> {
+    const created: string[] = [];
+    const failed: string[] = [];
+
+    try {
+      // Initialize libsodium
+      await sodium.ready;
+
+      // Get the repository public key for encryption
+      const { data: publicKey } = await this.octokit.actions.getRepoPublicKey({
+        owner,
+        repo,
+      });
+
+      // Create each secret
+      for (const envVar of envVars) {
+        // Skip empty or skipped values
+        if (envVar.skipped || !envVar.value) {
+          this.logger.debug(`Skipping secret ${envVar.name}: no value provided`);
+          continue;
+        }
+
+        try {
+          // Encrypt the secret value
+          const binKey = sodium.from_base64(publicKey.key, sodium.base64_variants.ORIGINAL);
+          const binSec = sodium.from_string(envVar.value);
+          const encBytes = sodium.crypto_box_seal(binSec, binKey);
+          const encryptedValue = sodium.to_base64(encBytes, sodium.base64_variants.ORIGINAL);
+
+          // Create or update the secret
+          await this.octokit.actions.createOrUpdateRepoSecret({
+            owner,
+            repo,
+            secret_name: envVar.name,
+            encrypted_value: encryptedValue,
+            key_id: publicKey.key_id,
+          });
+
+          created.push(envVar.name);
+          this.logger.log(`Created secret: ${envVar.name}`);
+        } catch (error) {
+          failed.push(envVar.name);
+          this.logger.error(`Failed to create secret ${envVar.name}: ${error.message}`);
+        }
+      }
+
+      return {
+        success: failed.length === 0,
+        created,
+        failed,
+      };
+    } catch (error) {
+      this.logger.error(`Failed to create secrets: ${error.message}`);
+      return {
+        success: false,
+        created,
+        failed: envVars.map(v => v.name),
       };
     }
   }

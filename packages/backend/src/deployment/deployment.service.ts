@@ -95,6 +95,7 @@ export class DeploymentOrchestratorService {
         files,
         options.description || `MCP Server generated from conversation ${conversationId}`,
         options.isPrivate ?? true,
+        options.envVars, // Pass environment variables for secret creation
       );
 
       if (result.success) {

@@ -6,6 +6,7 @@ import * as ts from 'typescript';
 import Anthropic from '@anthropic-ai/sdk';
 import { GitHubAnalysisService } from './github-analysis.service';
 import { ToolDiscoveryService } from './tool-discovery.service';
+import { EnvVariableService } from './env-variable.service';
 import { RepositoryAnalysis } from './types/github-analysis.types';
 import {
   McpTool,
@@ -14,6 +15,7 @@ import {
   JsonSchemaProperty,
   ToolExample,
 } from './types/tool-discovery.types';
+import { RequiredEnvVar } from './types/env-variable.types';
 
 export interface GeneratedServer {
   serverName: string;
@@ -33,6 +35,7 @@ export interface ServerMetadata {
   generatedAt: string;
   tools: McpTool[];
   quality: QualityValidation;
+  requiredEnvVars: RequiredEnvVar[];
 }
 
 export interface QualityValidation {
@@ -70,6 +73,7 @@ export class McpGenerationService {
     private readonly configService: ConfigService,
     private readonly githubAnalysisService: GitHubAnalysisService,
     private readonly toolDiscoveryService: ToolDiscoveryService,
+    private readonly envVariableService: EnvVariableService,
   ) {
     const apiKey = this.configService.get<string>('ANTHROPIC_API_KEY');
     if (!apiKey || apiKey === 'your-anthropic-api-key-here') {
@@ -405,6 +409,11 @@ export class McpGenerationService {
       mkdirSync(serverDir, { recursive: true });
     }
 
+    // Detect required environment variables from tools
+    const envVarDetection = await this.envVariableService.detectRequiredEnvVars(toolDiscovery.tools);
+    const requiredEnvVars = envVarDetection.detectedVars;
+    this.logger.log(`Detected ${requiredEnvVars.length} required environment variables`);
+
     // Generate all files
     const files: GeneratedFile[] = [];
 
@@ -431,10 +440,22 @@ export class McpGenerationService {
       content: this.generateTsConfig(),
     });
 
-    // README
+    // .env.example file (always generate, even if no env vars detected)
+    files.push({
+      path: '.env.example',
+      content: this.envVariableService.generateEnvExample(requiredEnvVars),
+    });
+
+    // .gitignore to ensure .env is not committed
+    files.push({
+      path: '.gitignore',
+      content: this.generateGitignore(),
+    });
+
+    // README with env var documentation
     files.push({
       path: 'README.md',
-      content: this.generateReadme(serverName, analysis, toolDiscovery.tools, githubUrl),
+      content: this.generateReadmeWithEnvVars(serverName, analysis, toolDiscovery.tools, githubUrl, requiredEnvVars),
     });
 
     // Write files to disk
@@ -465,6 +486,7 @@ export class McpGenerationService {
         generatedAt: new Date().toISOString(),
         tools: toolDiscovery.tools,
         quality: finalValidation,
+        requiredEnvVars,
       },
     };
   }
@@ -1521,5 +1543,126 @@ Features: ${analysis.features.features.join(', ')}`;
         score,
       };
     }
+  }
+
+  /**
+   * Generate .gitignore file to prevent secrets from being committed
+   */
+  private generateGitignore(): string {
+    return `# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+
+# Environment variables - NEVER commit!
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Test coverage
+coverage/
+`;
+  }
+
+  /**
+   * Generate README with comprehensive environment variable documentation
+   */
+  private generateReadmeWithEnvVars(
+    serverName: string,
+    analysis: RepositoryAnalysis,
+    tools: McpTool[],
+    githubUrl: string,
+    envVars: RequiredEnvVar[],
+  ): string {
+    const sections: string[] = [];
+
+    // Header section
+    sections.push(this.generateReadmeHeader(serverName, analysis));
+
+    // Description section
+    sections.push(this.generateDescriptionSection(analysis, githubUrl));
+
+    // Quick start tools overview
+    sections.push(this.generateToolsOverview(tools));
+
+    // Installation section
+    sections.push(this.generateInstallationSection());
+
+    // Environment Variables section (enhanced)
+    sections.push(this.envVariableService.generateReadmeSection(envVars));
+
+    // Usage section
+    sections.push(this.generateUsageSection());
+
+    // Claude Desktop integration
+    sections.push(this.generateClaudeDesktopSectionWithEnvVars(serverName, envVars));
+
+    // Detailed tool documentation
+    sections.push(this.generateDetailedToolDocs(tools));
+
+    // Testing section
+    sections.push(this.generateTestingSection());
+
+    // Troubleshooting section
+    sections.push(this.generateTroubleshootingSection());
+
+    // Footer
+    sections.push(this.generateReadmeFooter());
+
+    return sections.filter(Boolean).join('\n\n');
+  }
+
+  /**
+   * Generate Claude Desktop integration section with env var configuration
+   */
+  private generateClaudeDesktopSectionWithEnvVars(serverName: string, envVars: RequiredEnvVar[]): string {
+    const configName = serverName.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+
+    // Build env vars config
+    const envConfig = envVars.length > 0
+      ? envVars.map(v => `        "${v.name}": "YOUR_${v.name}_HERE"`).join(',\n')
+      : '        // No environment variables required';
+
+    return `## Claude Desktop Integration
+
+To use this MCP server with Claude Desktop, add the following to your Claude Desktop configuration file:
+
+**macOS**: \`~/Library/Application Support/Claude/claude_desktop_config.json\`
+**Windows**: \`%APPDATA%\\Claude\\claude_desktop_config.json\`
+
+\`\`\`json
+{
+  "mcpServers": {
+    "${configName}": {
+      "command": "node",
+      "args": ["/absolute/path/to/${serverName}/dist/index.js"],
+      "env": {
+${envConfig}
+      }
+    }
+  }
+}
+\`\`\`
+
+**Important**:
+- Replace \`/absolute/path/to/${serverName}\` with the actual path to this server on your system.
+- Fill in the environment variable values with your actual API keys.
+- After updating the configuration, restart Claude Desktop for the changes to take effect.`;
   }
 }

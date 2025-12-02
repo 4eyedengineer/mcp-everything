@@ -4,6 +4,8 @@
  * TypeScript interfaces for the deployment module.
  */
 
+import { CollectedEnvVar } from '../../types/env-variable.types';
+
 export type DeploymentType = 'gist' | 'repo' | 'none';
 export type DeploymentStatus = 'pending' | 'success' | 'failed';
 
@@ -24,6 +26,8 @@ export interface DeploymentOptions {
   isPrivate?: boolean;
   description?: string;
   includeDevContainer?: boolean;
+  /** Environment variables to set as GitHub repository secrets */
+  envVars?: CollectedEnvVar[];
 }
 
 export interface DeploymentResult {

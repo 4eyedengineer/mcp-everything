@@ -1,8 +1,10 @@
 // Import test result types from mcp-testing service
 import type { McpServerTestResult, ToolTestResult } from '../testing/mcp-testing.service';
+import type { RequiredEnvVar, CollectedEnvVar } from '../types/env-variable.types';
 
 // Re-export for external use
 export type { McpServerTestResult, ToolTestResult };
+export type { RequiredEnvVar, CollectedEnvVar };
 
 /**
  * LangGraph State Definition
@@ -134,6 +136,17 @@ export interface GraphState {
     failureAnalysis: FailureAnalysis;
     timestamp: Date;
   }>;
+
+  // ===== ENVIRONMENT VARIABLE MANAGEMENT =====
+
+  // Detected environment variables from tool analysis
+  detectedEnvVars?: RequiredEnvVar[];
+
+  // Collected environment variable values from user
+  collectedEnvVars?: CollectedEnvVar[];
+
+  // Whether env var collection is complete
+  envVarCollectionComplete?: boolean;
 }
 
 /**
