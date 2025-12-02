@@ -86,14 +86,12 @@ export class DeploymentOrchestratorService {
       // Always add CI workflow for GitHub repos
       files.push(...this.ciWorkflowProvider.generateCIWorkflowFiles(serverName));
 
-      // Add devcontainer if requested
-      if (options.includeDevContainer) {
-        const devContainerFiles = this.devContainerProvider.generateDevContainerFiles(
-          serverName,
-          'typescript',
-        );
-        files.push(...devContainerFiles);
-      }
+      // Always add devcontainer for GitHub repos (enables Codespace testing)
+      const devContainerFiles = this.devContainerProvider.generateDevContainerFiles(
+        serverName,
+        'typescript',
+      );
+      files.push(...devContainerFiles);
 
       // Deploy to GitHub (default to private repos)
       const result = await this.gitHubRepoProvider.deploy(
