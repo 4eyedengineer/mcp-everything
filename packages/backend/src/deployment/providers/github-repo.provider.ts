@@ -187,8 +187,11 @@ export class GitHubRepoProvider {
       // Wait a moment for the repo to be ready
       await this.delay(1000);
 
+      // Inject CI badge into README if present
+      const filesWithBadge = this.injectCIBadge(files, owner, repo);
+
       // Push files
-      await this.pushFiles(owner, repo, files, `Add generated MCP server: ${serverName}`);
+      await this.pushFiles(owner, repo, filesWithBadge, `Add generated MCP server: ${serverName}`);
 
       // Create secrets for environment variables if provided
       if (envVars && envVars.length > 0) {
@@ -345,6 +348,36 @@ export class GitHubRepoProvider {
       .replace(/-+/g, '-')
       .replace(/^-|-$/g, '')
       .slice(0, 100); // GitHub has a 100 char limit
+  }
+
+  /**
+   * Inject CI status badge into README.md if present
+   */
+  private injectCIBadge(
+    files: DeploymentFile[],
+    owner: string,
+    repo: string,
+  ): DeploymentFile[] {
+    const readmeIndex = files.findIndex(
+      (f) => f.path.toLowerCase() === 'readme.md',
+    );
+    if (readmeIndex === -1) return files;
+
+    const badge = `![Build Status](https://github.com/${owner}/${repo}/actions/workflows/test.yml/badge.svg)\n\n`;
+    const content = files[readmeIndex].content;
+    const firstLineEnd = content.indexOf('\n');
+
+    // If no newline found, append badge at the end
+    const newContent =
+      firstLineEnd === -1
+        ? content + '\n\n' + badge
+        : content.slice(0, firstLineEnd + 1) + '\n' + badge + content.slice(firstLineEnd + 1);
+
+    const newFiles = [...files];
+    newFiles[readmeIndex] = { ...files[readmeIndex], content: newContent };
+
+    this.logger.log(`Injected CI badge into README for ${owner}/${repo}`);
+    return newFiles;
   }
 
   private delay(ms: number): Promise<void> {
