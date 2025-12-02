@@ -1,4 +1,4 @@
-import { Injectable, Logger, NotFoundException, NotImplementedException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, NotImplementedException, Inject, forwardRef } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { existsSync, readdirSync, readFileSync } from 'fs';
@@ -13,6 +13,7 @@ import { GitignoreProvider } from './providers/gitignore.provider';
 import { CIWorkflowProvider } from './providers/ci-workflow.provider';
 import { DeploymentRetryService } from './services/retry.service';
 import { DeploymentRollbackService } from './services/rollback.service';
+import { ValidationService } from '../validation/validation.service';
 import {
   DeploymentResult,
   DeploymentStatusResponse,
@@ -48,8 +49,27 @@ export class DeploymentOrchestratorService {
     private readonly ciWorkflowProvider: CIWorkflowProvider,
     private readonly retryService: DeploymentRetryService,
     private readonly rollbackService: DeploymentRollbackService,
+    @Inject(forwardRef(() => ValidationService))
+    private readonly validationService: ValidationService,
   ) {
     this.generatedServersDir = join(process.cwd(), '../../generated-servers');
+  }
+
+  /**
+   * Trigger validation asynchronously after deployment
+   * Does not block the deployment response
+   */
+  private async triggerValidationAsync(deploymentId: string): Promise<void> {
+    // Run validation in the background
+    setImmediate(async () => {
+      try {
+        this.logger.log(`Starting post-deployment validation for: ${deploymentId}`);
+        await this.validationService.validateDeployment(deploymentId);
+        this.logger.log(`Post-deployment validation completed for: ${deploymentId}`);
+      } catch (error) {
+        this.logger.error(`Post-deployment validation failed for ${deploymentId}: ${error.message}`);
+      }
+    });
   }
 
   /**
@@ -119,6 +139,9 @@ export class DeploymentOrchestratorService {
           codespaceUrl: result.codespaceUrl,
           deployedAt: new Date(),
         });
+
+        // Trigger validation asynchronously (non-blocking)
+        this.triggerValidationAsync(savedDeployment.id);
 
         return {
           success: true,
@@ -235,6 +258,9 @@ export class DeploymentOrchestratorService {
           deployedAt: new Date(),
           metadata: updatedMetadata as Record<string, any>,
         });
+
+        // Trigger validation asynchronously (non-blocking)
+        this.triggerValidationAsync(savedDeployment.id);
 
         return {
           success: true,
