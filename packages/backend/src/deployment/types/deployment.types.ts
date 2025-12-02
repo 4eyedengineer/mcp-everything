@@ -29,6 +29,8 @@ export interface DeploymentOptions {
   includeDevContainer?: boolean;
   /** Environment variables to set as GitHub repository secrets */
   envVars?: CollectedEnvVar[];
+  /** Override the auto-derived server name */
+  serverName?: string;
 }
 
 export interface DeploymentResult {

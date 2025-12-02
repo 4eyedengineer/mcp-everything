@@ -7,6 +7,7 @@ import {
   IsIn,
   Min,
   Max,
+  MaxLength,
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -26,6 +27,11 @@ export class DeploymentOptionsDto {
   @IsOptional()
   @IsBoolean()
   includeDevContainer?: boolean;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  serverName?: string;
 }
 
 /**
