@@ -653,3 +653,238 @@
     }
   }
 }
+
+// Subscription Section Styles
+.current-plan-card {
+  background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+  border: 1px solid #e5e5e5;
+  border-radius: 12px;
+  padding: 24px;
+  margin-bottom: 24px;
+
+  .plan-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 20px;
+
+    .plan-badge {
+      padding: 6px 16px;
+      border-radius: 20px;
+      font-weight: 600;
+      font-size: 14px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+
+      &.free {
+        background-color: #e8e8e8;
+        color: #555;
+      }
+
+      &.pro {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+      }
+
+      &.enterprise {
+        background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        color: white;
+      }
+    }
+
+    .plan-status {
+      font-size: 13px;
+      color: #22c55e;
+      font-weight: 500;
+    }
+  }
+}
+
+.usage-progress {
+  margin-bottom: 20px;
+
+  .usage-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+    font-size: 14px;
+    color: #555;
+
+    .usage-count {
+      font-weight: 600;
+      color: #1f1f1f;
+    }
+  }
+
+  .progress-bar-container {
+    height: 8px;
+    background-color: #e5e5e5;
+    border-radius: 4px;
+    overflow: hidden;
+
+    .progress-bar-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+      border-radius: 4px;
+      transition: width 0.3s ease;
+
+      &.warning {
+        background: linear-gradient(90deg, #f59e0b 0%, #d97706 100%);
+      }
+
+      &.critical {
+        background: linear-gradient(90deg, #ef4444 0%, #dc2626 100%);
+      }
+    }
+  }
+
+  .usage-reset-info {
+    margin-top: 8px;
+    font-size: 12px;
+    color: #888;
+  }
+}
+
+.plan-features {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+
+  .feature-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    color: #888;
+
+    mat-icon {
+      font-size: 18px;
+      width: 18px;
+      height: 18px;
+      color: #ccc;
+    }
+
+    &.enabled {
+      color: #1f1f1f;
+
+      mat-icon {
+        color: #22c55e;
+      }
+    }
+  }
+}
+
+.upgrade-section {
+  .upgrade-card {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    border-radius: 12px;
+    padding: 24px;
+    color: white;
+
+    .upgrade-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 16px;
+
+      mat-icon {
+        font-size: 28px;
+        width: 28px;
+        height: 28px;
+      }
+
+      h3 {
+        margin: 0;
+        font-size: 20px;
+        font-weight: 600;
+      }
+    }
+
+    .upgrade-description {
+      margin: 0 0 16px 0;
+      opacity: 0.9;
+      line-height: 1.5;
+    }
+
+    .upgrade-benefits {
+      list-style: none;
+      padding: 0;
+      margin: 0 0 20px 0;
+
+      li {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 8px;
+        font-size: 14px;
+
+        mat-icon {
+          font-size: 16px;
+          width: 16px;
+          height: 16px;
+        }
+      }
+    }
+
+    .upgrade-price {
+      margin-bottom: 20px;
+
+      .price {
+        font-size: 36px;
+        font-weight: 700;
+      }
+
+      .period {
+        font-size: 16px;
+        opacity: 0.8;
+      }
+    }
+
+    .upgrade-button {
+      background-color: white;
+      color: #667eea;
+      width: 100%;
+      padding: 14px 24px;
+
+      &:hover {
+        background-color: #f8f9fa;
+      }
+
+      &:disabled {
+        opacity: 0.7;
+        cursor: not-allowed;
+      }
+
+      .spinning {
+        animation: spin 1s linear infinite;
+      }
+    }
+  }
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.manage-subscription {
+  text-align: center;
+
+  .billing-note {
+    margin-top: 12px;
+    font-size: 13px;
+    color: #888;
+  }
+}
+
+// Responsive adjustments for subscription section
+@media (max-width: 768px) {
+  .plan-features {
+    grid-template-columns: 1fr;
+  }
+}

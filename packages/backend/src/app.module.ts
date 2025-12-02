@@ -12,7 +12,9 @@ import { McpGenerationService } from './mcp-generation.service';
 import { ChatModule } from './chat/chat.module';
 import { DeploymentModule } from './deployment/deployment.module';
 import { ValidationModule } from './validation/validation.module';
-import { Conversation, ConversationMemory, Deployment } from './database/entities';
+import { UserModule } from './user/user.module';
+import { SubscriptionModule } from './subscription/subscription.module';
+import { Conversation, ConversationMemory, Deployment, User, Subscription, UsageRecord } from './database/entities';
 
 // Basic DTO for generate endpoint
 export class GenerateServerDto {
@@ -285,7 +287,7 @@ main().catch((error) => {
       username: process.env.DATABASE_USER || 'postgres',
       password: process.env.DATABASE_PASSWORD || 'postgres',
       database: process.env.DATABASE_NAME || 'mcp_everything',
-      entities: [Conversation, ConversationMemory, Deployment],
+      entities: [Conversation, ConversationMemory, Deployment, User, Subscription, UsageRecord],
       synchronize: process.env.NODE_ENV !== 'production', // Auto-sync in development
       logging: process.env.NODE_ENV === 'development',
     }),
@@ -293,6 +295,8 @@ main().catch((error) => {
     ChatModule,
     DeploymentModule,
     ValidationModule,
+    UserModule,
+    SubscriptionModule,
   ],
   controllers: [AppController],
   providers: [

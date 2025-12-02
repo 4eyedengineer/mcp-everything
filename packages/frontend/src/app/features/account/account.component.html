@@ -163,6 +163,118 @@
       </div>
     </div>
 
+    <!-- Subscription & Tier Section -->
+    <div class="settings-section" *ngIf="tierInfo$ | async as tierInfo">
+      <div class="section-header">
+        <div class="section-icon">
+          <mat-icon>workspace_premium</mat-icon>
+        </div>
+        <div class="section-title">
+          <h2>Subscription</h2>
+          <p>Manage your plan and billing</p>
+        </div>
+      </div>
+
+      <div class="section-content">
+        <!-- Current Plan Display -->
+        <div class="current-plan-card">
+          <div class="plan-header">
+            <span class="plan-badge" [ngClass]="tierInfo.currentTier">
+              {{ getTierDisplayName(tierInfo.currentTier) }} Plan
+            </span>
+            <span class="plan-status" *ngIf="(subscription$ | async) as sub">
+              {{ sub.status === 'active' ? 'Active' : (sub.status | titlecase) }}
+            </span>
+          </div>
+
+          <!-- Usage Progress (Free tier only) -->
+          <div class="usage-progress" *ngIf="tierInfo.currentTier === 'free'">
+            <div class="usage-header">
+              <span>Servers deployed this month</span>
+              <span class="usage-count">
+                {{ tierInfo.usage.serversDeployed }} / {{ tierInfo.usage.limit }}
+              </span>
+            </div>
+            <div class="progress-bar-container">
+              <div
+                class="progress-bar-fill"
+                [style.width.%]="(tierInfo.usage.serversDeployed / tierInfo.usage.limit) * 100"
+                [class.warning]="tierInfo.usage.serversDeployed >= tierInfo.usage.limit * 0.8"
+                [class.critical]="tierInfo.usage.serversDeployed >= tierInfo.usage.limit">
+              </div>
+            </div>
+            <div class="usage-reset-info">
+              Resets on {{ tierInfo.usage.periodEnd | date:'mediumDate' }}
+            </div>
+          </div>
+
+          <!-- Plan Features -->
+          <div class="plan-features">
+            <div class="feature-item" [class.enabled]="true">
+              <mat-icon>check_circle</mat-icon>
+              <span>{{ isUnlimited(tierInfo.limits.monthlyServerLimit) ? 'Unlimited' : tierInfo.limits.monthlyServerLimit }} servers/month</span>
+            </div>
+            <div class="feature-item" [class.enabled]="tierInfo.limits.privateRepos">
+              <mat-icon>{{ tierInfo.limits.privateRepos ? 'check_circle' : 'cancel' }}</mat-icon>
+              <span>Private repositories</span>
+            </div>
+            <div class="feature-item" [class.enabled]="tierInfo.limits.ciCd">
+              <mat-icon>{{ tierInfo.limits.ciCd ? 'check_circle' : 'cancel' }}</mat-icon>
+              <span>CI/CD pipelines</span>
+            </div>
+            <div class="feature-item" [class.enabled]="tierInfo.limits.customDomains">
+              <mat-icon>{{ tierInfo.limits.customDomains ? 'check_circle' : 'cancel' }}</mat-icon>
+              <span>Custom domains</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Upgrade CTA (Free tier) -->
+        <div class="upgrade-section" *ngIf="tierInfo.currentTier === 'free'">
+          <div class="upgrade-card">
+            <div class="upgrade-header">
+              <mat-icon>rocket_launch</mat-icon>
+              <h3>Upgrade to Pro</h3>
+            </div>
+            <p class="upgrade-description">
+              Unlock unlimited MCP server generation, private repositories, and CI/CD automation.
+            </p>
+            <ul class="upgrade-benefits">
+              <li><mat-icon>check</mat-icon> Unlimited MCP servers</li>
+              <li><mat-icon>check</mat-icon> Private GitHub repositories</li>
+              <li><mat-icon>check</mat-icon> Automated CI/CD pipelines</li>
+              <li><mat-icon>check</mat-icon> Priority support</li>
+            </ul>
+            <div class="upgrade-price">
+              <span class="price">$29</span>
+              <span class="period">/month</span>
+            </div>
+            <button
+              class="action-button primary upgrade-button"
+              (click)="upgradeToPro()"
+              [disabled]="isUpgrading">
+              <mat-icon *ngIf="!isUpgrading">upgrade</mat-icon>
+              <mat-icon *ngIf="isUpgrading" class="spinning">sync</mat-icon>
+              <span>{{ isUpgrading ? 'Loading...' : 'Upgrade Now' }}</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Manage Subscription (Paid tiers) -->
+        <div class="manage-subscription" *ngIf="tierInfo.currentTier !== 'free'">
+          <button
+            class="action-button secondary"
+            (click)="manageSubscription()">
+            <mat-icon>settings</mat-icon>
+            <span>Manage Subscription</span>
+          </button>
+          <p class="billing-note" *ngIf="(subscription$ | async)?.currentPeriodEnd as periodEnd">
+            Next billing date: {{ periodEnd | date:'mediumDate' }}
+          </p>
+        </div>
+      </div>
+    </div>
+
     <!-- Preferences Section -->
     <div class="settings-section">
       <div class="section-header">
