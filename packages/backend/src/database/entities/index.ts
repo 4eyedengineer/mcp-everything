@@ -5,3 +5,4 @@ export { Deployment } from './deployment.entity';
 export { User } from './user.entity';
 export { Subscription } from './subscription.entity';
 export { UsageRecord } from './usage.entity';
+export { HostedServer } from './hosted-server.entity';
