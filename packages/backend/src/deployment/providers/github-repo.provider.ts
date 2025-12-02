@@ -298,6 +298,44 @@ export class GitHubRepoProvider {
   }
 
   /**
+   * Delete a GitHub repository
+   * Note: Requires delete_repo scope on the GitHub token
+   */
+  async deleteRepository(owner: string, repo: string): Promise<boolean> {
+    return this.withRateLimitRetry(async () => {
+      try {
+        await this.octokit.rest.repos.delete({ owner, repo });
+        this.logger.log(`Deleted repository: ${owner}/${repo}`);
+        return true;
+      } catch (error) {
+        this.logger.error(`Failed to delete repository ${owner}/${repo}: ${error.message}`);
+        throw error;
+      }
+    });
+  }
+
+  /**
+   * Parse owner and repo from a GitHub repository URL
+   */
+  parseRepoUrl(url: string): { owner: string; repo: string } | null {
+    // Handle various GitHub URL formats:
+    // https://github.com/owner/repo
+    // https://github.com/owner/repo.git
+    // git@github.com:owner/repo.git
+    const httpsMatch = url.match(/github\.com\/([^/]+)\/([^/.]+)/);
+    if (httpsMatch) {
+      return { owner: httpsMatch[1], repo: httpsMatch[2] };
+    }
+
+    const sshMatch = url.match(/github\.com:([^/]+)\/([^/.]+)/);
+    if (sshMatch) {
+      return { owner: sshMatch[1], repo: sshMatch[2] };
+    }
+
+    return null;
+  }
+
+  /**
    * Sanitize a string to be a valid GitHub repository name
    */
   private sanitizeRepoName(name: string): string {

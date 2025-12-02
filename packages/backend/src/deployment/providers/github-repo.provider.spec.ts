@@ -262,4 +262,74 @@ describe('GitHubRepoProvider', () => {
       expect(sanitize('a'.repeat(150))).toHaveLength(100);
     });
   });
+
+  describe('deleteRepository', () => {
+    beforeEach(() => {
+      mockOctokit.rest.repos.delete = jest.fn().mockResolvedValue({});
+    });
+
+    it('should delete a repository successfully', async () => {
+      const result = await provider.deleteRepository('test-user', 'test-repo');
+
+      expect(result).toBe(true);
+      expect(mockOctokit.rest.repos.delete).toHaveBeenCalledWith({
+        owner: 'test-user',
+        repo: 'test-repo',
+      });
+    });
+
+    it('should throw error if deletion fails', async () => {
+      mockOctokit.rest.repos.delete.mockRejectedValue(new Error('Delete failed'));
+
+      await expect(provider.deleteRepository('test-user', 'test-repo')).rejects.toThrow(
+        'Delete failed',
+      );
+    });
+
+    it('should retry on rate limit error during deletion', async () => {
+      const rateLimitError = new Error('Rate limit');
+      (rateLimitError as any).status = 429;
+
+      mockOctokit.rest.repos.delete
+        .mockRejectedValueOnce(rateLimitError)
+        .mockResolvedValueOnce({});
+
+      const result = await provider.deleteRepository('test-user', 'test-repo');
+
+      expect(result).toBe(true);
+      expect(mockOctokit.rest.repos.delete).toHaveBeenCalledTimes(2);
+    }, 10000);
+  });
+
+  describe('parseRepoUrl', () => {
+    it('should parse HTTPS GitHub URLs', () => {
+      const result = provider.parseRepoUrl('https://github.com/owner/repo');
+
+      expect(result).toEqual({ owner: 'owner', repo: 'repo' });
+    });
+
+    it('should parse HTTPS GitHub URLs with .git suffix', () => {
+      const result = provider.parseRepoUrl('https://github.com/owner/repo.git');
+
+      expect(result).toEqual({ owner: 'owner', repo: 'repo' });
+    });
+
+    it('should parse SSH GitHub URLs', () => {
+      const result = provider.parseRepoUrl('git@github.com:owner/repo.git');
+
+      expect(result).toEqual({ owner: 'owner', repo: 'repo' });
+    });
+
+    it('should return null for invalid URLs', () => {
+      const result = provider.parseRepoUrl('https://gitlab.com/owner/repo');
+
+      expect(result).toBeNull();
+    });
+
+    it('should handle URLs with paths', () => {
+      const result = provider.parseRepoUrl('https://github.com/owner/repo/tree/main');
+
+      expect(result).toEqual({ owner: 'owner', repo: 'repo' });
+    });
+  });
 });
