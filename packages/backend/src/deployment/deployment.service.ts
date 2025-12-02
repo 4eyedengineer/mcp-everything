@@ -7,7 +7,7 @@ import { join } from 'path';
 import { Deployment } from '../database/entities/deployment.entity';
 import { Conversation } from '../database/entities/conversation.entity';
 import { GitHubRepoProvider } from './providers/github-repo.provider';
-import { GistProvider } from './providers/gist.provider';
+import { GistProvider, McpToolInfo } from './providers/gist.provider';
 import { DevContainerProvider } from './providers/devcontainer.provider';
 import {
   DeploymentResult,
@@ -125,7 +125,7 @@ export class DeploymentOrchestratorService {
   }
 
   /**
-   * Deploy to a GitHub Gist
+   * Deploy to a GitHub Gist (single-file bundled format for free tier)
    */
   async deployToGist(
     conversationId: string,
@@ -159,17 +159,25 @@ export class DeploymentOrchestratorService {
         throw new Error('No generated files found for this conversation');
       }
 
-      // Deploy to Gist
-      const result = await this.gistProvider.deploy(
+      // Extract tools from conversation state
+      const tools = this.getToolsFromConversation(conversation);
+
+      // Deploy to Gist using single-file bundled format
+      const result = await this.gistProvider.deploySingleFile(
         this.getServerName(conversation),
         files,
         options.description || `MCP Server generated from conversation ${conversationId}`,
+        tools,
         !options.isPrivate, // Gist uses isPublic, not isPrivate
       );
 
       if (result.success) {
         // Update deployment record with success
-        const updatedMetadata = { ...(savedDeployment.metadata || {}), gistId: result.gistId };
+        const updatedMetadata = {
+          ...(savedDeployment.metadata || {}),
+          gistId: result.gistId,
+          rawUrl: result.rawUrl,
+        };
         await this.deploymentRepository.update(savedDeployment.id, {
           status: 'success',
           gistUrl: result.gistUrl,
@@ -183,6 +191,7 @@ export class DeploymentOrchestratorService {
           type: 'gist',
           urls: {
             gist: result.gistUrl,
+            gistRaw: result.rawUrl,
           },
         };
       } else {
@@ -223,6 +232,7 @@ export class DeploymentOrchestratorService {
       urls: {
         repository: d.repositoryUrl,
         gist: d.gistUrl,
+        gistRaw: d.metadata?.rawUrl as string | undefined,
         codespace: d.codespaceUrl,
       },
       errorMessage: d.errorMessage,
@@ -322,5 +332,23 @@ export class DeploymentOrchestratorService {
 
     // Generate a default name
     return `mcp-server-${conversation.id.slice(0, 8)}`;
+  }
+
+  /**
+   * Extract tool information from conversation state
+   */
+  private getToolsFromConversation(conversation: Conversation): McpToolInfo[] {
+    const state = conversation.state as {
+      tools?: Array<{ name: string; description: string }>;
+      generatedTools?: Array<{ name: string; description: string }>;
+    } | null;
+
+    // Try to get tools from conversation state
+    const tools = state?.tools || state?.generatedTools || [];
+
+    return tools.map((tool) => ({
+      name: tool.name,
+      description: tool.description || `Tool: ${tool.name}`,
+    }));
   }
 }
