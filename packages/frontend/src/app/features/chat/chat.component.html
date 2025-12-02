@@ -93,6 +93,57 @@
             </button>
           </div>
         </div>
+
+        <!-- Deployment Links -->
+        <div *ngIf="latestDeployment?.status === 'success'" class="deployment-links">
+          <div class="deployment-header">
+            <mat-icon>cloud_done</mat-icon>
+            <span>Your MCP Server is deployed!</span>
+          </div>
+          <div class="deployment-actions">
+            <a
+              *ngIf="latestDeployment.repositoryUrl"
+              [href]="latestDeployment.repositoryUrl"
+              target="_blank"
+              rel="noopener noreferrer"
+              mat-raised-button
+              color="primary"
+              class="deployment-link">
+              <mat-icon>code</mat-icon>
+              View on GitHub
+            </a>
+            <a
+              *ngIf="latestDeployment.gistUrl"
+              [href]="latestDeployment.gistUrl"
+              target="_blank"
+              rel="noopener noreferrer"
+              mat-raised-button
+              class="deployment-link">
+              <mat-icon>description</mat-icon>
+              View Gist
+            </a>
+            <a
+              *ngIf="latestDeployment.codespaceUrl"
+              [href]="latestDeployment.codespaceUrl"
+              target="_blank"
+              rel="noopener noreferrer"
+              mat-raised-button
+              color="accent"
+              class="deployment-link">
+              <mat-icon>cloud</mat-icon>
+              Open in Codespace
+            </a>
+          </div>
+        </div>
+
+        <!-- Deployment Error -->
+        <div *ngIf="latestDeployment?.status === 'failed'" class="deployment-error">
+          <div class="deployment-header">
+            <mat-icon>error_outline</mat-icon>
+            <span>Deployment failed</span>
+          </div>
+          <p class="error-message">{{ latestDeployment.errorMessage }}</p>
+        </div>
       </div>
     </div>
   </div>

@@ -26,6 +26,20 @@ export interface CreateConversationResponse {
   conversation: Conversation;
 }
 
+export interface Deployment {
+  id: string;
+  conversationId: string;
+  deploymentType: 'gist' | 'repo' | 'none';
+  repositoryUrl?: string;
+  gistUrl?: string;
+  codespaceUrl?: string;
+  status: 'pending' | 'success' | 'failed';
+  errorMessage?: string;
+  metadata?: Record<string, any>;
+  createdAt: Date;
+  deployedAt?: Date;
+}
+
 @Injectable({
   providedIn: 'root'
 })
@@ -113,6 +127,41 @@ export class ConversationService {
         timestamp: new Date(response.conversation.timestamp || response.conversation.updatedAt || Date.now())
       })),
       catchError(this.handleError<Conversation>('updateConversationTitle'))
+    );
+  }
+
+  /**
+   * Get all deployments for a conversation
+   */
+  getDeployments(conversationId: string): Observable<Deployment[]> {
+    return this.http.get<{ deployments: Deployment[] }>(`${this.baseUrl}/conversations/${conversationId}/deployments`).pipe(
+      map(response => {
+        return response.deployments.map(dep => ({
+          ...dep,
+          createdAt: new Date(dep.createdAt),
+          deployedAt: dep.deployedAt ? new Date(dep.deployedAt) : undefined
+        }));
+      }),
+      catchError(this.handleError('getDeployments', []))
+    );
+  }
+
+  /**
+   * Get the latest deployment for a conversation
+   */
+  getLatestDeployment(conversationId: string): Observable<Deployment | null> {
+    return this.http.get<{ deployment: Deployment | null }>(`${this.baseUrl}/conversations/${conversationId}/deployments/latest`).pipe(
+      map(response => {
+        if (!response.deployment) {
+          return null;
+        }
+        return {
+          ...response.deployment,
+          createdAt: new Date(response.deployment.createdAt),
+          deployedAt: response.deployment.deployedAt ? new Date(response.deployment.deployedAt) : undefined
+        };
+      }),
+      catchError(this.handleError<Deployment | null>('getLatestDeployment', null))
     );
   }
 

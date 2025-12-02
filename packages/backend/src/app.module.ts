@@ -10,7 +10,7 @@ import { GitHubAnalysisService } from './github-analysis.service';
 import { ToolDiscoveryService } from './tool-discovery.service';
 import { McpGenerationService } from './mcp-generation.service';
 import { ChatModule } from './chat/chat.module';
-import { Conversation, ConversationMemory } from './database/entities';
+import { Conversation, ConversationMemory, Deployment } from './database/entities';
 
 // Basic DTO for generate endpoint
 export class GenerateServerDto {
@@ -283,11 +283,11 @@ main().catch((error) => {
       username: process.env.DATABASE_USER || 'postgres',
       password: process.env.DATABASE_PASSWORD || 'postgres',
       database: process.env.DATABASE_NAME || 'mcp_everything',
-      entities: [Conversation, ConversationMemory],
+      entities: [Conversation, ConversationMemory, Deployment],
       synchronize: process.env.NODE_ENV !== 'production', // Auto-sync in development
       logging: process.env.NODE_ENV === 'development',
     }),
-    TypeOrmModule.forFeature([Conversation, ConversationMemory]),
+    TypeOrmModule.forFeature([Conversation, ConversationMemory, Deployment]),
     ChatModule,
   ],
   controllers: [AppController],

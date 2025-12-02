@@ -5,6 +5,7 @@ import {
   KnowledgeGap,
   ClarificationQuestion,
 } from './types';
+import { getPlatformContextPrompt, getClarificationThresholdPrompt } from './platform-context';
 
 /**
  * Clarification Service
@@ -160,9 +161,13 @@ export class ClarificationService {
     const ensemble = state.ensembleResults;
     const consensusScore = ensemble?.consensusScore || 0;
 
-    return `You are an expert at identifying missing information needed for MCP server generation.
+    return `${getPlatformContextPrompt()}
 
-Analyze the current state and identify CRITICAL gaps that would block or significantly degrade generation quality.
+**Task**: Identify ONLY THE MOST CRITICAL missing information for MCP server generation.
+
+**Philosophy**: Generate with reasonable defaults rather than asking endless questions. Prefer inference over interrogation.
+
+${getClarificationThresholdPrompt()}
 
 **User Request**:
 "${userInput}"
@@ -173,6 +178,12 @@ ${research?.synthesizedPlan?.summary || 'No research available'}
 **Key Insights**:
 ${research?.synthesizedPlan?.keyInsights?.join('\n- ') || 'No insights'}
 
+**API Research Findings**:
+${research?.webSearchFindings?.results?.map((r: any) => `- ${r.title}: ${r.snippet}`).join('\n') || 'No API details found'}
+
+**Best Practices from Research**:
+${research?.webSearchFindings?.bestPractices?.join('\n- ') || 'None'}
+
 **Ensemble Results**:
 - Consensus Score: ${consensusScore.toFixed(2)}
 - Tools Recommended: ${ensemble?.agentPerspectives?.[0]?.recommendations?.tools?.length || 0}
@@ -180,24 +191,39 @@ ${research?.synthesizedPlan?.keyInsights?.join('\n- ') || 'No insights'}
 
 **Previous Clarifications**: ${state.clarificationHistory?.length || 0} rounds completed
 
-**Task**: Identify gaps that would block successful MCP server generation.
+**Task**: Identify gaps that would block successful MCP server generation. BE EXTREMELY CONSERVATIVE.
 
-**Gap Categories**:
-1. **Ambiguous Requirements**: Unclear tool behaviors, vague descriptions
-2. **Missing Technical Details**:
-   - API endpoints (base URL, paths)
-   - Authentication (API keys, OAuth, tokens)
-   - Rate limits (requests per minute, quotas)
-   - Data formats (JSON, XML, binary)
-3. **Incomplete Specifications**:
-   - Input parameters (required vs optional)
-   - Output formats (structure, error codes)
-   - Edge cases (empty results, errors)
+**What is NOT a Gap (DO NOT report these)**:
+❌ "Base URL not confirmed" when research found https://api.stripe.com/v1 → NOT A GAP
+❌ "API key type unclear" when research found "api_key" or "Bearer token" → NOT A GAP
+❌ "Which endpoints" when research found /charges, /customers, /payment_intents → NOT A GAP
+❌ "Rate limits unknown" → NOT A GAP (use conservative defaults)
+❌ Any "confirmation" questions when research already provided the answer → NOT A GAP
+
+**What IS a Gap (ONLY report these)**:
+✅ API base URL is completely unknown AND service name provides no clues (EXTREMELY RARE)
+✅ User explicitly said "I don't know" or asked for help deciding
+
+**Research Already Provided** (from above):
+- Base URL: ${research?.webSearchFindings?.bestPractices?.find((p: string) => p.includes('Base URL'))?.split(': ')[1] || 'Found in research'}
+- Authentication: ${research?.webSearchFindings?.bestPractices?.find((p: string) => p.includes('Authentication'))?.split(': ')[1] || 'Found in research'}
+- Endpoints: ${research?.webSearchFindings?.results?.filter((r: any) => r.url.includes('/v1/')).map((r: any) => r.title).join(', ') || 'Found in research'}
+
+**If ANY of the above are present in research → DO NOT raise a gap for them.**
 
 **Priority Levels**:
-- **HIGH**: Blocks generation entirely (e.g., missing base API URL)
-- **MEDIUM**: Degrades quality significantly (e.g., unclear auth method)
-- **LOW**: Nice to have but not critical (e.g., optional parameters)
+- **HIGH**: Makes generation LITERALLY IMPOSSIBLE - absolutely no way to proceed (e.g., API base URL is completely unknown AND not found in research AND cannot be inferred - EXTREMELY RARE)
+- **MEDIUM**: Can work around with reasonable defaults from research findings
+- **LOW**: Nice to have but defaults work fine
+
+**CRITICAL RULES**:
+1. If research found authentication method (even vague like "api_key" or "Bearer token") → DO NOT raise gap, use that
+2. If research found ANY endpoints/examples → DO NOT ask which ones, generate all common ones
+3. If user says "all endpoints" → DO NOT ask which specific ones, use all from research
+4. If research found base URL or can infer from service name → DO NOT raise gap
+5. Only raise HIGH gaps if literally impossible to generate without info
+
+**IMPORTANT**: Only raise HIGH-priority gaps if generation is LITERALLY IMPOSSIBLE. If research provides ANY information, use it with reasonable defaults.
 
 **Output Format** (STRICT JSON):
 \`\`\`json
@@ -222,21 +248,36 @@ ${research?.synthesizedPlan?.keyInsights?.join('\n- ') || 'No insights'}
 
 **Examples**:
 
-✅ Good Gap:
+✅ Good Response (when research found everything):
 {
-  "issue": "API base URL not specified",
-  "priority": "HIGH",
-  "suggestedQuestion": "What is the base URL for the API? (e.g., https://api.example.com)",
-  "context": "Required to construct endpoint URLs for all tools"
+  "gaps": []
 }
 
-❌ Bad Gap:
+✅ Good Gap (EXTREMELY RARE):
+{
+  "issue": "API base URL completely unknown and cannot be inferred from service name 'MyCustomAPI'",
+  "priority": "HIGH",
+  "suggestedQuestion": "What is the base URL for MyCustomAPI? (e.g., https://api.example.com)",
+  "context": "Cannot construct any endpoint URLs without this information"
+}
+
+❌ Bad Gap (research already found this):
+{
+  "issue": "API base URL not confirmed",
+  "priority": "HIGH",
+  "suggestedQuestion": "Can you confirm the base URL is https://api.stripe.com/v1?",
+  "context": "To confirm API endpoint"
+}
+
+❌ Bad Gap (vague):
 {
   "issue": "Need more information",
   "priority": "MEDIUM",
   "suggestedQuestion": "Can you provide more details?",
   "context": "To generate better tools"
 }
+
+**REMINDER**: If research found base URL, authentication, or endpoints → Return {"gaps": []}
 
 Return ONLY valid JSON with detected gaps.`;
   }

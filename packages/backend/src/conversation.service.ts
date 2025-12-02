@@ -564,24 +564,21 @@ JSON response:`;
    * Find conversation by ID
    */
   async findById(id: string): Promise<Conversation> {
-    const conversation = await this.conversationRepository.findOne({
+    return this.conversationRepository.findOneOrFail({
       where: { id },
     });
-    if (!conversation) {
-      throw new Error(`Conversation ${id} not found`);
-    }
-    return conversation;
   }
 
   /**
    * Create a new conversation
    */
   async create(sessionId: string): Promise<Conversation> {
-    const conversation = new Conversation();
-    conversation.sessionId = sessionId;
-    conversation.messages = [];
-    conversation.state = {};
-    conversation.isActive = true;
+    const conversation = this.conversationRepository.create({
+      sessionId,
+      messages: [],
+      state: {},
+      isActive: true,
+    });
     return this.conversationRepository.save(conversation);
   }
 
@@ -597,6 +594,7 @@ JSON response:`;
    */
   async updateTitle(id: string, title: string): Promise<Conversation> {
     const conversation = await this.findById(id);
+    // state is already an object, no need to JSON.parse
     conversation.state = {
       ...conversation.state,
       metadata: {

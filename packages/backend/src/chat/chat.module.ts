@@ -8,18 +8,19 @@ import { GitHubAnalysisService } from '../github-analysis.service';
 import { ToolDiscoveryService } from '../tool-discovery.service';
 import { McpGenerationService } from '../mcp-generation.service';
 import { ConversationService } from '../conversation.service';
-import { Conversation, ConversationMemory, ResearchCache } from '../database/entities';
+import { Conversation, ConversationMemory, ResearchCache, Deployment } from '../database/entities';
 // Ensemble architecture services
 import { ResearchService } from '../orchestration/research.service';
 import { EnsembleService } from '../orchestration/ensemble.service';
 import { ClarificationService } from '../orchestration/clarification.service';
 import { RefinementService } from '../orchestration/refinement.service';
 import { ResearchCacheService } from '../database/services/research-cache.service';
+import { DeploymentService } from '../database/services/deployment.service';
 import { McpTestingService } from '../testing/mcp-testing.service';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Conversation, ConversationMemory, ResearchCache]),
+    TypeOrmModule.forFeature([Conversation, ConversationMemory, ResearchCache, Deployment]),
   ],
   controllers: [ChatController, ConversationController],
   providers: [
@@ -37,11 +38,13 @@ import { McpTestingService } from '../testing/mcp-testing.service';
     ClarificationService,
     RefinementService,
     ResearchCacheService,
+    DeploymentService,
     McpTestingService,
   ],
   exports: [
     GraphOrchestrationService,
     CodeExecutionService,
+    DeploymentService,
   ],
 })
 export class ChatModule {}

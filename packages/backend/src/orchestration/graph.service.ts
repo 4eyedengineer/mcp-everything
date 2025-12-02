@@ -12,6 +12,7 @@ import { ResearchService } from './research.service';
 import { EnsembleService } from './ensemble.service';
 import { ClarificationService } from './clarification.service';
 import { RefinementService } from './refinement.service';
+import { getPlatformContextPrompt } from './platform-context';
 
 /**
  * LangGraph Orchestration Service
@@ -225,26 +226,40 @@ export class GraphOrchestrationService {
   private async analyzeIntent(state: GraphState): Promise<Partial<GraphState>> {
     this.logger.log('Executing node: analyzeIntent');
 
-    const prompt = `Analyze the following user message and determine their intent.
+    const prompt = `${getPlatformContextPrompt()}
 
-User message: "${state.userInput}"
+**CRITICAL: When the user mentions "MCP", they ALWAYS mean "Model Context Protocol" (a protocol for LLMs), NEVER Minecraft, Merchant, or anything else.**
 
-Context from previous messages:
+**Your Role**: Quickly determine user intent and proceed with confidence. Prefer reasonable defaults over asking questions.
+
+**Common Intents:**
+1. **generate_mcp**: User wants to create a Model Context Protocol (MCP) server - e.g., "create a Stripe MCP server" means create an MCP server for Stripe API
+2. **research**: User wants to understand something (e.g., "how does the GitHub API work")
+3. **clarify**: User is responding to a previous clarification request
+4. **help**: User needs guidance on using the platform
+
+**User Message:**
+"${state.userInput}"
+
+**Conversation Context:**
 ${state.messages.slice(-3).map(m => `${m.role}: ${m.content}`).join('\n')}
 
-Determine:
-1. Primary intent (generate_mcp, clarify, research, help, unknown)
-2. Confidence level (0-1)
-3. Any GitHub URLs or repository references
-4. What information is missing to proceed
+**Task**: Determine primary intent with confidence. When the user mentions "MCP server" or "MCP" in any context, they mean Model Context Protocol server - a tool for extending LLM capabilities.
 
-Respond in JSON format:
+**Inference Guidelines:**
+- If user mentions a service/API (Stripe, GitHub, etc.) + "MCP", they want a Model Context Protocol server for that service
+- MCP = Model Context Protocol ONLY (not Minecraft, not Merchant anything)
+- If user asks "how to" or "explain", intent is likely \`research\` or \`help\`
+- Default to TypeScript unless user specifies another language
+- Only flag missing info if it's CRITICAL and cannot be inferred
+
+**Response Format** (JSON):
 {
-  "intent": "generate_mcp",
-  "confidence": 0.9,
-  "githubUrl": "https://github.com/owner/repo or null",
-  "missingInfo": ["list of missing information"] or null,
-  "reasoning": "brief explanation"
+  "intent": "generate_mcp|clarify|research|help|unknown",
+  "confidence": 0.0-1.0,
+  "githubUrl": "URL or null",
+  "missingInfo": ["ONLY critical blockers"] or null,
+  "reasoning": "brief explanation - mention understanding MCP means Model Context Protocol if relevant"
 }`;
 
     const response = await this.llm.invoke(prompt);
@@ -306,12 +321,24 @@ Respond in JSON format:
     this.logger.log('Executing node: provideHelp');
 
     return {
-      response: `I help generate MCP servers from various sources like GitHub repositories.
+      response: `I'm the AI assistant for MCP Everything, a platform that generates Model Context Protocol (MCP) servers from any input.
 
-You can ask me things like:
-• "Generate an MCP server for Express.js"
-• "Create tools for the React library"
-• "Build an MCP server from https://github.com/user/repo"
+**What is MCP?**
+Model Context Protocol provides tools and resources that extend LLM capabilities by connecting them to external APIs, services, and data sources.
+
+**What I can do:**
+• Generate MCP servers from GitHub repositories
+• Create MCP tools for any API (Stripe, GitHub, OpenAI, etc.)
+• Build servers from API specifications (OpenAPI, GraphQL)
+• Design MCP integrations from natural language descriptions
+
+**Example requests:**
+• "Create a Stripe MCP server for payment processing"
+• "Generate MCP tools for the GitHub Issues API"
+• "Build an MCP server from https://github.com/anthropics/anthropic-sdk-typescript"
+• "I need an MCP server that can send emails via SendGrid"
+
+**Default Stack:** I generate TypeScript + Node.js servers unless you specify otherwise.
 
 What would you like to create?`,
       currentNode: 'provideHelp',

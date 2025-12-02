@@ -1,4 +1,4 @@
-import { Component, OnInit, OnDestroy } from '@angular/core';
+import { Component, OnInit, OnDestroy, NgZone } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
@@ -12,7 +12,7 @@ import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatChipsModule } from '@angular/material/chips';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { ChatService, ChatMessage } from '../../core/services/chat.service';
-import { ConversationService } from '../../core/services/conversation.service';
+import { ConversationService, Deployment } from '../../core/services/conversation.service';
 import { SafeMarkdownPipe } from '../../shared/pipes/safe-markdown.pipe';
 import { v4 as uuidv4 } from 'uuid';
 import { Subscription } from 'rxjs';
@@ -56,6 +56,7 @@ export class ChatComponent implements OnInit, OnDestroy {
   isLoadingHistory = false;
   sessionId: string;
   conversationId?: string;
+  latestDeployment?: Deployment | null;
   private eventSource?: EventSource;
   currentProgressMessage?: ExtendedChatMessage;
   private routeSubscription?: Subscription;
@@ -66,7 +67,8 @@ export class ChatComponent implements OnInit, OnDestroy {
     private conversationService: ConversationService,
     private http: HttpClient,
     private route: ActivatedRoute,
-    private router: Router
+    private router: Router,
+    private zone: NgZone
   ) {
     // Generate or restore session ID
     this.sessionId = this.getOrCreateSessionId();
@@ -108,6 +110,8 @@ export class ChatComponent implements OnInit, OnDestroy {
    */
   private loadConversationHistory(conversationId: string): void {
     this.isLoadingHistory = true;
+    this.latestDeployment = null;
+
     this.chatService.loadConversationHistory(conversationId).subscribe({
       next: (messages) => {
         this.messages = messages as ExtendedChatMessage[];
@@ -118,6 +122,17 @@ export class ChatComponent implements OnInit, OnDestroy {
         console.error('Error loading conversation history:', error);
         this.isLoadingHistory = false;
         this.messages = [];
+      }
+    });
+
+    // Load deployment info
+    this.conversationService.getLatestDeployment(conversationId).subscribe({
+      next: (deployment) => {
+        this.latestDeployment = deployment;
+        console.log('Loaded deployment:', deployment);
+      },
+      error: (error) => {
+        console.error('Error loading deployment:', error);
       }
     });
   }
@@ -137,23 +152,31 @@ export class ChatComponent implements OnInit, OnDestroy {
     this.eventSource = new EventSource(`${apiUrl}/api/chat/stream/${this.sessionId}`);
 
     this.eventSource.onmessage = (event) => {
-      try {
-        const update: StreamUpdate = JSON.parse(event.data);
-        this.handleStreamUpdate(update);
-      } catch (error) {
-        console.error('Error parsing SSE message:', error);
-      }
+      this.zone.run(() => {
+        try {
+          console.log('SSE message received:', event.data);
+          const update: StreamUpdate = JSON.parse(event.data);
+          console.log('Parsed SSE update:', update);
+          this.handleStreamUpdate(update);
+        } catch (error) {
+          console.error('Error parsing SSE message:', error);
+        }
+      });
     };
 
     this.eventSource.onerror = (error) => {
-      console.error('SSE connection error:', error);
-      // Attempt to reconnect after 5 seconds
-      setTimeout(() => {
-        if (this.eventSource?.readyState === EventSource.CLOSED) {
-          this.connectToSSE();
-        }
-      }, 5000);
+      this.zone.run(() => {
+        console.error('SSE connection error:', error);
+        // Attempt to reconnect after 5 seconds
+        setTimeout(() => {
+          if (this.eventSource?.readyState === EventSource.CLOSED) {
+            this.connectToSSE();
+          }
+        }, 5000);
+      });
     };
+
+    console.log('SSE connection established for session:', this.sessionId);
   }
 
   private disconnectFromSSE(): void {
@@ -225,6 +248,17 @@ export class ChatComponent implements OnInit, OnDestroy {
     // Store conversation ID
     if (update.data?.conversationId) {
       this.conversationId = update.data.conversationId;
+
+      // Load deployment info after completion
+      this.conversationService.getLatestDeployment(this.conversationId).subscribe({
+        next: (deployment) => {
+          this.latestDeployment = deployment;
+          console.log('Loaded deployment after completion:', deployment);
+        },
+        error: (error) => {
+          console.error('Error loading deployment:', error);
+        }
+      });
     }
   }
 
@@ -314,6 +348,7 @@ export class ChatComponent implements OnInit, OnDestroy {
     localStorage.removeItem('mcp-session-id');
     this.sessionId = this.getOrCreateSessionId();
     this.conversationId = undefined;
+    this.latestDeployment = null;
     this.messages = [];
     this.chatService.clearMessages();
     this.disconnectFromSSE();

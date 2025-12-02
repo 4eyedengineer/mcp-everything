@@ -1,5 +1,6 @@
 import { Controller, Get, Post, Delete, Patch, Body, Param } from '@nestjs/common';
 import { ConversationService } from '../conversation.service';
+import { DeploymentService } from '../database/services/deployment.service';
 
 interface CreateConversationDto {
   sessionId: string;
@@ -11,7 +12,10 @@ interface UpdateConversationDto {
 
 @Controller('api/conversations')
 export class ConversationController {
-  constructor(private conversationService: ConversationService) {}
+  constructor(
+    private conversationService: ConversationService,
+    private deploymentService: DeploymentService,
+  ) {}
 
   /**
    * Get all conversations for the current user
@@ -85,6 +89,55 @@ export class ConversationController {
         role: msg.role || 'assistant',
         timestamp: new Date(msg.timestamp || conversation.createdAt),
       })),
+    };
+  }
+
+  /**
+   * Get deployments for a specific conversation
+   */
+  @Get(':id/deployments')
+  async getConversationDeployments(@Param('id') id: string) {
+    const deployments = await this.deploymentService.getDeploymentsByConversation(id);
+    return {
+      deployments: deployments.map(dep => ({
+        id: dep.id,
+        conversationId: dep.conversationId,
+        deploymentType: dep.deploymentType,
+        repositoryUrl: dep.repositoryUrl,
+        gistUrl: dep.gistUrl,
+        codespaceUrl: dep.codespaceUrl,
+        status: dep.status,
+        errorMessage: dep.errorMessage,
+        metadata: dep.metadata,
+        createdAt: dep.createdAt,
+        deployedAt: dep.deployedAt,
+      })),
+    };
+  }
+
+  /**
+   * Get the latest deployment for a specific conversation
+   */
+  @Get(':id/deployments/latest')
+  async getLatestDeployment(@Param('id') id: string) {
+    const deployment = await this.deploymentService.getLatestDeployment(id);
+    if (!deployment) {
+      return { deployment: null };
+    }
+    return {
+      deployment: {
+        id: deployment.id,
+        conversationId: deployment.conversationId,
+        deploymentType: deployment.deploymentType,
+        repositoryUrl: deployment.repositoryUrl,
+        gistUrl: deployment.gistUrl,
+        codespaceUrl: deployment.codespaceUrl,
+        status: deployment.status,
+        errorMessage: deployment.errorMessage,
+        metadata: deployment.metadata,
+        createdAt: deployment.createdAt,
+        deployedAt: deployment.deployedAt,
+      },
     };
   }
 

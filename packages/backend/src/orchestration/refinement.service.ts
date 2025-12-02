@@ -6,6 +6,7 @@ import {
   GraphState,
   FailureAnalysis,
 } from './types';
+import { getPlatformContextPrompt } from './platform-context';
 
 /**
  * Refinement Service
@@ -168,12 +169,152 @@ export class RefinementService {
       throw new Error('No generation plan available');
     }
 
-    // Use existing McpGenerationService
-    const githubUrl = state.extractedData?.githubUrl!;
-    const generated = await this.mcpGenerationService.generateMCPServer(githubUrl);
+    // Check if this is a GitHub repository or service name request
+    const githubUrl = state.extractedData?.githubUrl;
 
-    // Convert to GeneratedCode format
-    return this.convertToGeneratedCode(generated);
+    // Only use GitHub generation if we have a valid, non-empty GitHub URL
+    if (githubUrl && githubUrl.trim().length > 0 && githubUrl.includes('github.com')) {
+      this.logger.log(`Generating MCP server from GitHub repository: ${githubUrl}`);
+      const generated = await this.mcpGenerationService.generateMCPServer(githubUrl);
+      return this.convertToGeneratedCode(generated);
+    } else {
+      // Generate from research findings and generation plan (service name, API spec, etc.)
+      this.logger.log('Generating MCP server from research findings (no GitHub URL)');
+      return await this.generateFromPlan(state);
+    }
+  }
+
+  /**
+   * Generate From Plan
+   *
+   * Generates MCP server code directly from research findings and generation plan
+   * when no GitHub URL is provided (e.g., service name requests like "Stripe API").
+   *
+   * @param state - Graph state with research and generation plan
+   * @returns Generated code structure
+   */
+  private async generateFromPlan(state: GraphState): Promise<GeneratedCode> {
+    const plan = state.generationPlan!;
+    const research = state.researchPhase;
+
+    // Validate that we have tools to generate
+    if (!plan.toolsToGenerate || plan.toolsToGenerate.length === 0) {
+      throw new Error('No tools specified in generation plan. Cannot generate MCP server without tools.');
+    }
+
+    // Extract service name from user input or research
+    const serviceName = state.userInput.match(/(?:for|with)\s+(?:the\s+)?([A-Z][a-zA-Z\s]+(?:API|api))/)?.[1]
+      || research?.synthesizedPlan?.summary?.match(/([A-Z][a-zA-Z\s]+(?:API|api))/)?.[1]
+      || 'API';
+
+    const serverName = serviceName.toLowerCase().replace(/\s+/g, '-').replace(/api$/i, '') + '-mcp';
+
+    this.logger.log(`Generating MCP server "${serverName}" with ${plan.toolsToGenerate.length} tools`);
+
+    // Generate TypeScript MCP server code using LLM
+    const mainFile = await this.generateMainFile(state, serverName);
+    const packageJson = this.generatePackageJson({ serverName, tools: plan.toolsToGenerate });
+    const tsConfig = this.generateTsConfig();
+
+    // Filter out any undefined tools and validate structure
+    const validTools = plan.toolsToGenerate
+      .filter(t => t && t.name && t.description)
+      .map(t => ({
+        name: t.name,
+        inputSchema: t.parameters || {},
+        description: t.description
+      }));
+
+    if (validTools.length === 0) {
+      throw new Error('No valid tools found in generation plan');
+    }
+
+    return {
+      mainFile,
+      packageJson,
+      tsConfig,
+      supportingFiles: {},
+      metadata: {
+        tools: validTools,
+        iteration: 1,
+        serverName,
+      },
+    };
+  }
+
+  /**
+   * Generate Main File
+   *
+   * Uses LLM to generate the main TypeScript file for the MCP server
+   * based on research findings and generation plan.
+   *
+   * @param state - Graph state with research and plan
+   * @param serverName - Name of the MCP server
+   * @returns Generated TypeScript code
+   */
+  private async generateMainFile(state: GraphState, serverName: string): Promise<string> {
+    const plan = state.generationPlan!;
+    const research = state.researchPhase;
+
+    // Validate tools exist
+    if (!plan.toolsToGenerate || plan.toolsToGenerate.length === 0) {
+      throw new Error('Cannot generate main file without tools in generation plan');
+    }
+
+    // Filter out any undefined or invalid tools
+    const validTools = plan.toolsToGenerate.filter(t => t && t.name && t.description);
+
+    if (validTools.length === 0) {
+      throw new Error('No valid tools with name and description found in generation plan');
+    }
+
+    const toolCount = validTools.length;
+    const toolsList = validTools.map(t => `- ${t.name}: ${t.description}`).join('\n');
+
+    const prompt = `Generate a complete TypeScript MCP server implementation.
+
+**Server Name**: ${serverName}
+
+**Research Findings**:
+${JSON.stringify(research?.webSearchFindings, null, 2)}
+
+**Generation Plan**:
+${JSON.stringify(plan, null, 2)}
+
+**Tools to Implement** (${toolCount} total):
+${toolsList}
+
+**Requirements**:
+1. Use @modelcontextprotocol/sdk for MCP protocol
+2. Implement ALL ${toolCount} tools from the plan above
+3. Use proper TypeScript types
+4. Include error handling for all tools
+5. Follow MCP protocol exactly: return { content: [{ type: 'text', text: '...' }] }
+6. Use axios for HTTP requests if needed
+7. Include proper authentication handling
+
+**Output Format**: Return ONLY the complete TypeScript code, no explanations.
+Start with imports.`;
+
+    this.logger.log(`Prompt prepared for ${toolCount} valid tools`);
+
+
+    try {
+      const response = await this.llm.invoke(prompt);
+      let code = response.content.toString();
+
+      // Remove markdown code blocks if present
+      const codeBlockMatch = code.match(/\`\`\`(?:typescript|ts)?\n([\s\S]*?)\n\`\`\`/);
+      if (codeBlockMatch) {
+        code = codeBlockMatch[1];
+      }
+
+      this.logger.log(`Generated main file: ${code.length} characters`);
+      return code;
+    } catch (error) {
+      this.logger.error(`Code generation failed: ${error.message}`);
+      throw new Error(`Failed to generate MCP server code: ${error.message}`);
+    }
   }
 
   /**
@@ -279,9 +420,9 @@ export class RefinementService {
   ): Promise<FailureAnalysis> {
     const failures = testResults.results.filter(r => !r.success);
 
-    const prompt = `You are an expert at debugging MCP servers and fixing code issues.
+    const prompt = `${getPlatformContextPrompt()}
 
-Analyze test failures and provide specific fixes.
+**Your Role**: Debug and fix MCP server issues with surgical precision. Focus on root causes, not symptoms.
 
 **MCP Server Metadata**:
 - Server Name: ${generatedCode.metadata.serverName}
@@ -412,7 +553,9 @@ Return ONLY valid JSON with failure analysis.`;
     failureAnalysis: FailureAnalysis,
     plan: GraphState['generationPlan']
   ): Promise<GeneratedCode> {
-    const prompt = `You are an expert MCP server developer. Fix the code based on test failures.
+    const prompt = `${getPlatformContextPrompt()}
+
+**Your Role**: Fix MCP server code efficiently. Apply systematic fixes that address root causes.
 
 **Original Code**:
 \`\`\`typescript

@@ -109,6 +109,90 @@
   gap: 0;
 }
 
+// Deployment Links Section
+.deployment-links {
+  max-width: 800px;
+  margin: 16px auto;
+  padding: 20px;
+  background: linear-gradient(135deg, #e8f5e9 0%, #f1f8e9 100%);
+  border: 1px solid #c8e6c9;
+  border-radius: 12px;
+  width: calc(100% - 32px);
+
+  .deployment-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 16px;
+    font-weight: 600;
+    font-size: 16px;
+    color: #2e7d32;
+
+    mat-icon {
+      font-size: 24px;
+      width: 24px;
+      height: 24px;
+      color: #4caf50;
+    }
+  }
+
+  .deployment-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+
+    .deployment-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      text-decoration: none;
+
+      mat-icon {
+        font-size: 18px;
+        width: 18px;
+        height: 18px;
+      }
+    }
+  }
+}
+
+// Deployment Error Section
+.deployment-error {
+  max-width: 800px;
+  margin: 16px auto;
+  padding: 20px;
+  background: linear-gradient(135deg, #ffebee 0%, #fce4ec 100%);
+  border: 1px solid #ffcdd2;
+  border-radius: 12px;
+  width: calc(100% - 32px);
+
+  .deployment-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 12px;
+    font-weight: 600;
+    font-size: 16px;
+    color: #c62828;
+
+    mat-icon {
+      font-size: 24px;
+      width: 24px;
+      height: 24px;
+      color: #ef5350;
+    }
+  }
+
+  .error-message {
+    margin: 0;
+    font-size: 14px;
+    color: #b71c1c;
+    background-color: rgba(255, 255, 255, 0.5);
+    padding: 12px;
+    border-radius: 6px;
+  }
+}
+
 .message-wrapper {
   display: flex;
   gap: 16px;

@@ -1,7 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ChatAnthropic } from '@langchain/anthropic';
 import { GitHubAnalysisService } from '../github-analysis.service';
-import { ResearchCacheService } from '../database/services/research-cache.service';
+import axios from 'axios';
+// import { ResearchCacheService } from '../database/services/research-cache.service'; // TODO: Implement caching
 import {
   GraphState,
   WebSearchFindings,
@@ -9,6 +10,7 @@ import {
   ApiDocAnalysis,
   SynthesizedPlan,
 } from './types';
+import { getPlatformContextPrompt } from './platform-context';
 
 /**
  * Input Type Classification
@@ -61,7 +63,7 @@ export class ResearchService {
 
   constructor(
     private readonly githubAnalysisService: GitHubAnalysisService,
-    private readonly researchCacheService: ResearchCacheService,
+    // private readonly researchCacheService: ResearchCacheService, // TODO: Implement caching
   ) {
     // Initialize Claude Haiku for cost-effective research synthesis
     this.llm = new ChatAnthropic({
@@ -103,24 +105,10 @@ export class ResearchService {
     const classification = await this.classifyInput(userInput, state);
     this.logger.log(`Input classified as: ${classification.type} (confidence: ${classification.confidence})`);
 
-    // Step 2: Generate cache key (normalized)
-    const cacheKey = this.generateCacheKey(classification);
-
-    // Step 3: Check 7-day cache
-    const cached = await this.researchCacheService.get(cacheKey);
-    if (cached && this.isCacheValid(cached)) {
-      this.logger.log(`Cache HIT for ${cacheKey} (age: ${this.getCacheAge(cached)}ms)`);
-      return cached.researchData;
-    }
-
-    this.logger.log(`Cache MISS for ${cacheKey}, conducting fresh research`);
-
-    // Step 4: Route to appropriate research strategy based on input type
+    // Step 2: Route to appropriate research strategy based on input type
     const researchPhase = await this.routeResearchStrategy(classification, state);
 
-    // Step 5: Cache for 7 days
-    await this.researchCacheService.set(cacheKey, researchPhase);
-    this.logger.log(`Research cached for ${cacheKey}`);
+    // TODO: Implement caching for 7-day TTL to improve performance
 
     return researchPhase;
   }
@@ -225,23 +213,24 @@ Return ONLY valid JSON:
     }
   }
 
-  /**
-   * Generate cache key from classification
-   */
-  private generateCacheKey(classification: InputClassification): string {
-    switch (classification.type) {
-      case InputType.GITHUB_URL:
-        return `github:${classification.extractedInfo.url}`;
-      case InputType.WEBSITE_URL:
-      case InputType.DOCUMENTATION_URL:
-        return `url:${classification.extractedInfo.url}`;
-      case InputType.SERVICE_NAME:
-        return `service:${classification.extractedInfo.serviceName?.toLowerCase()}`;
-      case InputType.NATURAL_LANGUAGE:
-        // Normalize natural language to keywords
-        return `intent:${classification.extractedInfo.keywords?.join('-')}`;
-    }
-  }
+  // TODO: Uncomment when caching is implemented
+  // /**
+  //  * Generate cache key from classification
+  //  */
+  // private generateCacheKey(classification: InputClassification): string {
+  //   switch (classification.type) {
+  //     case InputType.GITHUB_URL:
+  //       return `github:${classification.extractedInfo.url}`;
+  //     case InputType.WEBSITE_URL:
+  //     case InputType.DOCUMENTATION_URL:
+  //       return `url:${classification.extractedInfo.url}`;
+  //     case InputType.SERVICE_NAME:
+  //       return `service:${classification.extractedInfo.serviceName?.toLowerCase()}`;
+  //     case InputType.NATURAL_LANGUAGE:
+  //       // Normalize natural language to keywords
+  //       return `intent:${classification.extractedInfo.keywords?.join('-')}`;
+  //   }
+  // }
 
   /**
    * Route to appropriate research strategy based on input type
@@ -478,8 +467,8 @@ Return ONLY valid JSON:
   /**
    * Web Search Agent
    *
-   * Generates targeted search queries and uses WebSearch tool
-   * to find MCP patterns, best practices, and implementation examples.
+   * Uses Tavily search API to find real-time information about APIs,
+   * documentation, and best practices.
    *
    * @param state - Graph state with context
    * @param serviceName - Optional service name for targeted search
@@ -489,46 +478,160 @@ Return ONLY valid JSON:
     const targetName = serviceName || state.extractedData?.repositoryName || 'API';
     const language = state.extractedData?.targetFramework || 'TypeScript';
 
-    // Generate search queries
     const queries = [
       `${targetName} API documentation`,
-      `${targetName} integration guide`,
-      `MCP Model Context Protocol server examples ${language}`,
-      `${targetName} API best practices`,
+      `${targetName} API authentication guide`,
+      `${targetName} API endpoints reference`,
+      `MCP Model Context Protocol ${language} examples`,
     ];
 
-    this.logger.log(`Web search queries: ${queries.join(', ')}`);
+    this.logger.log(`Tavily search queries: ${queries.join(', ')}`);
 
-    // TODO: Integrate with WebSearch tool when available
-    // For now, return structured placeholder data
-    const results = queries.map((query, index) => ({
-      url: `https://example.com/result-${index + 1}`,
-      title: `MCP Pattern ${index + 1}`,
-      snippet: `Best practice for ${query}`,
-      relevanceScore: 0.8 - index * 0.1,
-    }));
+    const tavilyApiKey = process.env.TAVILY_API_KEY;
+    if (!tavilyApiKey) {
+      throw new Error('TAVILY_API_KEY not configured in environment');
+    }
 
-    const patterns = [
-      'Use JSON Schema for tool input validation',
-      'Implement proper error handling with MCP error codes',
-      'Support streaming responses for large outputs',
-      'Include comprehensive tool descriptions',
-    ];
+    try {
+      // Execute all queries in parallel
+      const searchPromises = queries.map(query =>
+        axios.post(
+          'https://api.tavily.com/search',
+          {
+            api_key: tavilyApiKey,
+            query,
+            search_depth: 'advanced',
+            include_answer: true,
+            include_raw_content: false,
+            max_results: 3,
+          },
+          {
+            headers: { 'Content-Type': 'application/json' },
+            timeout: 10000,
+          }
+        )
+      );
 
-    const bestPractices = [
-      'Follow MCP protocol specification strictly',
-      'Test tools individually before integration',
-      'Use TypeScript for type safety',
-      'Implement rate limiting for API calls',
-    ];
+      const searchResponses = await Promise.all(searchPromises);
 
-    return {
-      queries,
-      results,
-      patterns,
-      bestPractices,
-      timestamp: new Date(),
-    };
+      // Aggregate results from all searches
+      const allResults: any[] = [];
+      searchResponses.forEach((response, index) => {
+        if (response.data?.results) {
+          response.data.results.forEach((result: any) => {
+            allResults.push({
+              url: result.url,
+              title: result.title,
+              snippet: result.content || result.snippet || '',
+              relevanceScore: result.score || 0.5,
+              query: queries[index],
+            });
+          });
+        }
+      });
+
+      // Sort by relevance score
+      allResults.sort((a, b) => b.relevanceScore - a.relevanceScore);
+
+      // Extract unique results (top 10)
+      const uniqueUrls = new Set<string>();
+      const results = allResults
+        .filter(r => {
+          if (uniqueUrls.has(r.url)) return false;
+          uniqueUrls.add(r.url);
+          return true;
+        })
+        .slice(0, 10);
+
+      this.logger.log(`Tavily search complete: ${results.length} results found for ${targetName}`);
+
+      // Use LLM to synthesize the search results into structured API information
+      const synthesisPrompt = `${getPlatformContextPrompt()}
+
+**Task**: Analyze these web search results and extract structured API information for "${targetName}".
+
+**Search Results**:
+${results.map((r, i) => `${i + 1}. [${r.title}](${r.url})\n   ${r.snippet}`).join('\n\n')}
+
+**Extract**:
+1. API Base URL (if mentioned)
+2. Authentication method and details
+3. Key endpoints and their purposes
+4. Rate limits
+5. Common use cases
+6. MCP tool patterns and best practices
+
+**Output Format** (STRICT JSON):
+\`\`\`json
+{
+  "baseUrl": "https://api.example.com or null if not found",
+  "authentication": {
+    "type": "api_key|oauth|bearer_token|basic_auth",
+    "details": "How auth works based on docs"
+  },
+  "endpoints": ["endpoint1", "endpoint2", "..."],
+  "rateLimit": "Limit info or Unknown",
+  "bestPractices": ["practice1", "practice2", "..."]
+}
+\`\`\`
+
+Return ONLY valid JSON.`;
+
+      const synthesis = await this.llm.invoke(synthesisPrompt);
+      const synthesisContent = synthesis.content.toString();
+      const jsonMatch = synthesisContent.match(/\{[\s\S]*\}/);
+
+      let apiInfo: any = {};
+      if (jsonMatch) {
+        try {
+          apiInfo = JSON.parse(jsonMatch[0]);
+        } catch (e) {
+          this.logger.warn(`Failed to parse LLM synthesis: ${e.message}`);
+        }
+      }
+
+      // Build best practices from search results and synthesis
+      const bestPractices = [
+        ...(apiInfo.bestPractices || []),
+        'Use TypeScript for type safety',
+        'Implement proper error handling',
+        'Test tools individually before integration',
+      ];
+
+      if (apiInfo.baseUrl) {
+        bestPractices.unshift(`Base URL: ${apiInfo.baseUrl}`);
+      }
+      if (apiInfo.authentication?.type) {
+        bestPractices.unshift(`Authentication: ${apiInfo.authentication.type}`);
+      }
+      if (apiInfo.rateLimit && apiInfo.rateLimit !== 'Unknown') {
+        bestPractices.unshift(`Rate Limit: ${apiInfo.rateLimit}`);
+      }
+
+      const patterns = [
+        'Use JSON Schema for tool input validation',
+        'Implement proper error handling with MCP error codes',
+        'Support streaming responses for large outputs',
+        'Include comprehensive tool descriptions',
+        'Cache API responses where appropriate',
+      ];
+
+      return {
+        queries,
+        results: results.map(r => ({
+          url: r.url,
+          title: r.title,
+          snippet: r.snippet,
+          relevanceScore: r.relevanceScore,
+        })),
+        patterns,
+        bestPractices,
+        timestamp: new Date(),
+      };
+    } catch (error) {
+      this.logger.error(`Tavily search failed: ${error.message}`);
+      throw new Error(`Web search for ${targetName} failed: ${error.message}`);
+    }
   }
 
   /**
@@ -760,7 +863,9 @@ Return empty array [] if no clear services identified.`;
 `;
     }
 
-    const prompt = `You are an expert at analyzing APIs and services to design MCP (Model Context Protocol) servers.
+    const prompt = `${getPlatformContextPrompt()}
+
+**Your Role**: Synthesize research into actionable MCP server generation plans. Prefer reasonable defaults over flagging gaps.
 
 Analyze the following research data and synthesize a comprehensive plan:
 
@@ -768,12 +873,19 @@ ${context}
 
 **Task**: Synthesize this research into a plan for generating an MCP server.
 
+**Synthesis Guidelines**:
+- Focus on what CAN be built, not what's missing
+- Recommend TypeScript unless research suggests otherwise
+- Infer tool patterns from API structures
+- Only flag truly blocking issues in challenges
+- High confidence (>0.7) if we have enough to generate working tools
+
 Provide:
-1. **Summary**: 2-3 sentence overview
-2. **Key Insights**: 3-5 actionable insights about the repository
+1. **Summary**: 2-3 sentence overview of what we'll build
+2. **Key Insights**: 3-5 actionable insights from the research
 3. **Recommended Approach**: Specific strategy for MCP server generation
-4. **Potential Challenges**: 2-3 challenges to anticipate
-5. **Confidence**: Score 0-1 based on research completeness
+4. **Potential Challenges**: 2-3 REAL blockers only (not "might need clarification")
+5. **Confidence**: Score 0-1 based on ability to generate working server
 
 Return ONLY valid JSON in this format:
 {
@@ -822,26 +934,27 @@ Return ONLY valid JSON in this format:
     }
   }
 
-  /**
-   * Helper: Check if cached research is still valid
-   *
-   * @param cached - Cached research entry
-   * @returns true if cache is valid (not expired)
-   */
-  private isCacheValid(cached: any): boolean {
-    const now = new Date();
-    return cached.expiresAt > now;
-  }
+  // TODO: Uncomment when caching is implemented
+  // /**
+  //  * Helper: Check if cached research is still valid
+  //  *
+  //  * @param cached - Cached research entry
+  //  * @returns true if cache is valid (not expired)
+  //  */
+  // private isCacheValid(cached: any): boolean {
+  //   const now = new Date();
+  //   return cached.expiresAt > now;
+  // }
 
-  /**
-   * Helper: Get cache age in milliseconds
-   *
-   * @param cached - Cached research entry
-   * @returns Age in milliseconds
-   */
-  private getCacheAge(cached: any): number {
-    const now = Date.now();
-    const cachedAt = new Date(cached.cachedAt).getTime();
-    return now - cachedAt;
-  }
+  // /**
+  //  * Helper: Get cache age in milliseconds
+  //  *
+  //  * @param cached - Cached research entry
+  //  * @returns Age in milliseconds
+  //  */
+  // private getCacheAge(cached: any): number {
+  //   const now = Date.now();
+  //   const cachedAt = new Date(cached.cachedAt).getTime();
+  //   return now - cachedAt;
+  // }
 }
