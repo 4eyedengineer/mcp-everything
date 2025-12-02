@@ -31,6 +31,64 @@ export class GistProvider {
   }
 
   /**
+   * Execute a function with rate limit retry logic
+   * Handles GitHub API rate limits (403/429) with exponential backoff
+   */
+  private async withRateLimitRetry<T>(
+    fn: () => Promise<T>,
+    maxRetries: number = 3,
+  ): Promise<T> {
+    let lastError: Error = new Error('Unknown error');
+
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        return await fn();
+      } catch (error) {
+        lastError = error as Error;
+
+        // Check if it's a rate limit error (403 or 429)
+        const err = error as { status?: number; response?: { status?: number; headers?: Record<string, string> }; headers?: Record<string, string> };
+        const status = err.status || err.response?.status;
+        if (status !== 403 && status !== 429) {
+          throw error;
+        }
+
+        if (attempt >= maxRetries) {
+          this.logger.error(`Rate limit exceeded after ${maxRetries + 1} attempts`);
+          throw error;
+        }
+
+        // Get retry delay from headers or use exponential backoff
+        let delayMs = Math.pow(2, attempt + 1) * 1000; // 2s, 4s, 8s
+
+        const resetHeader =
+          err.response?.headers?.['x-ratelimit-reset'] ||
+          err.headers?.['x-ratelimit-reset'];
+
+        if (resetHeader) {
+          const resetTime = parseInt(resetHeader, 10) * 1000;
+          const waitTime = resetTime - Date.now();
+          if (waitTime > 0 && waitTime < 60000) {
+            // Cap at 60 seconds
+            delayMs = waitTime + 1000; // Add 1s buffer
+          }
+        }
+
+        this.logger.warn(
+          `Rate limit hit, waiting ${delayMs}ms before retry ${attempt + 1}/${maxRetries}`,
+        );
+        await this.delay(delayMs);
+      }
+    }
+
+    throw lastError;
+  }
+
+  private delay(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  /**
    * Create a new GitHub Gist with multiple files
    */
   async createGist(
@@ -48,11 +106,13 @@ export class GistProvider {
         gistFiles[fileName] = { content: file.content };
       }
 
-      const { data } = await this.octokit.rest.gists.create({
-        description,
-        public: isPublic,
-        files: gistFiles,
-      });
+      const { data } = await this.withRateLimitRetry(() =>
+        this.octokit.rest.gists.create({
+          description,
+          public: isPublic,
+          files: gistFiles,
+        }),
+      );
 
       // Extract raw URL from the first file
       const firstFile = data.files ? Object.values(data.files)[0] : null;
@@ -67,10 +127,11 @@ export class GistProvider {
         rawUrl,
       };
     } catch (error) {
-      this.logger.error(`Failed to create Gist: ${error.message}`);
+      const err = error as Error;
+      this.logger.error(`Failed to create Gist: ${err.message}`);
       return {
         success: false,
-        error: error.message,
+        error: err.message,
       };
     }
   }
@@ -93,13 +154,15 @@ export class GistProvider {
       // Create the filename based on server name
       const fileName = `${this.sanitizeFileName(options.serverName)}.ts`;
 
-      const { data } = await this.octokit.rest.gists.create({
-        description: comprehensiveDescription,
-        public: options.isPublic ?? true,
-        files: {
-          [fileName]: { content: bundledCode },
-        },
-      });
+      const { data } = await this.withRateLimitRetry(() =>
+        this.octokit.rest.gists.create({
+          description: comprehensiveDescription,
+          public: options.isPublic ?? true,
+          files: {
+            [fileName]: { content: bundledCode },
+          },
+        }),
+      );
 
       // Extract raw URL for direct download
       const gistFile = data.files?.[fileName];
@@ -114,10 +177,11 @@ export class GistProvider {
         rawUrl,
       };
     } catch (error) {
-      this.logger.error(`Failed to create single-file Gist: ${error.message}`);
+      const err = error as Error;
+      this.logger.error(`Failed to create single-file Gist: ${err.message}`);
       return {
         success: false,
-        error: error.message,
+        error: err.message,
       };
     }
   }
@@ -264,7 +328,9 @@ ${toolsList || ' *   (none defined)'}
         updateData.description = description;
       }
 
-      const { data } = await this.octokit.rest.gists.update(updateData);
+      const { data } = await this.withRateLimitRetry(() =>
+        this.octokit.rest.gists.update(updateData),
+      );
 
       // Extract raw URL from the first file
       const firstFile = data.files ? Object.values(data.files)[0] : null;
@@ -279,10 +345,11 @@ ${toolsList || ' *   (none defined)'}
         rawUrl,
       };
     } catch (error) {
-      this.logger.error(`Failed to update Gist: ${error.message}`);
+      const err = error as Error;
+      this.logger.error(`Failed to update Gist: ${err.message}`);
       return {
         success: false,
-        error: error.message,
+        error: err.message,
       };
     }
   }
@@ -292,7 +359,9 @@ ${toolsList || ' *   (none defined)'}
    */
   async getGist(gistId: string): Promise<GistResult> {
     try {
-      const { data } = await this.octokit.rest.gists.get({ gist_id: gistId });
+      const { data } = await this.withRateLimitRetry(() =>
+        this.octokit.rest.gists.get({ gist_id: gistId }),
+      );
 
       // Extract raw URL from the first file
       const firstFile = data.files ? Object.values(data.files)[0] : null;
@@ -305,10 +374,11 @@ ${toolsList || ' *   (none defined)'}
         rawUrl,
       };
     } catch (error) {
-      this.logger.error(`Failed to get Gist: ${error.message}`);
+      const err = error as Error;
+      this.logger.error(`Failed to get Gist: ${err.message}`);
       return {
         success: false,
-        error: error.message,
+        error: err.message,
       };
     }
   }
@@ -318,11 +388,14 @@ ${toolsList || ' *   (none defined)'}
    */
   async deleteGist(gistId: string): Promise<boolean> {
     try {
-      await this.octokit.rest.gists.delete({ gist_id: gistId });
+      await this.withRateLimitRetry(() =>
+        this.octokit.rest.gists.delete({ gist_id: gistId }),
+      );
       this.logger.log(`Deleted Gist: ${gistId}`);
       return true;
     } catch (error) {
-      this.logger.error(`Failed to delete Gist: ${error.message}`);
+      const err = error as Error;
+      this.logger.error(`Failed to delete Gist: ${err.message}`);
       return false;
     }
   }
