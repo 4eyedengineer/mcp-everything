@@ -1,0 +1,56 @@
+# nginx-ingress Helm values
+# See: https://github.com/kubernetes/ingress-nginx/tree/main/charts/ingress-nginx
+
+controller:
+  # Run 2 replicas for high availability
+  replicaCount: 2
+
+  # Resource limits
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+  # Enable metrics for Prometheus
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: false  # Set to true if using Prometheus Operator
+
+  # Pod annotations
+  podAnnotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "10254"
+
+  # Ingress class configuration
+  ingressClassResource:
+    name: nginx
+    enabled: true
+    default: true
+
+  # Enable snippet annotations (needed for some advanced configurations)
+  allowSnippetAnnotations: true
+
+  # Configure for wildcard certificates
+  extraArgs:
+    default-ssl-certificate: "mcp-servers/mcp-wildcard-tls"
+
+  # Admission webhooks
+  admissionWebhooks:
+    enabled: true
+
+  # Service configuration
+  service:
+    # Annotations for cloud provider load balancers
+    annotations: {}
+    # For AWS:
+    # service.beta.kubernetes.io/aws-load-balancer-type: nlb
+    # For GCP:
+    # cloud.google.com/load-balancer-type: External
+
+# Default backend (optional - returns 404 for unmatched requests)
+defaultBackend:
+  enabled: false

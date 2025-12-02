@@ -1,0 +1,52 @@
+# Wildcard Certificate for MCP Servers
+#
+# This certificate covers:
+# - *.mcp.yourdomain.com (all MCP server subdomains)
+# - mcp.yourdomain.com (root MCP domain)
+#
+# Prerequisites:
+# 1. cert-manager installed
+# 2. ClusterIssuer created (cluster-issuer.yaml)
+# 3. Cloudflare API token secret created
+# 4. mcp-servers namespace exists
+#
+# IMPORTANT: Replace 'yourdomain.com' with your actual domain
+#
+# Apply with: kubectl apply -f wildcard-certificate.yaml
+
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: mcp-wildcard-cert
+  namespace: mcp-servers
+spec:
+  # Secret name where the certificate will be stored
+  # This is referenced by nginx-ingress as default certificate
+  secretName: mcp-wildcard-tls
+
+  # Reference to the ClusterIssuer
+  issuerRef:
+    name: letsencrypt-prod
+    kind: ClusterIssuer
+
+  # Common name for the certificate
+  commonName: "*.mcp.yourdomain.com"
+
+  # All domain names covered by this certificate
+  dnsNames:
+    - "*.mcp.yourdomain.com"
+    - "mcp.yourdomain.com"
+
+  # Certificate validity (optional, Let's Encrypt issues 90-day certs)
+  # duration: 2160h  # 90 days
+
+  # Renew before expiry (default: 30 days before)
+  # renewBefore: 720h  # 30 days
+
+  # Private key configuration
+  privateKey:
+    algorithm: RSA
+    size: 2048
+    # Or use ECDSA:
+    # algorithm: ECDSA
+    # size: 256
