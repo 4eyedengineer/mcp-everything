@@ -199,18 +199,21 @@ kubectl wait --namespace mcp-servers \
 
 echo "  ✓ Pod is ready"
 
-# Add host entry if needed
+# Try to add host entry if possible (may fail without sudo)
 if ! grep -q "${TEST_SERVER_ID}.mcp.localhost" /etc/hosts 2>/dev/null; then
-    echo "  Adding ${TEST_SERVER_ID}.mcp.localhost to /etc/hosts..."
-    echo "127.0.0.1 ${TEST_SERVER_ID}.mcp.localhost" | sudo tee -a /etc/hosts > /dev/null
+    echo "  Attempting to add ${TEST_SERVER_ID}.mcp.localhost to /etc/hosts..."
+    echo "127.0.0.1 ${TEST_SERVER_ID}.mcp.localhost" | sudo tee -a /etc/hosts > /dev/null 2>&1 || {
+        echo "  Note: Could not modify /etc/hosts (needs sudo). Using Host header instead."
+    }
 fi
 
 # Wait a moment for ingress to update
 sleep 3
 
-# Test the endpoint
+# Test the endpoint using Host header (works without /etc/hosts modification)
 echo "  Testing HTTP endpoint..."
-RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" "http://${TEST_SERVER_ID}.mcp.localhost/health" 2>/dev/null || echo "000")
+HOSTNAME="${TEST_SERVER_ID}.mcp.localhost"
+RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" -H "Host: ${HOSTNAME}" "http://127.0.0.1/health" 2>/dev/null || echo "000")
 
 if [ "$RESPONSE" = "200" ]; then
     echo "  ✓ Health check passed (HTTP 200)"
@@ -218,7 +221,7 @@ if [ "$RESPONSE" = "200" ]; then
     # Get full response
     echo ""
     echo "Server response:"
-    curl -s "http://${TEST_SERVER_ID}.mcp.localhost/health" | jq . 2>/dev/null || curl -s "http://${TEST_SERVER_ID}.mcp.localhost/health"
+    curl -s -H "Host: ${HOSTNAME}" "http://127.0.0.1/health" | jq . 2>/dev/null || curl -s -H "Host: ${HOSTNAME}" "http://127.0.0.1/health"
 else
     echo "  ✗ Health check failed (HTTP ${RESPONSE})"
     echo ""
@@ -231,6 +234,10 @@ else
     echo ""
     echo "  Services:"
     kubectl get svc -n mcp-servers
+    echo ""
+    echo "  Trying direct pod access..."
+    POD_NAME=$(kubectl get pods -n mcp-servers -l app=${TEST_SERVER_ID} -o jsonpath='{.items[0].metadata.name}')
+    kubectl exec -n mcp-servers ${POD_NAME} -- wget -qO- http://localhost:3000/health 2>/dev/null || echo "  Direct pod access failed"
     exit 1
 fi
 

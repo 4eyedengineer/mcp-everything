@@ -4,7 +4,6 @@ set -e
 
 REGISTRY_NAME="kind-registry"
 REGISTRY_PORT="5000"
-CLUSTER_NAME="mcp-local"
 
 echo "==> Setting up local Docker registry at localhost:${REGISTRY_PORT}"
 
@@ -25,30 +24,7 @@ else
         registry:2
 fi
 
-# Connect registry to KinD network if not already connected
-NETWORK_NAME="kind"
-if docker network inspect ${NETWORK_NAME} >/dev/null 2>&1; then
-    if ! docker network inspect ${NETWORK_NAME} | grep -q "${REGISTRY_NAME}"; then
-        echo "Connecting registry to KinD network..."
-        docker network connect ${NETWORK_NAME} ${REGISTRY_NAME} 2>/dev/null || true
-    fi
-fi
-
-# Create ConfigMap for registry endpoint (for kubelet to use)
-echo "==> Configuring cluster to use local registry..."
-cat <<EOF | kubectl apply -f -
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: local-registry-hosting
-  namespace: kube-public
-data:
-  localRegistryHosting.v1: |
-    host: "localhost:${REGISTRY_PORT}"
-    help: "https://kind.sigs.k8s.io/docs/user/local-registry/"
-EOF
-
-echo "==> Local registry configured at localhost:${REGISTRY_PORT}"
+echo "==> Local registry container ready at localhost:${REGISTRY_PORT}"
 echo ""
 echo "To push images:"
 echo "  docker tag myimage localhost:${REGISTRY_PORT}/myimage"

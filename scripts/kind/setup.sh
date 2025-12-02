@@ -47,11 +47,24 @@ echo "[2/5] Creating KinD cluster..."
 "${SCRIPT_DIR}/create-cluster.sh"
 echo ""
 
-# Reconnect registry to kind network (after cluster creation)
-if ! docker network inspect kind | grep -q "kind-registry"; then
-    echo "Connecting registry to kind network..."
-    docker network connect kind kind-registry 2>/dev/null || true
-fi
+# Connect registry to kind network (after cluster creation)
+echo "Connecting registry to kind network..."
+docker network connect kind kind-registry 2>/dev/null || true
+
+# Configure cluster to use local registry
+echo "Configuring cluster to use local registry..."
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: local-registry-hosting
+  namespace: kube-public
+data:
+  localRegistryHosting.v1: |
+    host: "localhost:5000"
+    help: "https://kind.sigs.k8s.io/docs/user/local-registry/"
+EOF
+echo ""
 
 # Step 3: Install nginx-ingress
 echo "[3/5] Installing nginx-ingress controller..."

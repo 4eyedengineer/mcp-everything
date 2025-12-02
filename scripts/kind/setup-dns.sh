@@ -1,6 +1,7 @@
 #!/bin/bash
 # Configure DNS resolution for *.mcp.localhost
-set -e
+# Note: This script may require sudo for /etc/hosts modifications
+# If sudo fails, you can manually add entries or skip (*.localhost often works by default)
 
 DOMAIN="mcp.localhost"
 HOSTS_FILE="/etc/hosts"
@@ -41,15 +42,19 @@ else
         echo "DNS entry for ${DOMAIN} already exists in ${HOSTS_FILE}"
     else
         echo "Adding ${DOMAIN} to ${HOSTS_FILE} (requires sudo)..."
-        echo "${HOSTS_ENTRY}" | sudo tee -a ${HOSTS_FILE} > /dev/null
+        echo "${HOSTS_ENTRY}" | sudo tee -a ${HOSTS_FILE} > /dev/null 2>&1 || {
+            echo "  Warning: Could not modify /etc/hosts (needs sudo)"
+            echo "  You can manually add: ${HOSTS_ENTRY}"
+            echo "  Or use curl with Host header: curl -H 'Host: server.mcp.localhost' http://127.0.0.1/"
+        }
     fi
 fi
 
-# Add common test subdomains
+# Add common test subdomains (silently skip if sudo not available)
 TEST_DOMAINS="test.mcp.localhost api.mcp.localhost"
 for subdomain in ${TEST_DOMAINS}; do
     if ! grep -q "${subdomain}" ${HOSTS_FILE} 2>/dev/null; then
-        echo "127.0.0.1 ${subdomain}" | sudo tee -a ${HOSTS_FILE} > /dev/null
+        echo "127.0.0.1 ${subdomain}" | sudo tee -a ${HOSTS_FILE} > /dev/null 2>&1 || true
     fi
 done
 
