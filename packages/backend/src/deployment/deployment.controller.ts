@@ -11,7 +11,9 @@ import {
   HttpStatus,
   Logger,
   NotFoundException,
+  UseGuards,
 } from '@nestjs/common';
+import { ThrottlerGuard } from '@nestjs/throttler';
 import { DeploymentOrchestratorService } from './deployment.service';
 import {
   DeployToGitHubDto,
@@ -25,7 +27,19 @@ import {
 } from './dto/deploy-request.dto';
 import { DeploymentType, DeploymentStatus } from './types/deployment.types';
 
+// TODO: Uncomment when authentication is implemented
+// import { AuthGuard } from '@nestjs/passport';
+
+/**
+ * Deployment API Controller
+ *
+ * Rate limited to 10 requests per minute per IP address.
+ * Authentication will be required when implemented.
+ */
+// TODO: Add authentication when implemented
+// @UseGuards(AuthGuard('jwt'))
 @Controller('api/deploy')
+@UseGuards(ThrottlerGuard)
 export class DeploymentController {
   private readonly logger = new Logger(DeploymentController.name);
 

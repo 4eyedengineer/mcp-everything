@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { ThrottlerModule } from '@nestjs/throttler';
 
 import { Deployment } from '../database/entities/deployment.entity';
 import { Conversation } from '../database/entities/conversation.entity';
@@ -14,7 +15,14 @@ import { GitignoreProvider } from './providers/gitignore.provider';
 import { CIWorkflowProvider } from './providers/ci-workflow.provider';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Deployment, Conversation])],
+  imports: [
+    TypeOrmModule.forFeature([Deployment, Conversation]),
+    // Rate limiting: 10 deployment requests per minute per IP
+    ThrottlerModule.forRoot([{
+      ttl: 60000,
+      limit: 10,
+    }]),
+  ],
   controllers: [DeploymentController],
   providers: [
     DeploymentOrchestratorService,

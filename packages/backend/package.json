@@ -42,7 +42,7 @@
     "@nestjs/platform-express": "^11.1.6",
     "@nestjs/schedule": "^6.0.1",
     "@nestjs/swagger": "^11.2.0",
-    "@nestjs/throttler": "^6.2.1",
+    "@nestjs/throttler": "^6.4.0",
     "@nestjs/typeorm": "^11.0.0",
     "@octokit/rest": "^20.0.2",
     "axios": "^1.13.2",
@@ -103,7 +103,20 @@
     "rootDir": "src",
     "testRegex": ".*\\.spec\\.ts$",
     "transform": {
-      "^.+\\.(t|j)s$": "ts-jest"
+      "^.+\\.(t|j)s$": [
+        "ts-jest",
+        {
+          "compiler": "typescript",
+          "tsconfig": {
+            "module": "commonjs",
+            "types": ["jest", "node"],
+            "emitDecoratorMetadata": true,
+            "experimentalDecorators": true,
+            "allowSyntheticDefaultImports": true,
+            "esModuleInterop": true
+          }
+        }
+      ]
     },
     "collectCoverageFrom": [
       "**/*.(t|j)s"

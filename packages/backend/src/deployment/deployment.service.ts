@@ -78,7 +78,7 @@ export class DeploymentOrchestratorService {
         throw new Error('No generated files found for this conversation');
       }
 
-      const serverName = this.getServerName(conversation);
+      const serverName = options.serverName || this.getServerName(conversation);
 
       // Always add .gitignore
       files.push(...this.gitignoreProvider.generateGitignoreFiles());
@@ -180,9 +180,11 @@ export class DeploymentOrchestratorService {
       // Extract tools from conversation state
       const tools = this.getToolsFromConversation(conversation);
 
+      const serverName = options.serverName || this.getServerName(conversation);
+
       // Deploy to Gist using single-file bundled format
       const result = await this.gistProvider.deploySingleFile(
-        this.getServerName(conversation),
+        serverName,
         files,
         options.description || `MCP Server generated from conversation ${conversationId}`,
         tools,
