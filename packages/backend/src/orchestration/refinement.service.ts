@@ -7,6 +7,7 @@ import {
   FailureAnalysis,
 } from './types';
 import { getPlatformContextPrompt } from './platform-context';
+import { safeParseJSON } from './json-utils';
 
 /**
  * Refinement Service
@@ -500,13 +501,8 @@ Return ONLY valid JSON with failure analysis.`;
       const response = await this.llm.invoke(prompt);
       const content = response.content.toString();
 
-      // Extract JSON
-      const jsonMatch = content.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) {
-        throw new Error('No JSON found in AI response');
-      }
-
-      const analysis: FailureAnalysis = JSON.parse(jsonMatch[0]);
+      // Extract JSON using safe bracket-balanced parsing
+      const analysis = safeParseJSON<FailureAnalysis>(content, this.logger);
 
       this.logger.log(
         `Failure analysis: ${analysis.rootCauses.length} root causes, ${analysis.fixes.length} fixes`

@@ -1,0 +1,59 @@
+# ArgoCD Application for MCP Servers
+# This Application watches the mcp-server-deployments repo for manifest changes
+# In LOCAL_DEV mode, the backend writes manifests directly to local-gitops/servers/
+# and this Application syncs them to the cluster
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: mcp-servers
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    # Production: GitHub repository
+    # Local dev: same repo, or use local manifests via kubectl apply
+    repoURL: https://github.com/4eyedengineer/mcp-server-deployments.git
+    path: servers
+    targetRevision: HEAD
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: mcp-servers
+
+  syncPolicy:
+    automated:
+      # Automatically delete resources when removed from Git
+      prune: true
+      # Automatically sync when spec.source changes
+      selfHeal: true
+      # Allow empty directory (no servers deployed yet)
+      allowEmpty: true
+
+    syncOptions:
+      # Create namespace if it doesn't exist
+      - CreateNamespace=true
+      # Replace resources on conflict
+      - Replace=false
+      # Respect resource differences
+      - RespectIgnoreDifferences=true
+
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+
+  # Ignore differences in auto-generated fields
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /spec/replicas
+    - group: ""
+      kind: Service
+      jsonPointers:
+        - /spec/clusterIP

@@ -1,0 +1,35 @@
+# KinD Cluster Configuration for MCP Everything Local Development
+# Creates a single-node cluster with:
+#   - Port 80/443 for nginx-ingress
+#   - Port 30080 for ArgoCD UI
+#   - Local registry at localhost:5000
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: mcp-local
+nodes:
+  - role: control-plane
+    kubeadmConfigPatches:
+      - |
+        kind: InitConfiguration
+        nodeRegistration:
+          kubeletExtraArgs:
+            node-labels: "ingress-ready=true"
+    extraPortMappings:
+      # HTTP traffic (nginx-ingress)
+      - containerPort: 80
+        hostPort: 80
+        protocol: TCP
+      # HTTPS traffic (nginx-ingress)
+      - containerPort: 443
+        hostPort: 443
+        protocol: TCP
+      # ArgoCD UI (NodePort)
+      - containerPort: 30080
+        hostPort: 30080
+        protocol: TCP
+
+# Configure containerd to use local registry
+containerdConfigPatches:
+  - |-
+    [plugins."io.containerd.grpc.v1.cri".registry.mirrors."localhost:5000"]
+      endpoint = ["http://kind-registry:5000"]

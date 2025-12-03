@@ -9,6 +9,7 @@ import {
 import { getPlatformContextPrompt, getClarificationThresholdPrompt } from './platform-context';
 import { EnvVariableService } from '../env-variable.service';
 import { CollectedEnvVar } from '../types/env-variable.types';
+import { safeParseJSON } from './json-utils';
 
 /**
  * Clarification Service
@@ -121,14 +122,8 @@ export class ClarificationService {
       const response = await this.llm.invoke(prompt);
       const content = response.content.toString();
 
-      // Extract JSON from response
-      const jsonMatch = content.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) {
-        this.logger.warn('No JSON found in gap detection response');
-        return [];
-      }
-
-      const parsed = JSON.parse(jsonMatch[0]);
+      // Extract JSON from response using safe bracket-balanced parsing
+      const parsed = safeParseJSON<{ gaps: KnowledgeGap[] }>(content, this.logger);
 
       // Validate response structure
       if (!parsed.gaps || !Array.isArray(parsed.gaps)) {

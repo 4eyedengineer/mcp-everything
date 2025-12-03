@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import * as yaml from 'js-yaml';
 
 export interface ManifestConfig {
@@ -15,6 +16,7 @@ export interface ManifestConfig {
     memoryLimit?: string;
   };
   envVars?: Record<string, string>;
+  skipTLS?: boolean; // For local development without cert-manager
 }
 
 export interface GeneratedManifests {
@@ -31,6 +33,26 @@ export class ManifestGeneratorService {
     memoryRequest: '128Mi',
     memoryLimit: '256Mi',
   };
+  private readonly localDomain = 'mcp.localhost';
+
+  constructor(private readonly configService: ConfigService) {}
+
+  /**
+   * Check if running in local development mode
+   */
+  private isLocalDev(): boolean {
+    return this.configService.get<string>('LOCAL_DEV') === 'true';
+  }
+
+  /**
+   * Get the domain to use for ingress
+   */
+  getDomain(): string {
+    if (this.isLocalDev()) {
+      return this.localDomain;
+    }
+    return this.configService.get<string>('MCP_HOSTING_DOMAIN', 'mcp.example.com');
+  }
 
   /**
    * Generate all K8s manifests for an MCP server
@@ -149,8 +171,21 @@ export class ManifestGeneratorService {
 
   private generateIngress(config: ManifestConfig): string {
     const host = `${config.serverId}.${config.domain}`;
+    const skipTLS = config.skipTLS || this.isLocalDev();
 
-    const ingress = {
+    // Base annotations
+    const annotations: Record<string, string> = {
+      'kubernetes.io/ingress.class': 'nginx',
+      'nginx.ingress.kubernetes.io/proxy-read-timeout': '300',
+      'nginx.ingress.kubernetes.io/proxy-send-timeout': '300',
+    };
+
+    // Only add cert-manager annotation if TLS is enabled
+    if (!skipTLS) {
+      annotations['cert-manager.io/cluster-issuer'] = 'letsencrypt-prod';
+    }
+
+    const ingress: Record<string, unknown> = {
       apiVersion: 'networking.k8s.io/v1',
       kind: 'Ingress',
       metadata: {
@@ -160,20 +195,9 @@ export class ManifestGeneratorService {
           app: 'mcp-server',
           'server-id': config.serverId,
         },
-        annotations: {
-          'kubernetes.io/ingress.class': 'nginx',
-          'cert-manager.io/cluster-issuer': 'letsencrypt-prod',
-          'nginx.ingress.kubernetes.io/proxy-read-timeout': '300',
-          'nginx.ingress.kubernetes.io/proxy-send-timeout': '300',
-        },
+        annotations,
       },
       spec: {
-        tls: [
-          {
-            hosts: [host],
-            secretName: `mcp-${config.serverId}-tls`,
-          },
-        ],
         rules: [
           {
             host,
@@ -195,6 +219,16 @@ export class ManifestGeneratorService {
         ],
       },
     };
+
+    // Only add TLS configuration if not skipping TLS
+    if (!skipTLS) {
+      (ingress.spec as Record<string, unknown>).tls = [
+        {
+          hosts: [host],
+          secretName: `mcp-${config.serverId}-tls`,
+        },
+      ];
+    }
 
     return yaml.dump(ingress);
   }

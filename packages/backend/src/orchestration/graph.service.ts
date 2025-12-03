@@ -13,6 +13,7 @@ import { EnsembleService } from './ensemble.service';
 import { ClarificationService } from './clarification.service';
 import { RefinementService } from './refinement.service';
 import { getPlatformContextPrompt } from './platform-context';
+import { safeParseJSON } from './json-utils';
 
 /**
  * LangGraph Orchestration Service
@@ -264,14 +265,14 @@ ${state.messages.slice(-3).map(m => `${m.role}: ${m.content}`).join('\n')}
 
     const response = await this.llm.invoke(prompt);
 
-    // Extract JSON from response (handles markdown code blocks and extra text)
-    let jsonString = response.content as string;
-    const jsonMatch = jsonString.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      jsonString = jsonMatch[0];
-    }
-
-    const analysis = JSON.parse(jsonString);
+    // Extract JSON from response using safe bracket-balanced parsing
+    const analysis = safeParseJSON<{
+      intent: 'generate_mcp' | 'clarify' | 'research' | 'help' | 'unknown';
+      confidence: number;
+      githubUrl: string | null;
+      missingInfo: string[] | null;
+      reasoning: string;
+    }>(response.content as string, this.logger);
 
     return {
       intent: {
