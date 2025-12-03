@@ -9,6 +9,7 @@ import { ConversationService } from './conversation.service';
 import { GitHubAnalysisService } from './github-analysis.service';
 import { ToolDiscoveryService } from './tool-discovery.service';
 import { McpGenerationService } from './mcp-generation.service';
+import { EnvVariableService } from './env-variable.service';
 import { ChatModule } from './chat/chat.module';
 import { DeploymentModule } from './deployment/deployment.module';
 import { ValidationModule } from './validation/validation.module';
@@ -305,7 +306,8 @@ main().catch((error) => {
     GitHubAnalysisService,
     ConversationService,
     ToolDiscoveryService,
-    McpGenerationService
+    McpGenerationService,
+    EnvVariableService
   ],
 })
 export class AppModule {}

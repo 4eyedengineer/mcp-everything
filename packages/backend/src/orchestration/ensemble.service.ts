@@ -9,6 +9,7 @@ import {
 } from './types';
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import { safeParseJSON } from './json-utils';
 
 /**
  * Ensemble Service
@@ -247,13 +248,11 @@ export class EnsembleService {
 
       const content = response.content.toString();
 
-      // Extract JSON from response (handles markdown code blocks)
-      const jsonMatch = content.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) {
-        throw new Error(`No JSON found in ${agentName} response`);
-      }
-
-      const parsed = JSON.parse(jsonMatch[0]);
+      // Extract JSON from response using safe bracket-balanced parsing
+      const parsed = safeParseJSON<{
+        recommendations: { tools: any[]; reasoning: string; concerns: string[] };
+        confidence: number;
+      }>(content, this.logger);
 
       // Validate response structure
       if (!parsed.recommendations || !parsed.confidence) {
@@ -516,13 +515,14 @@ Return JSON:
     try {
       const response = await this.llm.invoke(prompt);
       const content = response.content.toString();
-      const jsonMatch = content.match(/\{[\s\S]*\}/);
 
-      if (jsonMatch) {
-        const resolved = JSON.parse(jsonMatch[0]);
-        this.logger.log(`Conflicts resolved: ${resolved.tools.length} tools synthesized`);
-        return { tools: resolved.tools };
-      }
+      const resolved = safeParseJSON<{
+        tools: ToolRecommendation[];
+        resolutionStrategy: string;
+      }>(content, this.logger);
+
+      this.logger.log(`Conflicts resolved: ${resolved.tools.length} tools synthesized`);
+      return { tools: resolved.tools };
     } catch (error) {
       this.logger.error(`Conflict resolution failed: ${error.message}`);
     }

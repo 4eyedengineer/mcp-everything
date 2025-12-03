@@ -11,6 +11,7 @@ import {
   SynthesizedPlan,
 } from './types';
 import { getPlatformContextPrompt } from './platform-context';
+import { safeParseJSON, safeParseJSONArray } from './json-utils';
 
 /**
  * Input Type Classification
@@ -185,12 +186,13 @@ Return ONLY valid JSON:
     try {
       const response = await this.llm.invoke(prompt);
       const content = response.content.toString();
-      const jsonMatch = content.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) {
-        throw new Error('No JSON in classification response');
-      }
-
-      const result = JSON.parse(jsonMatch[0]);
+      const result = safeParseJSON<{
+        type: string;
+        confidence: number;
+        serviceName?: string;
+        intent: string;
+        keywords: string[];
+      }>(content, this.logger);
       return {
         type: result.type === 'SERVICE_NAME' ? InputType.SERVICE_NAME : InputType.NATURAL_LANGUAGE,
         confidence: result.confidence,
@@ -579,15 +581,12 @@ Return ONLY valid JSON.`;
 
       const synthesis = await this.llm.invoke(synthesisPrompt);
       const synthesisContent = synthesis.content.toString();
-      const jsonMatch = synthesisContent.match(/\{[\s\S]*\}/);
 
       let apiInfo: any = {};
-      if (jsonMatch) {
-        try {
-          apiInfo = JSON.parse(jsonMatch[0]);
-        } catch (e) {
-          this.logger.warn(`Failed to parse LLM synthesis: ${e.message}`);
-        }
+      try {
+        apiInfo = safeParseJSON(synthesisContent, this.logger);
+      } catch (e) {
+        this.logger.warn(`Failed to parse LLM synthesis: ${e.message}`);
       }
 
       // Build best practices from search results and synthesis
@@ -797,12 +796,7 @@ Return empty array [] if no clear services identified.`;
     try {
       const response = await this.llm.invoke(prompt);
       const content = response.content.toString();
-      const jsonMatch = content.match(/\[[\s\S]*\]/);
-      if (!jsonMatch) {
-        return [];
-      }
-
-      const services = JSON.parse(jsonMatch[0]);
+      const services = safeParseJSONArray<any>(content, this.logger);
       this.logger.log(`Identified ${services.length} services`);
       return services;
     } catch (error) {
@@ -901,13 +895,8 @@ Return ONLY valid JSON in this format:
       const response = await this.llm.invoke(prompt);
       const content = response.content.toString();
 
-      // Extract JSON from response (handles markdown code blocks)
-      const jsonMatch = content.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) {
-        throw new Error('No JSON found in LLM response');
-      }
-
-      const synthesized: SynthesizedPlan = JSON.parse(jsonMatch[0]);
+      // Extract JSON from response using safe bracket-balanced parsing
+      const synthesized: SynthesizedPlan = safeParseJSON<SynthesizedPlan>(content, this.logger);
 
       this.logger.log(`Research synthesized with confidence: ${synthesized.confidence}`);
       return synthesized;

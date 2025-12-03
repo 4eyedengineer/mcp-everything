@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-mcp-server
+  namespace: mcp-servers
+  labels:
+    app: test-mcp-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: test-mcp-server
+  template:
+    metadata:
+      labels:
+        app: test-mcp-server
+    spec:
+      containers:
+        - name: mcp-server
+          image: localhost:5000/test-mcp-server:latest
+          ports:
+            - containerPort: 3000
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
