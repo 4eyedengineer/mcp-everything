@@ -1,0 +1,7 @@
+# E2E Test Directory
+# Place end-to-end tests here that require:
+# - Real Claude API integration
+# - KinD deployment validation
+# - Full system integration testing
+#
+# Run with: npm run e2e:full
