@@ -31,7 +31,10 @@
     "analyze": "npx webpack-bundle-analyzer dist/main.js",
     "validate": "./scripts/frontend-validate.sh",
     "validate:standalone": "playwright test standalone-validation.spec.ts",
-    "validate:standalone:headed": "playwright test standalone-validation.spec.ts --headed"
+    "validate:standalone:headed": "playwright test standalone-validation.spec.ts --headed",
+    "validate:integration": "playwright test integration.spec.ts",
+    "validate:integration:headed": "playwright test integration.spec.ts --headed",
+    "validate:integration:debug": "playwright test integration.spec.ts --debug"
   },
   "dependencies": {
     "@angular/animations": "^20.3.1",
