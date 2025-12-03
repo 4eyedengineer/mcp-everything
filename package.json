@@ -26,6 +26,8 @@
     "test:github": "node scripts/test-github-analysis.js",
     "validate:config": "curl -f http://localhost:3000/api/v1/health/config || echo 'Backend not running'",
     "validate:setup": "npm run test:github && npm run validate:config",
+    "validate:layer4": "./scripts/integration-validate.sh",
+    "validate:layer4:markdown": "./scripts/integration-validate.sh --markdown",
     "generate-mcp": "node scripts/generate-mcp.js",
     "docker:build": "docker-compose build",
     "docker:up": "docker-compose up -d",
