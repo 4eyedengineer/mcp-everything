@@ -26,6 +26,7 @@
     "e2e:full:headed": "playwright test --config=playwright.e2e.config.ts --headed",
     "e2e:full:debug": "playwright test --config=playwright.e2e.config.ts --debug",
     "e2e:full:report": "playwright show-report e2e/playwright-report-e2e",
+    "e2e:preflight": "playwright test --config=playwright.e2e.config.ts tests/e2e/preflight.e2e.spec.ts",
     "serve:dev": "ng serve --configuration development --host 0.0.0.0 --port 4200",
     "analyze": "npx webpack-bundle-analyzer dist/main.js"
   },
