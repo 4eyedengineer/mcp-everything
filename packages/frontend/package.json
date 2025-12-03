@@ -54,6 +54,7 @@
   },
   "devDependencies": {
     "@angular-devkit/build-angular": "^20.3.2",
+    "@types/eventsource": "^1.1.15",
     "@angular-eslint/builder": "^18.0.0",
     "@angular-eslint/eslint-plugin": "^18.0.0",
     "@angular-eslint/eslint-plugin-template": "^18.0.0",
@@ -68,6 +69,7 @@
     "@typescript-eslint/eslint-plugin": "^7.0.0",
     "@typescript-eslint/parser": "^7.0.0",
     "eslint": "^8.0.0",
+    "eventsource": "^2.0.2",
     "jasmine-core": "~5.1.0",
     "karma": "~6.4.0",
     "karma-chrome-launcher": "~3.2.0",
