@@ -3,6 +3,7 @@ import { HttpClient } from '@angular/common/http';
 import { Observable, BehaviorSubject, of } from 'rxjs';
 import { map, catchError } from 'rxjs/operators';
 import { ConversationService, ConversationMessage } from './conversation.service';
+import { environment } from '../../../environments/environment';
 
 export interface ChatMessage {
   content: string;
@@ -27,7 +28,7 @@ export interface ChatResponse {
   providedIn: 'root'
 })
 export class ChatService {
-  private readonly baseUrl = 'http://localhost:3000/api';
+  private readonly baseUrl = `${environment.apiUrl}/api`;
   private messagesSubject = new BehaviorSubject<ChatMessage[]>([]);
   public messages$ = this.messagesSubject.asObservable();
 
