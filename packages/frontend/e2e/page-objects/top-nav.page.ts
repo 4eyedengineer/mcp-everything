@@ -17,9 +17,10 @@ export class TopNavPage extends BasePage {
 
     this.topNav = page.locator('.top-nav');
     this.hamburgerButton = page.locator('.hamburger-button');
-    this.exploreButton = page.locator('.explore-button');
+    // Use routerLink attribute for more reliable selection
+    this.exploreButton = page.locator('button[routerLink="/explore"], .nav-button:has-text("Explore")');
     this.documentationButton = page.locator('.nav-icon-button').filter({ has: page.locator('mat-icon:has-text("menu_book")') });
-    this.accountButton = page.locator('.nav-icon-button').filter({ has: page.locator('mat-icon:has-text("account_circle")') });
+    this.accountButton = page.locator('button[routerLink="/account"], .nav-icon-button:has(mat-icon:has-text("account_circle"))');
   }
 
   /**
