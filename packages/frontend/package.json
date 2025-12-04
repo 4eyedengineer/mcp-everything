@@ -39,7 +39,16 @@
     "e2e:core-features:headed": "playwright test --project=core-features --headed",
     "e2e:core-features:debug": "playwright test --project=core-features --debug",
     "e2e:core-features:mocked": "playwright test --project=core-features --grep 'Mocked'",
-    "e2e:core-features:real": "playwright test --project=core-features --grep 'Real API'"
+    "e2e:core-features:real": "playwright test --project=core-features --grep 'Real API'",
+    "e2e:user-journeys": "playwright test --project=user-journeys",
+    "e2e:user-journeys:headed": "playwright test --project=user-journeys --headed",
+    "e2e:user-journeys:debug": "playwright test --project=user-journeys --debug",
+    "e2e:user-journeys:mocked": "playwright test --project=user-journeys --grep 'Mocked'",
+    "e2e:user-journeys:real": "playwright test --project=user-journeys --grep 'Real API'",
+    "e2e:user-journeys:journey1": "playwright test --project=user-journeys --grep 'Journey 1'",
+    "e2e:user-journeys:journey2": "playwright test --project=user-journeys --grep 'Journey 2'",
+    "e2e:user-journeys:journey3": "playwright test --project=user-journeys --grep 'Journey 3'",
+    "e2e:user-journeys:journey4": "playwright test --project=user-journeys --grep 'Journey 4'"
   },
   "dependencies": {
     "@angular/animations": "^20.3.1",
