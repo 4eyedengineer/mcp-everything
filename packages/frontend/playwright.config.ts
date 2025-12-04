@@ -84,6 +84,22 @@ export default defineConfig({
       use: { ...devices['iPhone 12'] },
     },
 
+    /**
+     * Core Features Tests (Layer 5)
+     *
+     * Tests chat, AI responses, and MCP server generation.
+     * Uses real Claude API calls - costs money!
+     *
+     * Run with: npm run e2e:core-features
+     */
+    {
+      name: 'core-features',
+      testMatch: /core-features\.spec\.ts/,
+      use: { ...devices['Desktop Chrome'] },
+      timeout: 300000, // 5 minutes per test for AI generation
+      retries: 0, // No retries - costs money
+    },
+
     /* Test against branded browsers. */
     // {
     //   name: 'Microsoft Edge',

@@ -365,4 +365,170 @@ export class ChatPage extends BasePage {
   async getErrorMessage(): Promise<string> {
     return this.getText(this.errorMessages.first().locator('.message-body'));
   }
+
+  // ==========================================
+  // Core Features / Generation-specific methods
+  // ==========================================
+
+  /**
+   * Download ZIP button locator (specific to generated code)
+   */
+  get downloadZipButton(): Locator {
+    return this.page.locator('.download-zip-button');
+  }
+
+  /**
+   * Check if download ZIP button is visible
+   */
+  async hasDownloadZipButton(): Promise<boolean> {
+    return this.downloadZipButton.isVisible();
+  }
+
+  /**
+   * Click download ZIP button and wait for download
+   * Returns the path to the downloaded file
+   */
+  async clickDownloadZip(): Promise<string> {
+    const downloadPromise = this.page.waitForEvent('download');
+    await this.downloadZipButton.click();
+    const download = await downloadPromise;
+    const path = await download.path();
+    return path || '';
+  }
+
+  /**
+   * Wait for generation to complete (download ZIP button appears)
+   * This indicates the LangGraph pipeline has finished successfully
+   */
+  async waitForGenerationComplete(timeout = 300000): Promise<void> {
+    await this.downloadZipButton.waitFor({ state: 'visible', timeout });
+  }
+
+  /**
+   * Wait for a specific progress phase to appear
+   * Useful for tracking LangGraph node execution
+   *
+   * @param phase - Text to search for in progress messages (e.g., "Analyzing", "Research", "Ensemble")
+   * @param timeout - Maximum time to wait
+   */
+  async waitForProgressPhase(phase: string, timeout = 60000): Promise<void> {
+    const startTime = Date.now();
+
+    while (Date.now() - startTime < timeout) {
+      const progressCount = await this.getProgressMessageCount();
+      if (progressCount > 0) {
+        const progressText = await this.getProgressMessage();
+        if (progressText.toLowerCase().includes(phase.toLowerCase())) {
+          return;
+        }
+      }
+      await this.wait(500);
+    }
+
+    throw new Error(`Progress phase "${phase}" not found within ${timeout}ms`);
+  }
+
+  /**
+   * Get all progress messages that have appeared
+   */
+  async getAllProgressMessages(): Promise<string[]> {
+    const progressElements = await this.progressMessages.all();
+    const messages: string[] = [];
+
+    for (const element of progressElements) {
+      const text = await this.getText(element.locator('.message-body'));
+      messages.push(text);
+    }
+
+    return messages;
+  }
+
+  /**
+   * Check if progress message contains spinning icon (autorenew)
+   */
+  async hasProgressSpinner(): Promise<boolean> {
+    const progressMessage = this.progressMessages.first();
+    if (!(await progressMessage.isVisible())) {
+      return false;
+    }
+    const icon = progressMessage.locator('mat-icon');
+    const iconText = await icon.textContent();
+    return iconText === 'autorenew';
+  }
+
+  /**
+   * Wait for assistant response that contains specific text
+   */
+  async waitForAssistantResponseContaining(
+    text: string,
+    timeout = 30000
+  ): Promise<void> {
+    const startTime = Date.now();
+
+    while (Date.now() - startTime < timeout) {
+      const assistantCount = await this.getAssistantMessageCount();
+      if (assistantCount > 0) {
+        const messages = await this.getAllMessages();
+        const assistantMessages = messages.filter((m) => m.type === 'assistant');
+        if (assistantMessages.some((m) => m.content.toLowerCase().includes(text.toLowerCase()))) {
+          return;
+        }
+      }
+      await this.wait(500);
+    }
+
+    throw new Error(`Assistant response containing "${text}" not found within ${timeout}ms`);
+  }
+
+  /**
+   * Check if a clarification question is being asked
+   * (indicated by the AI asking for more information)
+   */
+  async isClarificationBeingAsked(): Promise<boolean> {
+    const assistantCount = await this.getAssistantMessageCount();
+    if (assistantCount === 0) return false;
+
+    const lastMessage = await this.getLastAssistantMessage();
+    const clarificationIndicators = [
+      'could you',
+      'can you',
+      'please provide',
+      'what',
+      'which',
+      'how',
+      'clarify',
+      'more information',
+      'specify',
+      '?',
+    ];
+
+    const lowerMessage = lastMessage.toLowerCase();
+    return clarificationIndicators.some((indicator) => lowerMessage.includes(indicator));
+  }
+
+  /**
+   * Get session ID from localStorage
+   */
+  async getSessionId(): Promise<string | null> {
+    return this.page.evaluate(() => {
+      return localStorage.getItem('sessionId');
+    });
+  }
+
+  /**
+   * Wait for any new message to appear after current count
+   */
+  async waitForNewMessage(currentCount: number, timeout = 30000): Promise<void> {
+    const startTime = Date.now();
+
+    while (Date.now() - startTime < timeout) {
+      const newCount = await this.getMessageCount();
+      if (newCount > currentCount) {
+        return;
+      }
+      await this.wait(500);
+    }
+
+    throw new Error(`No new message appeared within ${timeout}ms`);
+  }
 }

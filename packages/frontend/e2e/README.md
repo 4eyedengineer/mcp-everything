@@ -482,9 +482,75 @@ Current coverage:
 - ✅ Security (XSS prevention, input validation)
 - ✅ Keyboard navigation
 - ✅ Mobile responsive design
+- ✅ Core Features - Chat, AI, Generation (Layer 5)
 - ⏳ Download functionality (mocked)
 - ⏳ Account settings
 - ⏳ Explore page
+
+## Layer 5: Core Features Tests
+
+The core features tests validate the complete AI pipeline:
+
+### Prerequisites
+
+1. **Backend running**: `cd packages/backend && npm run start:dev`
+2. **ANTHROPIC_API_KEY**: Must be configured in backend `.env`
+3. **Frontend running**: `npm run start` (auto-started by Playwright)
+
+### Running Core Features Tests
+
+```bash
+# Run all core features tests (mocked + real API)
+npm run e2e:core-features
+
+# Run with visible browser
+npm run e2e:core-features:headed
+
+# Run only mocked tests (fast, free)
+npm run e2e:core-features:mocked
+
+# Run only real API tests (slow, costs money)
+npm run e2e:core-features:real
+
+# Debug mode
+npm run e2e:core-features:debug
+```
+
+### Test Structure
+
+| Test | Mode | Description | Time |
+|------|------|-------------|------|
+| 5.1 Send Message | Mocked | User message appears in chat | < 2s |
+| 5.2 AI Response | Mocked | Streaming response via SSE | < 2s |
+| 5.3 Help Intent | Mocked | Quick help response | < 2s |
+| 5.4 GitHub Generation | Real API | Generate MCP server from URL | 2-5 min |
+| 5.5 Download | Real API | Download generated ZIP | 5s |
+| 5.6 Service Name | Real API | Handle "Stripe API" input | 30-60s |
+| 5.7 Natural Language | Real API | Handle description input | 30-60s |
+| 5.8 Clarification | Real API | Vague input triggers questions | 1-2 min |
+| 5.9 Context | Real API | Conversation memory | 10-30s |
+
+### Cost Considerations
+
+- **Mocked tests** (5.1-5.3): Free, fast, reliable
+- **Real API tests** (5.4-5.9): ~$0.001-0.01 per test
+- **Full suite**: ~$0.05-0.10 total
+- **Run time**: ~10-15 minutes total
+
+### Troubleshooting
+
+**No response after sending message:**
+- Check backend logs for errors
+- Verify ANTHROPIC_API_KEY is valid
+- Check SSE connection in Network tab
+
+**Progress stuck on one phase:**
+- Check backend logs for stuck node
+- May be rate limited by Claude API
+
+**Generation fails:**
+- Check refinement loop iteration count
+- Look for compilation errors in logs
 
 ## Known Issues
 
@@ -524,4 +590,4 @@ For issues or questions:
 
 ---
 
-**Last Updated**: October 2025
+**Last Updated**: December 2025
