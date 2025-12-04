@@ -434,7 +434,7 @@ Return ONLY valid JSON:
     const services = await this.identifyServicesFromIntent(intent, keywords);
 
     if (services.length === 0) {
-      // No clear services identified, return low-confidence research
+      // No clear services identified, use synthesized confidence (dynamic, not hardcoded)
       const webSearch = await this.webSearchAgent(state, keywords.join(' '));
       const synthesized = await this.synthesizeResearch({
         webSearch,
@@ -446,7 +446,7 @@ Return ONLY valid JSON:
         webSearchFindings: webSearch,
         githubDeepDive: undefined, // No GitHub repo identified
         synthesizedPlan: synthesized,
-        researchConfidence: 0.3, // Low confidence
+        researchConfidence: synthesized.confidence, // Use dynamic confidence from synthesis
         researchIterations: 1,
       };
     }

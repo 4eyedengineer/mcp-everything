@@ -169,11 +169,23 @@ export class GraphOrchestrationService {
       // Load or create conversation
       const conversation = await this.loadOrCreateConversation(sessionId, conversationId);
 
+      // Save user message to conversation immediately
+      await this.saveMessageToConversation(conversation.id, {
+        role: 'user',
+        content: userInput,
+        timestamp: new Date(),
+      });
+
+      // Reload conversation to get updated messages
+      const updatedConversation = await this.conversationRepo.findOne({
+        where: { id: conversation.id },
+      });
+
       // Initial state
       const initialState: GraphState = {
         sessionId,
         conversationId: conversation.id,
-        messages: conversation.messages,
+        messages: updatedConversation?.messages || [],
         userInput,
         currentNode: 'analyzeIntent',
         executedNodes: [],
@@ -215,6 +227,15 @@ export class GraphOrchestrationService {
 
         // Save checkpoint to database
         await this.saveCheckpoint(conversationId, fullUpdate);
+
+        // Save AI response to conversation if present
+        if (partialState.response && partialState.isComplete) {
+          await this.saveMessageToConversation(conversationId, {
+            role: 'assistant',
+            content: partialState.response,
+            timestamp: new Date(),
+          });
+        }
 
         // Yield update for SSE streaming
         yield fullUpdate;
@@ -698,6 +719,9 @@ ${refinementResult.error || 'Some tools may need manual fixes.'}`,
         return 'provideHelp';
       case 'research':
         return 'researchCoordinator';
+      case 'clarify':
+        // User is responding to a clarification request - re-run research with new context
+        return 'researchCoordinator';
       default:
         return 'clarifyWithUser';
     }
@@ -821,5 +845,50 @@ ${refinementResult.error || 'Some tools may need manual fixes.'}`,
     });
 
     await this.memoryRepo.save(checkpoint);
+  }
+
+  /**
+   * Save a message to the conversation's messages array
+   */
+  private async saveMessageToConversation(
+    conversationId: string,
+    message: { role: 'user' | 'assistant' | 'system'; content: string; timestamp: Date },
+  ): Promise<void> {
+    const conversation = await this.conversationRepo.findOne({
+      where: { id: conversationId },
+    });
+
+    if (!conversation) {
+      this.logger.error(`Conversation ${conversationId} not found for saving message`);
+      return;
+    }
+
+    // Append message to existing messages array
+    const messages = Array.isArray(conversation.messages) ? conversation.messages : [];
+    messages.push(message);
+
+    // Generate title from first user message if messages were empty
+    const updateData: any = {
+      messages,
+      updatedAt: new Date(),
+    };
+
+    // If this is the first user message, update the title
+    if (message.role === 'user' && messages.filter(m => m.role === 'user').length === 1) {
+      const title = message.content.substring(0, 50) + (message.content.length > 50 ? '...' : '');
+      updateData.state = {
+        ...conversation.state,
+        metadata: {
+          ...(conversation.state?.metadata || {}),
+          title,
+        },
+      };
+      this.logger.log(`Set conversation title to: "${title}"`);
+    }
+
+    // Update conversation with new messages
+    await this.conversationRepo.update(conversationId, updateData);
+
+    this.logger.log(`Saved ${message.role} message to conversation ${conversationId}`);
   }
 }
