@@ -169,9 +169,126 @@ export const API_ENDPOINTS = {
     messages: (id: string) => `/api/conversations/${id}/messages`,
     delete: (id: string) => `/api/conversations/${id}`,
     update: (id: string) => `/api/conversations/${id}`,
+    deployments: (id: string) => `/api/conversations/${id}/deployments`,
+    latestDeployment: (id: string) => `/api/conversations/${id}/deployments/latest`,
+  },
+  deploy: {
+    github: '/api/deploy/github',
+    gist: '/api/deploy/gist',
+    status: (conversationId: string) => `/api/deploy/${conversationId}/status`,
+  },
+  hosting: {
+    deploy: (conversationId: string) => `/api/hosting/deploy/${conversationId}`,
+    servers: '/api/hosting/servers',
+    server: (serverId: string) => `/api/hosting/servers/${serverId}`,
+    serverStatus: (serverId: string) => `/api/hosting/servers/${serverId}/status`,
+    serverLogs: (serverId: string) => `/api/hosting/servers/${serverId}/logs`,
+    startServer: (serverId: string) => `/api/hosting/servers/${serverId}/start`,
+    stopServer: (serverId: string) => `/api/hosting/servers/${serverId}/stop`,
   },
   health: '/health',
 };
+
+export const MOCK_DEPLOYMENT_RESPONSES = {
+  githubSuccess: {
+    success: true,
+    deploymentId: 'deploy-github-123',
+    type: 'repo',
+    urls: {
+      repository: 'https://github.com/testuser/mcp-server-express',
+      clone: 'https://github.com/testuser/mcp-server-express.git',
+      codespace: 'https://codespaces.new/testuser/mcp-server-express',
+    },
+    validationStatus: 'passed',
+    toolsPassedCount: 3,
+    toolsTestedCount: 3,
+  },
+  gistSuccess: {
+    success: true,
+    deploymentId: 'deploy-gist-456',
+    type: 'gist',
+    urls: {
+      gist: 'https://gist.github.com/testuser/abc123def456',
+      gistRaw: 'https://gist.githubusercontent.com/testuser/abc123def456/raw',
+    },
+    validationStatus: 'passed',
+    toolsPassedCount: 3,
+    toolsTestedCount: 3,
+  },
+  cloudSuccess: {
+    success: true,
+    serverId: 'server-cloud-789',
+    serverName: 'mcp-express-server',
+    endpointUrl: 'https://mcp-express-server.mcp.localhost',
+    status: 'running',
+  },
+  failure: {
+    success: false,
+    error: 'Deployment failed: insufficient permissions or rate limit exceeded',
+  },
+};
+
+export const MOCK_HOSTED_SERVERS = [
+  {
+    id: 'server-1',
+    serverId: 'mcp-express',
+    serverName: 'Express API Server',
+    description: 'MCP server for Express.js applications',
+    status: 'running',
+    endpointUrl: 'https://mcp-express.mcp.localhost',
+    tools: [
+      { name: 'get_routes', description: 'Get all Express routes' },
+      { name: 'add_middleware', description: 'Add middleware to app' },
+    ],
+    envVarNames: ['EXPRESS_PORT'],
+    requestCount: 150,
+    createdAt: new Date('2025-01-01T10:00:00Z').toISOString(),
+    updatedAt: new Date('2025-01-02T14:30:00Z').toISOString(),
+    deployedAt: new Date('2025-01-01T10:05:00Z').toISOString(),
+  },
+  {
+    id: 'server-2',
+    serverId: 'mcp-stripe',
+    serverName: 'Stripe Integration',
+    description: 'MCP server for Stripe payment processing',
+    status: 'stopped',
+    endpointUrl: 'https://mcp-stripe.mcp.localhost',
+    tools: [
+      { name: 'create_payment', description: 'Create a payment intent' },
+      { name: 'list_customers', description: 'List Stripe customers' },
+    ],
+    envVarNames: ['STRIPE_API_KEY'],
+    requestCount: 0,
+    createdAt: new Date('2025-01-03T08:00:00Z').toISOString(),
+    updatedAt: new Date('2025-01-03T08:00:00Z').toISOString(),
+    stoppedAt: new Date('2025-01-03T12:00:00Z').toISOString(),
+  },
+  {
+    id: 'server-3',
+    serverId: 'mcp-github',
+    serverName: 'GitHub Tools',
+    description: 'MCP server for GitHub API interactions',
+    status: 'failed',
+    statusMessage: 'Container failed to start: missing GITHUB_TOKEN',
+    endpointUrl: 'https://mcp-github.mcp.localhost',
+    tools: [
+      { name: 'list_repos', description: 'List repositories' },
+      { name: 'create_issue', description: 'Create an issue' },
+    ],
+    envVarNames: ['GITHUB_TOKEN'],
+    requestCount: 0,
+    createdAt: new Date('2025-01-04T09:00:00Z').toISOString(),
+    updatedAt: new Date('2025-01-04T09:05:00Z').toISOString(),
+  },
+];
+
+export const MOCK_SERVER_LOGS = [
+  '[2025-01-02T14:30:00Z] Server started on port 3000',
+  '[2025-01-02T14:30:01Z] MCP server initialized with 2 tools',
+  '[2025-01-02T14:30:05Z] Received request: tools/list',
+  '[2025-01-02T14:30:10Z] Received request: tools/call - get_routes',
+  '[2025-01-02T14:31:00Z] Health check passed',
+];
 
 export const TIMEOUTS = {
   short: 5000,
