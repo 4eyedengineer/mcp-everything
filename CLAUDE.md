@@ -2,7 +2,7 @@
 
 ## Project Context
 
-This is **MCP Everything** - an AI-native platform for automatically generating and hosting Model Context Protocol (MCP) servers from any input (GitHub repositories, API specifications, natural language descriptions).
+This is **MCP Everything** - an AI-native platform for automatically generating and hosting Model Context Protocol (MCP) servers from any input (GitHub repositories, API specifications, natural language descriptions). The core innovation is an 8-node LangGraph state machine that orchestrates AI-powered analysis, research, generation, and validation to produce high-quality MCP servers with minimal human intervention. The business goal is to create a marketplace of AI-generated MCP servers that users can easily discover, subscribe to, and deploy. The money-making potential lies in subscriptions, usage-based billing, and premium features for MCP Everything hosted MCP servers.
 
 ## Key Reference Files
 
@@ -14,14 +14,13 @@ This is **MCP Everything** - an AI-native platform for automatically generating 
 
 ## Current Status
 
-- **Phase**: Integration-Ready MVP (January 2025)
 - **Repository**: https://github.com/4eyedengineer/mcp-everything
 - **Implementation**: LangGraph state machine fully coded ✅
 - **Frontend**: LibreChat-inspired design fully implemented ✅
 - **Architecture**: AI-first conversational interface with 8-node workflow
 - **Backend**: All core services implemented (analysis, generation, validation) ✅
 - **Database**: PostgreSQL schema defined ✅
-- **Reality Check**: Code complete but never run end-to-end ⚠️
+- **Reality Check**: Code complete but has never run end-to-end ⚠️
 - **Vision Alignment**: 60% - Strong generator, missing business infrastructure
 - **Critical Gaps**: Authentication, payments, hosting, marketplace backend
 - **Next Milestone**: First real MCP server generation and validation
@@ -31,16 +30,14 @@ This is **MCP Everything** - an AI-native platform for automatically generating 
 ### Build Strategy: Local-First, Cloud-Optional
 
 - **KEEP IT SIMPLE** so we build and compile successfully with each change
-- **Local Docker builds** for fast iteration (30s vs 2-5min cloud)
+- **Local Docker builds** for fast iteration and debugging
 - **Centralized build system** instead of per-repo GitHub Actions
-- **Tiered hosting**: Gist (free) → Private Repo (pro) → Enterprise (custom)
-- **No repository explosion** - avoid creating thousands of GitHub repos
 
 ### Technology Stack
 
 - **Backend**: NestJS + TypeScript + LangGraph + PostgreSQL
 - **Frontend**: Angular 20 with LibreChat-inspired design
-- **AI**: Claude Haiku 3.5 (cost-effective: $0.001/conversation turn)
+- **AI**: Claude Haiku 4.5
 - **State Management**: PostgreSQL with conversation checkpoints
 - **Streaming**: Server-Sent Events (SSE) for real-time updates
 - **Build**: Local Docker with hybrid cloud deployment
@@ -50,13 +47,12 @@ This is **MCP Everything** - an AI-native platform for automatically generating 
 ### Currently Available ✅
 
 - **GitHub**: PAT working, MCP tools available, repository created
-- **Anthropic API**: Claude Haiku integrated and operational
+- **Anthropic API**: Claude Haiku 4.5 integrated and operational
 - **PostgreSQL**: Database running with conversations and checkpoints
 
 ### Optional Services 🔲
 
 - **Docker Hub**: Container registry (for deployment)
-- **Vercel**: Serverless hosting (for free tier deployment)
 
 ## Development Workflow
 
@@ -90,24 +86,26 @@ npm run dev:frontend
 ## Core Implementation Services
 
 ### LangGraph State Machine (8 Nodes)
+
 ```typescript
 @Module({
   providers: [
-    GraphOrchestrationService,  // LangGraph workflow execution
-    ResearchService,            // Input-agnostic research (GitHub/web/APIs/docs)
-    EnsembleService,            // Parallel reasoning with 4 specialist agents
-    ClarificationService,       // AI-powered gap detection
-    RefinementService,          // Generate-Test-Refine loop
-    McpTestingService,          // Docker-based MCP server validation
-    GitHubAnalysisService,      // Repository analysis with Octokit
-    McpGenerationService,       // MCP server code generation
-    CodeExecutionService,       // Secure validation with isolated-vm
-  ]
+    GraphOrchestrationService, // LangGraph workflow execution
+    ResearchService, // Input-agnostic research (GitHub/web/APIs/docs)
+    EnsembleService, // Parallel reasoning with 4 specialist agents
+    ClarificationService, // AI-powered gap detection
+    RefinementService, // Generate-Test-Refine loop
+    McpTestingService, // Docker-based MCP server validation
+    GitHubAnalysisService, // Repository analysis with Octokit
+    McpGenerationService, // MCP server code generation
+    CodeExecutionService, // Secure validation with isolated-vm
+  ],
 })
 export class ChatModule {}
 ```
 
 ### LangGraph Nodes
+
 1. **analyzeIntent**: AI-powered intent detection (Claude Haiku)
 2. **researchCoordinator**: Multi-source research & planning (GitHub, web, APIs, docs)
 3. **ensembleCoordinator**: Parallel reasoning with 4 specialist agents + voting
@@ -134,6 +132,7 @@ export class ChatModule {}
 ## Current Priorities (60% Vision Complete)
 
 ### Phase 1: Validate Core (IMMEDIATE - Weeks 1-2) 🎯
+
 1. **First Run**: Initialize database, start services, validate system works
 2. **Real Generation**: Generate first MCP server from any input (GitHub repo, API docs, service name, natural language)
 3. **Integration Testing**: Validate complete workflow (chat → research → ensemble → clarification → refinement)
@@ -141,6 +140,7 @@ export class ChatModule {}
 5. **Documentation Updates**: Document actual vs expected behavior
 
 ### Phase 2: Business Foundation (CRITICAL - Weeks 3-6) 💰
+
 **Why Critical**: No revenue model = Not a business
 
 1. **User Authentication**: OAuth (Google, GitHub) + email/password
@@ -149,6 +149,7 @@ export class ChatModule {}
 4. **Billing System**: Usage tracking, invoicing, webhooks
 
 ### Phase 3: Marketplace Backend (HIGH - Weeks 7-9) 🛒
+
 **Why High**: Core value proposition currently has placeholder data
 
 1. **Database Schema**: MCP servers, tags, categories
@@ -173,17 +174,20 @@ export class ChatModule {}
 **Use specialized sub-agents proactively** for complex tasks:
 
 **Core Development**:
+
 - **nestjs-backend-architect**: NestJS services, modules, API design
 - **angular-architect**: Angular components, architecture, best practices
 - **postgres-architect**: Database schema, migrations, optimization
 - **docker-expert**: Dockerfiles, CI/CD, container builds
 
 **MCP-Specific**:
+
 - **mcp-protocol-validator**: MCP server validation, protocol compliance
 - **mcp-test-generator**: Test suites for generated MCP servers
 - **codebase-analyzer**: Deep repository analysis, API patterns
 
 **Infrastructure & Quality**:
+
 - **github-integration-expert**: GitHub Apps, webhooks, automation
 - **security-auditor**: Security reviews, secret management
 - **observability-expert**: Monitoring, logging, analytics
@@ -192,6 +196,7 @@ export class ChatModule {}
 - **karen**: Validate actual completion vs claimed progress
 
 **Delegation Tips**:
+
 - Invoke early to preserve main context
 - Use for deep dives (searches, architecture)
 - Run parallel agents for independent tasks
@@ -199,7 +204,6 @@ export class ChatModule {}
 ### Development Approach
 
 - Start with simple template-based generation, add AI intelligence incrementally
-- Use real GitHub repositories for testing from day 1
 - Build locally first, add cloud deployment later
 - Focus on the critical path: input → analysis → generation → validation → deployment
 
