@@ -34,7 +34,12 @@
     "validate:standalone:headed": "playwright test standalone-validation.spec.ts --headed",
     "validate:integration": "playwright test integration.spec.ts",
     "validate:integration:headed": "playwright test integration.spec.ts --headed",
-    "validate:integration:debug": "playwright test integration.spec.ts --debug"
+    "validate:integration:debug": "playwright test integration.spec.ts --debug",
+    "e2e:core-features": "playwright test --project=core-features",
+    "e2e:core-features:headed": "playwright test --project=core-features --headed",
+    "e2e:core-features:debug": "playwright test --project=core-features --debug",
+    "e2e:core-features:mocked": "playwright test --project=core-features --grep 'Mocked'",
+    "e2e:core-features:real": "playwright test --project=core-features --grep 'Real API'"
   },
   "dependencies": {
     "@angular/animations": "^20.3.1",

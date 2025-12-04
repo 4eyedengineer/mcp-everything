@@ -363,3 +363,324 @@ export function isValidUUIDv4(uuid: string): boolean {
 export function generateTestSessionId(): string {
   return `test-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
 }
+
+/**
+ * Stream update interface matching backend SSE events
+ */
+export interface StreamUpdate {
+  type: 'progress' | 'result' | 'complete' | 'error';
+  node?: string;
+  message?: string;
+  data?: {
+    conversationId?: string;
+    generatedCode?: {
+      mainFile: string;
+      supportingFiles: Record<string, string>;
+      documentation?: string;
+    };
+    executionResults?: Array<{
+      step: string;
+      success: boolean;
+      output?: string;
+      error?: string;
+    }>;
+  };
+  timestamp: string;
+}
+
+/**
+ * AI readiness check result
+ */
+export interface AIReadinessResult {
+  ready: boolean;
+  backendHealthy: boolean;
+  chatServiceHealthy: boolean;
+  error?: string;
+}
+
+/**
+ * Extended IntegrationBackend with AI/generation-specific methods
+ */
+export class CoreFeaturesBackend extends IntegrationBackend {
+  /**
+   * Check if AI services are ready (backend + chat service healthy)
+   * Note: We can't directly check ANTHROPIC_API_KEY from frontend,
+   * but we can verify the services that depend on it are healthy
+   */
+  async isAIReady(): Promise<AIReadinessResult> {
+    const result: AIReadinessResult = {
+      ready: false,
+      backendHealthy: false,
+      chatServiceHealthy: false,
+    };
+
+    try {
+      // Check main backend health
+      const backendHealth = await this.healthCheck();
+      result.backendHealthy = backendHealth?.status === 'ok';
+
+      // Check chat service health (this service uses the AI)
+      const chatHealth = await this.chatHealthCheck();
+      result.chatServiceHealthy = chatHealth?.status === 'ok';
+
+      // Both must be healthy for AI to be ready
+      result.ready = result.backendHealthy && result.chatServiceHealthy;
+
+      if (!result.ready) {
+        result.error = !result.backendHealthy
+          ? 'Backend is not healthy'
+          : 'Chat service is not healthy';
+      }
+    } catch (error) {
+      result.error = error instanceof Error ? error.message : 'Unknown error';
+    }
+
+    return result;
+  }
+
+  /**
+   * Subscribe to SSE stream and collect events until complete or error
+   * Returns collected events for verification
+   */
+  async collectSSEEvents(
+    sessionId: string,
+    timeoutMs: number = 300000 // 5 minutes default for generation
+  ): Promise<{ events: StreamUpdate[]; error?: string }> {
+    const events: StreamUpdate[] = [];
+
+    return new Promise((resolve) => {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => {
+        controller.abort();
+        resolve({ events, error: `Timeout after ${timeoutMs}ms` });
+      }, timeoutMs);
+
+      const backendUrl = (this as unknown as { backendUrl: string }).backendUrl || 'http://localhost:3000';
+
+      fetch(`${backendUrl}/api/chat/stream/${sessionId}`, {
+        headers: { Accept: 'text/event-stream' },
+        signal: controller.signal,
+      })
+        .then(async (response) => {
+          if (!response.ok) {
+            clearTimeout(timeoutId);
+            resolve({ events, error: `HTTP ${response.status}` });
+            return;
+          }
+
+          const reader = response.body?.getReader();
+          if (!reader) {
+            clearTimeout(timeoutId);
+            resolve({ events, error: 'No response body' });
+            return;
+          }
+
+          const decoder = new TextDecoder();
+          let buffer = '';
+
+          try {
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+
+              buffer += decoder.decode(value, { stream: true });
+              const lines = buffer.split('\n');
+              buffer = lines.pop() || '';
+
+              for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                  try {
+                    const data = JSON.parse(line.slice(6));
+                    events.push(data as StreamUpdate);
+
+                    // Stop on complete or error
+                    if (data.type === 'complete' || data.type === 'error') {
+                      clearTimeout(timeoutId);
+                      controller.abort();
+                      resolve({ events });
+                      return;
+                    }
+                  } catch {
+                    // Skip malformed JSON
+                  }
+                }
+              }
+            }
+          } catch (error) {
+            if ((error as Error).name !== 'AbortError') {
+              clearTimeout(timeoutId);
+              resolve({ events, error: (error as Error).message });
+            }
+          }
+        })
+        .catch((error) => {
+          if (error.name !== 'AbortError') {
+            clearTimeout(timeoutId);
+            resolve({ events, error: error.message });
+          }
+        });
+    });
+  }
+
+  /**
+   * Wait for a specific phase to appear in SSE stream
+   * Useful for tracking generation progress
+   */
+  async waitForPhase(
+    sessionId: string,
+    phase: string,
+    timeoutMs: number = 60000
+  ): Promise<{ found: boolean; event?: StreamUpdate; error?: string }> {
+    return new Promise((resolve) => {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => {
+        controller.abort();
+        resolve({ found: false, error: `Phase "${phase}" not found within ${timeoutMs}ms` });
+      }, timeoutMs);
+
+      const backendUrl = (this as unknown as { backendUrl: string }).backendUrl || 'http://localhost:3000';
+
+      fetch(`${backendUrl}/api/chat/stream/${sessionId}`, {
+        headers: { Accept: 'text/event-stream' },
+        signal: controller.signal,
+      })
+        .then(async (response) => {
+          if (!response.ok) {
+            clearTimeout(timeoutId);
+            resolve({ found: false, error: `HTTP ${response.status}` });
+            return;
+          }
+
+          const reader = response.body?.getReader();
+          if (!reader) {
+            clearTimeout(timeoutId);
+            resolve({ found: false, error: 'No response body' });
+            return;
+          }
+
+          const decoder = new TextDecoder();
+          let buffer = '';
+
+          try {
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+
+              buffer += decoder.decode(value, { stream: true });
+              const lines = buffer.split('\n');
+              buffer = lines.pop() || '';
+
+              for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                  try {
+                    const data = JSON.parse(line.slice(6)) as StreamUpdate;
+
+                    // Check if this event matches the phase we're looking for
+                    const messageContainsPhase =
+                      data.message?.toLowerCase().includes(phase.toLowerCase());
+                    const nodeMatchesPhase =
+                      data.node?.toLowerCase().includes(phase.toLowerCase());
+
+                    if (messageContainsPhase || nodeMatchesPhase) {
+                      clearTimeout(timeoutId);
+                      controller.abort();
+                      resolve({ found: true, event: data });
+                      return;
+                    }
+
+                    // Stop on complete or error without finding phase
+                    if (data.type === 'complete' || data.type === 'error') {
+                      clearTimeout(timeoutId);
+                      controller.abort();
+                      resolve({
+                        found: false,
+                        error: `Stream ended (${data.type}) before phase "${phase}" was found`,
+                      });
+                      return;
+                    }
+                  } catch {
+                    // Skip malformed JSON
+                  }
+                }
+              }
+            }
+          } catch (error) {
+            if ((error as Error).name !== 'AbortError') {
+              clearTimeout(timeoutId);
+              resolve({ found: false, error: (error as Error).message });
+            }
+          }
+        })
+        .catch((error) => {
+          if (error.name !== 'AbortError') {
+            clearTimeout(timeoutId);
+            resolve({ found: false, error: error.message });
+          }
+        });
+    });
+  }
+
+  /**
+   * Send a message and wait for generation to complete
+   * Returns the complete event with generated code
+   */
+  async sendAndWaitForGeneration(
+    message: string,
+    sessionId: string,
+    timeoutMs: number = 300000
+  ): Promise<{
+    success: boolean;
+    conversationId?: string;
+    generatedCode?: StreamUpdate['data']['generatedCode'];
+    events: StreamUpdate[];
+    error?: string;
+  }> {
+    // Start collecting SSE events before sending message
+    const ssePromise = this.collectSSEEvents(sessionId, timeoutMs);
+
+    // Small delay to ensure SSE connection is established
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    // Send the message
+    const sendResult = await this.sendChatMessage(message, sessionId);
+    if (!sendResult.success) {
+      return {
+        success: false,
+        events: [],
+        error: `Failed to send message: ${sendResult.error}`,
+      };
+    }
+
+    // Wait for SSE events
+    const sseResult = await ssePromise;
+
+    // Find the complete event
+    const completeEvent = sseResult.events.find((e) => e.type === 'complete');
+    const errorEvent = sseResult.events.find((e) => e.type === 'error');
+
+    if (errorEvent) {
+      return {
+        success: false,
+        conversationId: sendResult.conversationId,
+        events: sseResult.events,
+        error: errorEvent.message || 'Generation failed',
+      };
+    }
+
+    if (completeEvent) {
+      return {
+        success: true,
+        conversationId: completeEvent.data?.conversationId || sendResult.conversationId,
+        generatedCode: completeEvent.data?.generatedCode,
+        events: sseResult.events,
+      };
+    }
+
+    return {
+      success: false,
+      conversationId: sendResult.conversationId,
+      events: sseResult.events,
+      error: sseResult.error || 'No complete event received',
+    };
+  }
+}
