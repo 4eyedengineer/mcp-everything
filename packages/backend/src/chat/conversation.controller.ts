@@ -172,11 +172,19 @@ export class ConversationController {
    * Generate a title from conversation content
    */
   private generateTitle(conversation: any): string {
-    const messages = Array.isArray(conversation.messages) ? conversation.messages : [];
-    if (messages.length > 0) {
-      const firstMessage = messages[0].content || '';
-      return firstMessage.substring(0, 50) + (firstMessage.length > 50 ? '...' : '');
+    // First check if title is stored in state metadata
+    if (conversation.state?.metadata?.title) {
+      return conversation.state.metadata.title;
     }
+
+    // Fall back to deriving from first user message
+    const messages = Array.isArray(conversation.messages) ? conversation.messages : [];
+    const firstUserMessage = messages.find((m: any) => m.role === 'user');
+    if (firstUserMessage) {
+      const content = firstUserMessage.content || '';
+      return content.substring(0, 50) + (content.length > 50 ? '...' : '');
+    }
+
     return 'New conversation';
   }
 

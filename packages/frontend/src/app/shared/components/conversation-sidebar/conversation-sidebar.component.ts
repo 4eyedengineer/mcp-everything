@@ -4,6 +4,7 @@ import { Router } from '@angular/router';
 import { MatIconModule } from '@angular/material/icon';
 import { MatButtonModule } from '@angular/material/button';
 import { MatTooltipModule } from '@angular/material/tooltip';
+import { MatMenuModule } from '@angular/material/menu';
 import { sidebarAnimations } from '../../animations/sidebar.animations';
 
 interface Conversation {
@@ -20,7 +21,8 @@ interface Conversation {
     CommonModule,
     MatIconModule,
     MatButtonModule,
-    MatTooltipModule
+    MatTooltipModule,
+    MatMenuModule
   ],
   templateUrl: './conversation-sidebar.component.html',
   styleUrls: ['./conversation-sidebar.component.scss'],
@@ -32,6 +34,8 @@ export class ConversationSidebarComponent {
   @Output() close = new EventEmitter<void>();
   @Output() newChat = new EventEmitter<void>();
   @Output() selectConversation = new EventEmitter<string>();
+  @Output() deleteConversation = new EventEmitter<string>();
+  @Output() renameConversation = new EventEmitter<{id: string, title: string}>();
 
   constructor(private router: Router) {}
 
@@ -66,5 +70,18 @@ export class ConversationSidebarComponent {
     if (hours < 24) return `${hours}h ago`;
     if (days < 7) return `${days}d ago`;
     return new Date(timestamp).toLocaleDateString();
+  }
+
+  onDeleteConversation(event: Event, conversationId: string): void {
+    event.stopPropagation();
+    this.deleteConversation.emit(conversationId);
+  }
+
+  onRenameConversation(event: Event, conversation: Conversation): void {
+    event.stopPropagation();
+    const newTitle = prompt('Enter new title:', conversation.title);
+    if (newTitle && newTitle.trim() !== conversation.title) {
+      this.renameConversation.emit({ id: conversation.id, title: newTitle.trim() });
+    }
   }
 }

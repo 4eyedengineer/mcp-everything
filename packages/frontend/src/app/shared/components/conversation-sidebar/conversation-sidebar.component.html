@@ -52,10 +52,22 @@
         <button
           mat-icon-button
           class="conversation-menu"
+          [matMenuTriggerFor]="conversationMenu"
           (click)="$event.stopPropagation()"
           matTooltip="More options">
           <mat-icon>more_vert</mat-icon>
         </button>
+
+        <mat-menu #conversationMenu="matMenu">
+          <button mat-menu-item (click)="onRenameConversation($event, conversation)">
+            <mat-icon>edit</mat-icon>
+            <span>Rename</span>
+          </button>
+          <button mat-menu-item (click)="onDeleteConversation($event, conversation.id)">
+            <mat-icon>delete</mat-icon>
+            <span>Delete</span>
+          </button>
+        </mat-menu>
       </div>
 
       <div *ngIf="conversations.length === 0" class="empty-state">
