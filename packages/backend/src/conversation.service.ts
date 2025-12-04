@@ -411,7 +411,7 @@ JSON response:`;
         },
         body: JSON.stringify({
           model: 'claude-haiku-4-5-20251001',
-          max_tokens: 1000,
+          max_tokens: 4096, // Increased from 1000 to prevent truncated JSON responses
           messages: [{ role: 'user', content: prompt }],
         }),
       });

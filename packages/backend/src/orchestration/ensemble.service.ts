@@ -46,10 +46,12 @@ export class EnsembleService {
 
   constructor() {
     // Initialize Claude Haiku for all agents
+    // Increased maxTokens from 2048 to 4096 to prevent incomplete JSON responses
     this.llm = new ChatAnthropic({
       modelName: 'claude-haiku-4-5-20251001',
       temperature: 0.7,
-      maxTokens: 2048,
+      topP: undefined, // Fix for @langchain/anthropic bug sending top_p: -1
+      maxTokens: 4096,
       anthropicApiKey: process.env.ANTHROPIC_API_KEY,
     });
 
@@ -130,12 +132,30 @@ export class EnsembleService {
       ? this.extractConsensusTools(votingDetails)
       : [];
 
-    // Step 5: Conflict resolution if needed
-    if (consensusScore < 0.7) {
-      this.logger.warn(`Low consensus score: ${consensusScore.toFixed(2)}, resolving conflicts`);
+    // Step 5: Conflict resolution if needed OR no tools found
+    if (consensusScore < 0.7 || finalTools.length === 0) {
+      this.logger.warn(`Resolving: consensus=${consensusScore.toFixed(2)}, tools=${finalTools.length}`);
       const resolved = await this.resolveConflicts(perspectives);
       finalTools = resolved.tools;
       conflictsResolved = true;
+    }
+
+    // Step 5b: Final fallback - if still no tools, gather from all agents
+    if (finalTools.length === 0) {
+      this.logger.warn('No tools after conflict resolution, gathering from all agents');
+      for (const perspective of perspectives) {
+        if (perspective.recommendations.tools.length > 0) {
+          finalTools.push(...perspective.recommendations.tools);
+        }
+      }
+      // Dedupe by tool name
+      const seen = new Set<string>();
+      finalTools = finalTools.filter(t => {
+        if (seen.has(t.name)) return false;
+        seen.add(t.name);
+        return true;
+      }).slice(0, 10);
+      this.logger.log(`Fallback gathered ${finalTools.length} tools from all agents`);
     }
 
     // Step 6: Build generation plan
@@ -527,11 +547,17 @@ Return JSON:
       this.logger.error(`Conflict resolution failed: ${error.message}`);
     }
 
-    // Fallback: Use MCP specialist's recommendations
-    const mcpAgent = perspectives.find(p => p.agentName === 'mcpSpecialist');
-    return {
-      tools: mcpAgent?.recommendations.tools.slice(0, 10) || [],
-    };
+    // Fallback: Use ANY agent's recommendations (prioritize by weight)
+    // Sort by weight descending, then find first agent with tools
+    const sortedByWeight = [...perspectives].sort((a, b) => b.weight - a.weight);
+    for (const agent of sortedByWeight) {
+      if (agent.recommendations.tools.length > 0) {
+        this.logger.log(`Fallback: Using ${agent.agentName}'s ${agent.recommendations.tools.length} tools`);
+        return { tools: agent.recommendations.tools.slice(0, 10) };
+      }
+    }
+    this.logger.warn('No agent provided tools - returning empty');
+    return { tools: [] };
   }
 
   /**

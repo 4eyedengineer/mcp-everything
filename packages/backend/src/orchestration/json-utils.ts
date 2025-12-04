@@ -54,6 +54,49 @@ export function safeParseJSON<T>(text: string, logger?: Logger): T {
   }
 
   if (endIndex === -1) {
+    // Try recovery: LLM response may be truncated - attempt to find last } and close remaining brackets
+    if (logger) {
+      logger.warn('Attempting to recover truncated JSON response');
+    }
+
+    // Find the last } in the string
+    const lastBrace = cleaned.lastIndexOf('}');
+    if (lastBrace > startIndex) {
+      // Try to close any remaining open brackets by counting
+      let openBraces = 0;
+      for (let i = startIndex; i <= lastBrace; i++) {
+        const char = cleaned[i];
+        if (char === '"') {
+          // Skip strings
+          i++;
+          while (i < lastBrace && cleaned[i] !== '"') {
+            if (cleaned[i] === '\\') i++;
+            i++;
+          }
+        } else if (char === '{') {
+          openBraces++;
+        } else if (char === '}') {
+          openBraces--;
+        }
+      }
+
+      // Append missing closing braces
+      let recovered = cleaned.substring(startIndex, lastBrace + 1);
+      for (let i = 0; i < openBraces; i++) {
+        recovered += '}';
+      }
+
+      try {
+        const parsed = JSON.parse(recovered);
+        if (logger) {
+          logger.log('Successfully recovered truncated JSON');
+        }
+        return parsed as T;
+      } catch (e) {
+        // Recovery failed
+      }
+    }
+
     throw new Error('Unbalanced JSON brackets in response');
   }
 

@@ -254,7 +254,18 @@ export class McpGenerationService {
   ): Promise<Record<string, string>> {
     const implementations: Record<string, string> = {};
 
-    for (const tool of tools) {
+    // Filter out invalid tools (undefined, missing name, or missing description)
+    const validTools = tools.filter(t => t && t.name && t.description);
+    if (validTools.length === 0) {
+      this.logger.warn('No valid tools found for implementation generation');
+      return implementations;
+    }
+
+    if (validTools.length < tools.length) {
+      this.logger.warn(`Filtered ${tools.length - validTools.length} invalid tools, ${validTools.length} valid tools remaining`);
+    }
+
+    for (const tool of validTools) {
       this.logger.log(`Generating implementation for tool: ${tool.name}`);
 
       const systemPrompt = this.buildToolImplementationSystemPrompt();
@@ -504,7 +515,9 @@ export class McpGenerationService {
     let combinedCode = serverCode;
 
     // Check if implementations are missing and inject them
-    for (const tool of tools) {
+    // Filter to only valid tools with name property
+    const validTools = tools.filter(t => t && t.name);
+    for (const tool of validTools) {
       const functionName = `${tool.name}Implementation`;
 
       // If the function is missing from the server code, add it
@@ -691,11 +704,13 @@ This MCP server was automatically generated from the repository **${analysis.met
    * Generate quick overview of available tools
    */
   private generateToolsOverview(tools: McpTool[]): string {
-    if (!tools.length) {
+    // Filter to valid tools only
+    const validTools = tools.filter(t => t && t.name && t.description);
+    if (!validTools.length) {
       return '## Tools\n\nNo tools available.';
     }
 
-    const toolsList = tools
+    const toolsList = validTools
       .map((tool) => `- **${tool.name}**: ${tool.description}`)
       .join('\n');
 
@@ -775,7 +790,9 @@ After updating the configuration, restart Claude Desktop for the changes to take
     const envVars = new Set<string>();
 
     // Extract potential environment variables from tool dependencies and hints
-    for (const tool of tools) {
+    // Filter to only valid tools
+    const validTools = tools.filter(t => t && t.name);
+    for (const tool of validTools) {
       const hints = tool.implementationHints;
       if (hints?.requiredData) {
         for (const data of hints.requiredData) {
@@ -1121,11 +1138,19 @@ server.run();
   }
 
   private buildServerCodePrompt(analysis: RepositoryAnalysis, tools: McpTool[]): string {
-    const toolsJson = JSON.stringify(tools, null, 2);
+    // Filter to valid tools with name and description
+    const validTools = tools.filter(t => t && t.name && t.description);
+
+    if (validTools.length === 0) {
+      this.logger.warn('No valid tools found in buildServerCodePrompt');
+      throw new Error('No valid tools available for MCP server generation');
+    }
+
+    const toolsJson = JSON.stringify(validTools, null, 2);
     const analysisContext = this.buildAnalysisContext(analysis);
 
-    // Create concrete example with first tool for reference
-    const exampleTool = tools[0];
+    // Create concrete example with first valid tool for reference
+    const exampleTool = validTools[0];
     const exampleImplementation = this.generateExampleImplementation(exampleTool);
 
     return `Generate ONLY the TypeScript code for src/index.ts. NO explanations, NO markdown blocks.
@@ -1166,7 +1191,7 @@ const server = new Server(
 server.setRequestHandler(ListToolsRequestSchema, async () => {
   return {
     tools: [
-      ${tools
+      ${validTools
         .map(
           (tool) => `{
         name: "${tool.name}",
@@ -1181,7 +1206,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   switch (request.params.name) {
-    ${tools
+    ${validTools
       .map(
         (tool) => `case "${tool.name}":
       return await ${tool.name}Implementation(request.params.arguments);`,
@@ -1199,7 +1224,7 @@ const transport = new StdioServerTransport();
 server.run();
 \`\`\`
 
-**CRITICAL:** Generate the complete TypeScript code following this exact structure. Replace the example with actual implementations for ALL ${tools.length} tools. Each tool function must return real data, not placeholders.`;
+**CRITICAL:** Generate the complete TypeScript code following this exact structure. Replace the example with actual implementations for ALL ${validTools.length} tools. Each tool function must return real data, not placeholders.`;
   }
 
   private buildToolImplementationSystemPrompt(): string {
@@ -1320,7 +1345,9 @@ ISSUES: [actionable fixes needed]
     tools: McpTool[],
     tsValidation: { compiles: boolean; errors: string[] },
   ): string {
-    const toolNames = tools.map((t) => t.name).join(', ');
+    // Filter to valid tools only
+    const validTools = tools.filter(t => t && t.name);
+    const toolNames = validTools.map((t) => t.name).join(', ');
     const firstLine = code.split('\n')[0].trim();
     const hasServerRun = code.includes('server.run()');
     const hasTodos = /TODO|FIXME|placeholder|implement/i.test(code);
@@ -1379,6 +1406,14 @@ ISSUES: [exact problems to fix]`;
     analysis: RepositoryAnalysis,
     tools: McpTool[],
   ): string {
+    // Filter to valid tools with name and description
+    const validTools = tools.filter(t => t && t.name && t.description);
+
+    if (validTools.length === 0) {
+      this.logger.warn('No valid tools found in buildRegenerationPrompt');
+      throw new Error('No valid tools available for MCP server regeneration');
+    }
+
     const analysisContext = this.buildAnalysisContext(analysis);
 
     return `**REGENERATION REQUIRED - CRITICAL FIXES NEEDED**
@@ -1404,7 +1439,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 
 // Tool implementation functions
-${tools
+${validTools
   .map(
     (tool) => `
 async function ${tool.name}Implementation(args: any): Promise<{ content: [{ type: "text", text: string }] }> {
@@ -1432,7 +1467,7 @@ const server = new Server(
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
-${tools
+${validTools
   .map(
     (tool) => `    {
       name: "${tool.name}",
@@ -1446,7 +1481,7 @@ ${tools
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   switch (request.params.name) {
-${tools
+${validTools
   .map(
     (tool) => `    case "${tool.name}":
       return await ${tool.name}Implementation(request.params.arguments);`,
