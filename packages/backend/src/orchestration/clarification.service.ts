@@ -46,7 +46,7 @@ export class ClarificationService {
   constructor(private readonly envVariableService: EnvVariableService) {
     // Initialize Claude Haiku for gap detection and question formulation
     this.llm = new ChatAnthropic({
-      modelName: 'claude-3-5-haiku-20241022',
+      modelName: 'claude-haiku-4-5-20251001',
       temperature: 0.7,
       maxTokens: 1024,
       anthropicApiKey: process.env.ANTHROPIC_API_KEY,

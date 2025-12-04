@@ -47,7 +47,7 @@ export class EnsembleService {
   constructor() {
     // Initialize Claude Haiku for all agents
     this.llm = new ChatAnthropic({
-      modelName: 'claude-3-5-haiku-20241022',
+      modelName: 'claude-haiku-4-5-20251001',
       temperature: 0.7,
       maxTokens: 2048,
       anthropicApiKey: process.env.ANTHROPIC_API_KEY,

@@ -197,7 +197,7 @@ export class McpGenerationService {
     const codePrompt = this.buildServerCodePrompt(analysis, tools);
 
     const response = await this.anthropic.messages.create({
-      model: 'claude-3-5-haiku-20241022',
+      model: 'claude-haiku-4-5-20251001',
       max_tokens: 6000, // Increased for more complete code generation
       system: systemPrompt,
       messages: [{ role: 'user', content: codePrompt }],
@@ -230,7 +230,7 @@ export class McpGenerationService {
     );
 
     const response = await this.anthropic.messages.create({
-      model: 'claude-3-5-haiku-20241022',
+      model: 'claude-haiku-4-5-20251001',
       max_tokens: 6000, // Increased for more complete code generation
       system: systemPrompt,
       messages: [{ role: 'user', content: regenerationPrompt }],
@@ -261,7 +261,7 @@ export class McpGenerationService {
       const toolPrompt = this.buildToolImplementationPrompt(tool, analysis);
 
       const response = await this.anthropic.messages.create({
-        model: 'claude-3-5-haiku-20241022',
+        model: 'claude-haiku-4-5-20251001',
         max_tokens: 2000,
         system: systemPrompt,
         messages: [{ role: 'user', content: toolPrompt }],
@@ -318,7 +318,7 @@ export class McpGenerationService {
     const judgePrompt = this.buildJudgePrompt(code, analysis, tools, tsValidation);
 
     const response = await this.anthropic.messages.create({
-      model: 'claude-3-5-haiku-20241022',
+      model: 'claude-haiku-4-5-20251001',
       max_tokens: 1500,
       system: systemPrompt,
       messages: [{ role: 'user', content: judgePrompt }],

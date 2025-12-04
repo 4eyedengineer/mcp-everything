@@ -54,7 +54,7 @@ export class GraphOrchestrationService {
 
     this.llm = new ChatAnthropic({
       apiKey,
-      model: 'claude-3-5-haiku-20241022', // Using Haiku for cost-effective processing
+      model: 'claude-haiku-4-5-20251001', // Using Haiku for cost-effective processing
       temperature: 0.7,
       streaming: true,
     });
