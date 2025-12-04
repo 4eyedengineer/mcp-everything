@@ -100,6 +100,28 @@ export default defineConfig({
       retries: 0, // No retries - costs money
     },
 
+    /**
+     * User Journeys Tests (Layer 7)
+     *
+     * End-to-end user journeys testing complete workflows:
+     * - GitHub URL → Hosted Server
+     * - Natural Language → GitHub Repo
+     * - Error Recovery
+     * - Multi-Conversation Flow
+     *
+     * Uses real Claude API for journeys 1-2 (costs money!)
+     * Uses mocked backend for journeys 3-4 (fast, free)
+     *
+     * Run with: npm run e2e:user-journeys
+     */
+    {
+      name: 'user-journeys',
+      testMatch: /user-journeys\.spec\.ts/,
+      use: { ...devices['Desktop Chrome'] },
+      timeout: 600000, // 10 minutes per test for full journey
+      retries: 0, // No retries - costs money
+    },
+
     /* Test against branded browsers. */
     // {
     //   name: 'Microsoft Edge',
