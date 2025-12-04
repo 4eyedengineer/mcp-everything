@@ -311,6 +311,7 @@ See [DEPLOYMENT.md](DEPLOYMENT.md) for detailed deployment instructions.
 - [DEPLOYMENT.md](DEPLOYMENT.md) - Deployment and production setup
 - [ROADMAP.md](ROADMAP.md) - Vision alignment and implementation roadmap
 - [DOCUMENTATION.md](DOCUMENTATION.md) - Documentation navigation guide
+- [MANUAL_TESTING.md](MANUAL_TESTING.md) - Manual testing guide (5 sessions, 7 layers)
 - [CLAUDE.md](CLAUDE.md) - AI assistant instructions
 
 ## Performance Metrics

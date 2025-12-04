@@ -46,13 +46,22 @@
    - Production setup
    - Monitoring and scaling
 
+### Testing Documentation
+
+7. **[MANUAL_TESTING.md](MANUAL_TESTING.md)** - Manual testing guide **NEW**
+   - 5 testing sessions covering 7 layers
+   - Step-by-step instructions with checkpoints
+   - Bug tracking templates
+   - Success criteria
+   - Quick command reference
+
 ### Specialized Documentation
 
 #### Backend
 - **[packages/backend/src/TOOL_DISCOVERY_IMPLEMENTATION.md](packages/backend/src/TOOL_DISCOVERY_IMPLEMENTATION.md)** - Tool discovery service implementation details
 
 #### Frontend
-- **[packages/frontend/e2e/README.md](packages/frontend/e2e/README.md)** - E2E testing guide
+- **[packages/frontend/e2e/README.md](packages/frontend/e2e/README.md)** - E2E testing guide (automated Playwright tests)
 - **[packages/frontend/e2e/TEST_SUMMARY.md](packages/frontend/e2e/TEST_SUMMARY.md)** - Test implementation summary
 - **[packages/frontend/docs/XSS_FIX_DOCUMENTATION.md](packages/frontend/docs/XSS_FIX_DOCUMENTATION.md)** - XSS security fix details
 
@@ -190,7 +199,8 @@
 | Production deployment, scaling | DEPLOYMENT.md |
 | AI assistant instructions, conventions | CLAUDE.md |
 | Documentation navigation (this file) | DOCUMENTATION.md |
-| E2E testing guide | packages/frontend/e2e/README.md |
+| Manual testing guide | MANUAL_TESTING.md |
+| E2E testing guide (automated) | packages/frontend/e2e/README.md |
 | Backend implementation details | packages/backend/src/*.md |
 | Frontend technical details | packages/frontend/docs/*.md |
 | Docker setup | docker/DOCKER-SETUP.md |
