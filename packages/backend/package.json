@@ -58,7 +58,7 @@
     "js-yaml": "^4.1.0",
     "langchain": "^0.3.35",
     "libsodium-wrappers": "^0.7.15",
-    "nanoid": "^5.0.9",
+    "nanoid": "^5.1.6",
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",
     "pg": "^8.11.3",

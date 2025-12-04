@@ -703,22 +703,66 @@ JSON response:`;
   }
 
   /**
-   * Minimal JSON cleaning - reduced dependencies on cleanup
+   * Clean JSON from LLM response - handles markdown code blocks and extra text
    */
   private cleanJsonMinimal(response: string): string {
     if (!response) return '{}';
 
     let cleaned = response.trim();
 
-    // Remove markdown blocks only
-    cleaned = cleaned.replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, '');
+    // Remove ALL markdown code block markers (not just at start/end)
+    // This handles cases like "```json\n{...}\n```" anywhere in the response
+    cleaned = cleaned.replace(/```json\s*/gi, '').replace(/```\s*/g, '');
 
-    // Extract JSON boundaries
+    // Extract JSON boundaries using bracket balancing for robustness
     const openBrace = cleaned.indexOf('{');
-    const closeBrace = cleaned.lastIndexOf('}');
+    if (openBrace === -1) return '{}';
 
-    if (openBrace !== -1 && closeBrace > openBrace) {
+    // Find matching closing brace using bracket balancing
+    let depth = 0;
+    let inString = false;
+    let escape = false;
+    let closeBrace = -1;
+
+    for (let i = openBrace; i < cleaned.length; i++) {
+      const char = cleaned[i];
+
+      if (escape) {
+        escape = false;
+        continue;
+      }
+
+      if (char === '\\' && inString) {
+        escape = true;
+        continue;
+      }
+
+      if (char === '"' && !escape) {
+        inString = !inString;
+        continue;
+      }
+
+      if (!inString) {
+        if (char === '{') {
+          depth++;
+        } else if (char === '}') {
+          depth--;
+          if (depth === 0) {
+            closeBrace = i;
+            break;
+          }
+        }
+      }
+    }
+
+    if (closeBrace > openBrace) {
       return cleaned.substring(openBrace, closeBrace + 1);
+    }
+
+    // Fallback: return everything from first { to last }
+    const lastBrace = cleaned.lastIndexOf('}');
+    if (lastBrace > openBrace) {
+      return cleaned.substring(openBrace, lastBrace + 1);
     }
 
     return cleaned;
@@ -733,8 +777,11 @@ JSON response:`;
       return this.getContextualFallback(context);
     }
 
+    // Clean the JSON string first to remove markdown code blocks
+    const cleanedJson = this.cleanJsonMinimal(jsonString);
+
     try {
-      const parsed = JSON.parse(jsonString);
+      const parsed = JSON.parse(cleanedJson);
 
       // Validate structure based on context
       if (context.includes('judgment') || context.includes('quality')) {
@@ -752,11 +799,11 @@ JSON response:`;
       return parsed;
     } catch (error) {
       this.logger.error(`JSON parsing failed in ${context}: ${error.message}`);
-      this.logger.debug(`Failed JSON (first 300 chars): ${jsonString.substring(0, 300)}`);
+      this.logger.debug(`Failed JSON (first 300 chars): ${cleanedJson.substring(0, 300)}`);
 
-      // Try basic fixes
+      // Try basic fixes on the already-cleaned JSON
       try {
-        let fixed = jsonString
+        let fixed = cleanedJson
           .replace(/,\s*([}\]])/g, '$1') // Remove trailing commas
           .replace(/([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*):/g, '$1"$2":') // Quote keys
           .replace(/:\s*'([^']*)'/g, ': "$1"'); // Fix single quotes

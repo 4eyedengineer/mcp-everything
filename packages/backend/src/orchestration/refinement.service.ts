@@ -55,6 +55,7 @@ export class RefinementService {
     this.llm = new ChatAnthropic({
       modelName: 'claude-haiku-4-5-20251001',
       temperature: 0.7,
+      topP: undefined, // Fix for @langchain/anthropic bug sending top_p: -1
       maxTokens: 4096,
       anthropicApiKey: process.env.ANTHROPIC_API_KEY,
     });
@@ -161,6 +162,10 @@ export class RefinementService {
    *
    * Creates first version of MCP server from generation plan.
    *
+   * Priority:
+   * 1. If ensemble has discovered tools (in generationPlan.toolsToGenerate) - use them
+   * 2. Otherwise, fall back to McpGenerationService for GitHub URLs
+   *
    * @param state - Graph state with generation plan
    * @returns Generated code structure
    */
@@ -170,19 +175,23 @@ export class RefinementService {
       throw new Error('No generation plan available');
     }
 
-    // Check if this is a GitHub repository or service name request
-    const githubUrl = state.extractedData?.githubUrl;
-
-    // Only use GitHub generation if we have a valid, non-empty GitHub URL
-    if (githubUrl && githubUrl.trim().length > 0 && githubUrl.includes('github.com')) {
-      this.logger.log(`Generating MCP server from GitHub repository: ${githubUrl}`);
-      const generated = await this.mcpGenerationService.generateMCPServer(githubUrl);
-      return this.convertToGeneratedCode(generated);
-    } else {
-      // Generate from research findings and generation plan (service name, API spec, etc.)
-      this.logger.log('Generating MCP server from research findings (no GitHub URL)');
+    // PRIORITY: If ensemble already discovered tools, use generateFromPlan
+    // This respects the ensemble's work and avoids duplicate tool discovery
+    if (plan.toolsToGenerate && plan.toolsToGenerate.length > 0) {
+      this.logger.log(`Using ${plan.toolsToGenerate.length} tools from ensemble for MCP server generation`);
       return await this.generateFromPlan(state);
     }
+
+    // Fallback: Use McpGenerationService for GitHub URLs when no ensemble tools exist
+    const githubUrl = state.extractedData?.githubUrl;
+    if (githubUrl && githubUrl.trim().length > 0 && githubUrl.includes('github.com')) {
+      this.logger.log(`Generating MCP server from GitHub repository (no ensemble tools): ${githubUrl}`);
+      const generated = await this.mcpGenerationService.generateMCPServer(githubUrl);
+      return this.convertToGeneratedCode(generated);
+    }
+
+    // No tools available and no GitHub URL - cannot generate
+    throw new Error('No tools available for MCP server generation. Ensemble did not produce tools and no GitHub URL provided.');
   }
 
   /**
@@ -327,13 +336,42 @@ Start with imports.`;
    * @returns GeneratedCode structure
    */
   private convertToGeneratedCode(generated: any): GeneratedCode {
+    // Handle GeneratedServer structure from McpGenerationService
+    // GeneratedServer has: files[], metadata.tools, serverName
+    // We need to convert to: mainFile, packageJson, tsConfig, supportingFiles, metadata
+
+    // Extract main file from files array if available
+    let mainFile = generated.mainFile || generated.code || '';
+    let packageJson = generated.packageJson;
+    let tsConfig = generated.tsConfig;
+    const supportingFiles: Record<string, string> = generated.supportingFiles || {};
+
+    // If files array exists (GeneratedServer format), extract from there
+    if (generated.files && Array.isArray(generated.files)) {
+      for (const file of generated.files) {
+        if (file.path === 'src/index.ts' || file.path.endsWith('/index.ts')) {
+          mainFile = file.content;
+        } else if (file.path === 'package.json') {
+          packageJson = file.content;
+        } else if (file.path === 'tsconfig.json') {
+          tsConfig = file.content;
+        } else {
+          // Store other files as supporting files
+          supportingFiles[file.path] = file.content;
+        }
+      }
+    }
+
+    // Extract tools - check metadata.tools first (GeneratedServer), then root tools
+    const tools = generated.metadata?.tools || generated.tools || [];
+
     return {
-      mainFile: generated.mainFile || generated.code || '',
-      packageJson: generated.packageJson || this.generatePackageJson(generated),
-      tsConfig: generated.tsConfig || this.generateTsConfig(),
-      supportingFiles: generated.supportingFiles || {},
+      mainFile,
+      packageJson: packageJson || this.generatePackageJson(generated),
+      tsConfig: tsConfig || this.generateTsConfig(),
+      supportingFiles,
       metadata: {
-        tools: generated.tools || [],
+        tools,
         iteration: generated.iteration || 1,
         serverName: generated.serverName || 'mcp-server',
       },
