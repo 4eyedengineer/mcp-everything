@@ -68,7 +68,7 @@ export class ResearchService {
   ) {
     // Initialize Claude Haiku for cost-effective research synthesis
     this.llm = new ChatAnthropic({
-      modelName: 'claude-3-5-haiku-20241022',
+      modelName: 'claude-haiku-4-5-20251001',
       temperature: 0.7,
       maxTokens: 4096,
       anthropicApiKey: process.env.ANTHROPIC_API_KEY,
