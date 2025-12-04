@@ -531,4 +531,197 @@ export class ChatPage extends BasePage {
 
     throw new Error(`No new message appeared within ${timeout}ms`);
   }
+
+  // ==========================================
+  // Deployment Button Methods
+  // ==========================================
+
+  /**
+   * Deployment actions container locator
+   */
+  get deploymentActions(): Locator {
+    return this.page.locator('.deployment-actions');
+  }
+
+  /**
+   * Deploy as Repo button locator
+   */
+  get deployAsRepoButton(): Locator {
+    return this.page.locator('.deploy-button').first();
+  }
+
+  /**
+   * Deploy as Gist button locator
+   */
+  get deployAsGistButton(): Locator {
+    return this.page.locator('.deploy-button.gist-button');
+  }
+
+  /**
+   * Host on Cloud button locator
+   */
+  get hostOnCloudButton(): Locator {
+    return this.page.locator('.deploy-button.cloud-button');
+  }
+
+  /**
+   * Deployment result card (success)
+   */
+  get deploymentResultCard(): Locator {
+    return this.page.locator('.deployment-result-card');
+  }
+
+  /**
+   * Deployment error card
+   */
+  get deploymentErrorCard(): Locator {
+    return this.page.locator('.deployment-error-card');
+  }
+
+  /**
+   * Deploy progress component
+   */
+  get deployProgressComponent(): Locator {
+    return this.page.locator('mcp-deploy-progress');
+  }
+
+  /**
+   * Check if deploy as repo button is visible
+   */
+  async hasDeployAsRepoButton(): Promise<boolean> {
+    return this.deployAsRepoButton.isVisible();
+  }
+
+  /**
+   * Check if deploy as gist button is visible
+   */
+  async hasDeployAsGistButton(): Promise<boolean> {
+    return this.deployAsGistButton.isVisible();
+  }
+
+  /**
+   * Check if host on cloud button is visible
+   */
+  async hasHostOnCloudButton(): Promise<boolean> {
+    return this.hostOnCloudButton.isVisible();
+  }
+
+  /**
+   * Check if deployment actions are visible (any deploy buttons)
+   */
+  async hasDeploymentActions(): Promise<boolean> {
+    return this.deploymentActions.isVisible();
+  }
+
+  /**
+   * Click deploy as repo button
+   */
+  async clickDeployAsRepo(): Promise<void> {
+    await this.deployAsRepoButton.click();
+  }
+
+  /**
+   * Click deploy as gist button
+   */
+  async clickDeployAsGist(): Promise<void> {
+    await this.deployAsGistButton.click();
+  }
+
+  /**
+   * Click host on cloud button
+   */
+  async clickHostOnCloud(): Promise<void> {
+    await this.hostOnCloudButton.click();
+  }
+
+  /**
+   * Wait for deployment result to appear (success or error)
+   */
+  async waitForDeploymentResult(timeout = 30000): Promise<void> {
+    await Promise.race([
+      this.deploymentResultCard.waitFor({ state: 'visible', timeout }),
+      this.deploymentErrorCard.waitFor({ state: 'visible', timeout }),
+    ]);
+  }
+
+  /**
+   * Check if deployment was successful
+   */
+  async isDeploymentSuccessful(): Promise<boolean> {
+    return this.deploymentResultCard.isVisible();
+  }
+
+  /**
+   * Check if deployment failed
+   */
+  async isDeploymentFailed(): Promise<boolean> {
+    return this.deploymentErrorCard.isVisible();
+  }
+
+  /**
+   * Get deployment result URL (from success card)
+   */
+  async getDeploymentResultUrl(): Promise<string> {
+    const link = this.deploymentResultCard.locator('.deployment-url a');
+    return (await link.getAttribute('href')) || '';
+  }
+
+  /**
+   * Get deployment error message
+   */
+  async getDeploymentError(): Promise<string> {
+    return this.getText(this.deploymentErrorCard.locator('.error-message'));
+  }
+
+  /**
+   * Check if deploy progress component is visible
+   */
+  async hasDeployProgress(): Promise<boolean> {
+    return this.deployProgressComponent.isVisible();
+  }
+
+  /**
+   * Wait for deploy progress to complete
+   */
+  async waitForDeployProgressComplete(timeout = 60000): Promise<void> {
+    // Wait for progress component to disappear (deployment complete)
+    await this.deployProgressComponent.waitFor({ state: 'hidden', timeout });
+  }
+
+  /**
+   * Check if any deploy button is disabled (deploying state)
+   */
+  async isDeploying(): Promise<boolean> {
+    const isRepoDisabled = await this.deployAsRepoButton.isDisabled();
+    return isRepoDisabled;
+  }
+
+  /**
+   * Wait for deploy buttons to become enabled
+   */
+  async waitForDeployButtonsEnabled(timeout = 30000): Promise<void> {
+    await this.deployAsRepoButton.waitFor({ state: 'visible', timeout });
+    const startTime = Date.now();
+    while (Date.now() - startTime < timeout) {
+      if (!(await this.deployAsRepoButton.isDisabled())) {
+        return;
+      }
+      await this.wait(500);
+    }
+    throw new Error('Deploy buttons did not become enabled');
+  }
+
+  /**
+   * Click retry deploy as repo in error card
+   */
+  async clickRetryAsRepo(): Promise<void> {
+    await this.deploymentErrorCard.locator('.retry-button').first().click();
+  }
+
+  /**
+   * Click retry deploy as gist in error card
+   */
+  async clickRetryAsGist(): Promise<void> {
+    await this.deploymentErrorCard.locator('.retry-button').last().click();
+  }
 }
