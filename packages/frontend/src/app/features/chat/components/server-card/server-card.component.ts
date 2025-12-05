@@ -44,6 +44,7 @@ export class ServerCardComponent {
   @Input() envVars: ServerEnvVar[] = [];
   @Input() conversationId = '';
   @Input() isDeploying = false;
+  @Input() hasSuccessfulDeployment = false;
 
   @Output() download = new EventEmitter<void>();
   @Output() hostOnCloud = new EventEmitter<void>();
