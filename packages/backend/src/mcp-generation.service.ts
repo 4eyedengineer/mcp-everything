@@ -588,6 +588,8 @@ export class McpGenerationService {
         },
         dependencies: {
           '@modelcontextprotocol/sdk': '^0.5.0',
+          'zod': '^3.23.0',
+          'axios': '^1.7.0',
         },
         devDependencies: {
           '@types/node': '^20.0.0',
