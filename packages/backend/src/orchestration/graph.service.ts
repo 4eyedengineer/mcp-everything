@@ -4,6 +4,8 @@ import { StateGraph, END, START, Annotation, CompiledStateGraph } from '@langcha
 import { ChatAnthropic } from '@langchain/anthropic';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { mkdirSync, writeFileSync, existsSync } from 'fs';
+import { join, dirname } from 'path';
 import { Conversation, ConversationMemory } from '../database/entities';
 import { GraphState, NodeResult } from './types';
 import { GitHubAnalysisService } from '../github-analysis.service';
@@ -22,6 +24,7 @@ import { safeParseJSON } from './json-utils';
 @Injectable()
 export class GraphOrchestrationService {
   private readonly logger = new Logger(GraphOrchestrationService.name);
+  private readonly generatedServersDir: string;
   private graph: CompiledStateGraph<any, any, any, any>;
   private llm: ChatAnthropic;
 
@@ -39,6 +42,7 @@ export class GraphOrchestrationService {
     private clarificationService: ClarificationService,
     private refinementService: RefinementService,
   ) {
+    this.generatedServersDir = join(process.cwd(), '../../generated-servers');
     this.initializeLLM();
     this.buildGraph();
   }
@@ -235,6 +239,12 @@ export class GraphOrchestrationService {
             content: partialState.response,
             timestamp: new Date(),
           });
+        }
+
+        // FIX #128: When graph completes with generated code, sync to conversation state and write files
+        if (partialState.isComplete && partialState.generatedCode) {
+          await this.syncGeneratedCodeToConversation(conversationId, partialState);
+          await this.writeGeneratedFilesToDisk(conversationId, partialState.generatedCode);
         }
 
         // Yield update for SSE streaming
@@ -890,5 +900,164 @@ ${refinementResult.error || 'Some tools may need manual fixes.'}`,
     await this.conversationRepo.update(conversationId, updateData);
 
     this.logger.log(`Saved ${message.role} message to conversation ${conversationId}`);
+  }
+
+  /**
+   * FIX #128: Sync generated code and relevant state to conversation.state
+   * This ensures deployment service can read the generated code from the conversation
+   */
+  private async syncGeneratedCodeToConversation(
+    conversationId: string,
+    state: Partial<GraphState>,
+  ): Promise<void> {
+    const conversation = await this.conversationRepo.findOne({
+      where: { id: conversationId },
+    });
+
+    if (!conversation) {
+      this.logger.error(`Conversation ${conversationId} not found for state sync`);
+      return;
+    }
+
+    // Extract tools from generatedCode metadata for deployment
+    const tools = state.generatedCode?.metadata?.tools || [];
+
+    // Build state object to sync to conversation
+    const syncedState = {
+      ...conversation.state,
+      generatedCode: state.generatedCode,
+      serverName: state.generatedCode?.metadata?.serverName,
+      tools: tools.map((t: any) => ({
+        name: t.name,
+        description: t.description || `Tool: ${t.name}`,
+      })),
+      metadata: {
+        ...(conversation.state?.metadata || {}),
+        generatedAt: new Date().toISOString(),
+        toolCount: tools.length,
+      },
+    };
+
+    // Use type assertion to work around TypeORM's strict typing for JSONB columns
+    await this.conversationRepo.update(conversationId, {
+      state: syncedState as any,
+      updatedAt: new Date(),
+    });
+
+    this.logger.log(
+      `Synced generated code to conversation ${conversationId} (${tools.length} tools)`,
+    );
+  }
+
+  /**
+   * FIX #128: Write generated files to disk for deployment
+   * This ensures deployment service can read files from the filesystem
+   */
+  private async writeGeneratedFilesToDisk(
+    conversationId: string,
+    generatedCode: GraphState['generatedCode'],
+  ): Promise<void> {
+    if (!generatedCode) {
+      this.logger.warn(`No generated code to write for conversation ${conversationId}`);
+      return;
+    }
+
+    const serverDir = join(this.generatedServersDir, conversationId);
+
+    try {
+      // Create server directory
+      if (!existsSync(serverDir)) {
+        mkdirSync(serverDir, { recursive: true });
+      }
+
+      // Write main file
+      if (generatedCode.mainFile) {
+        const mainPath = join(serverDir, 'src', 'index.ts');
+        const mainDir = dirname(mainPath);
+        if (!existsSync(mainDir)) {
+          mkdirSync(mainDir, { recursive: true });
+        }
+        writeFileSync(mainPath, generatedCode.mainFile);
+        this.logger.log(`Wrote main file: ${mainPath}`);
+      }
+
+      // Write package.json
+      if (generatedCode.packageJson) {
+        const pkgPath = join(serverDir, 'package.json');
+        writeFileSync(pkgPath, generatedCode.packageJson);
+        this.logger.log(`Wrote package.json: ${pkgPath}`);
+      }
+
+      // Write tsconfig.json
+      if (generatedCode.tsConfig) {
+        const tsconfigPath = join(serverDir, 'tsconfig.json');
+        writeFileSync(tsconfigPath, generatedCode.tsConfig);
+        this.logger.log(`Wrote tsconfig.json: ${tsconfigPath}`);
+      }
+
+      // Write supporting files
+      if (generatedCode.supportingFiles) {
+        for (const [path, content] of Object.entries(generatedCode.supportingFiles)) {
+          const filePath = join(serverDir, path);
+          const fileDir = dirname(filePath);
+          if (!existsSync(fileDir)) {
+            mkdirSync(fileDir, { recursive: true });
+          }
+          writeFileSync(filePath, content);
+          this.logger.log(`Wrote supporting file: ${filePath}`);
+        }
+      }
+
+      // Generate README.md
+      const readmeContent = this.generateReadme(generatedCode);
+      writeFileSync(join(serverDir, 'README.md'), readmeContent);
+
+      this.logger.log(
+        `Successfully wrote generated files to ${serverDir}`,
+      );
+    } catch (error) {
+      this.logger.error(
+        `Failed to write generated files for ${conversationId}: ${error.message}`,
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Generate a README for the MCP server
+   */
+  private generateReadme(generatedCode: GraphState['generatedCode']): string {
+    const serverName = generatedCode?.metadata?.serverName || 'MCP Server';
+    const tools = generatedCode?.metadata?.tools || [];
+
+    const toolsList = tools
+      .map((t: any) => `- **${t.name}**: ${t.description || 'No description'}`)
+      .join('\n');
+
+    return `# ${serverName}
+
+Generated MCP Server with ${tools.length} tool(s).
+
+## Tools
+
+${toolsList || '- No tools defined'}
+
+## Installation
+
+\`\`\`bash
+npm install
+npm run build
+\`\`\`
+
+## Usage
+
+\`\`\`bash
+npm start
+\`\`\`
+
+## Generated by MCP Everything
+
+This server was automatically generated by the MCP Everything platform.
+`;
   }
 }
