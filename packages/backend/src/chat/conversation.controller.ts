@@ -38,6 +38,7 @@ export class ConversationController {
 
   /**
    * Get a single conversation by ID
+   * FIX #130: Include state field for frontend to access generatedCode
    */
   @Get(':id')
   async getConversation(@Param('id') id: string) {
@@ -51,6 +52,8 @@ export class ConversationController {
         sessionId: conversation.sessionId,
         createdAt: conversation.createdAt,
         updatedAt: conversation.updatedAt,
+        // FIX #130: Include state for generatedCode access
+        state: conversation.state,
       },
     };
   }
