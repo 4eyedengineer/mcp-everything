@@ -4,6 +4,31 @@ import { Observable, throwError, of } from 'rxjs';
 import { catchError, map } from 'rxjs/operators';
 import { environment } from '../../../environments/environment';
 
+/**
+ * Conversation state that may contain generated code
+ * FIX #130: Added to support state persistence
+ */
+export interface ConversationState {
+  generatedCode?: {
+    mainFile?: string;
+    packageJson?: string;
+    tsConfig?: string;
+    supportingFiles?: Record<string, string>;
+    metadata?: {
+      serverName?: string;
+      tools?: Array<{ name: string; description: string }>;
+    };
+  };
+  serverName?: string;
+  tools?: Array<{ name: string; description: string }>;
+  metadata?: {
+    title?: string;
+    generatedAt?: string;
+    toolCount?: number;
+  };
+  [key: string]: unknown;
+}
+
 export interface Conversation {
   id: string;
   title: string;
@@ -12,6 +37,8 @@ export interface Conversation {
   sessionId?: string;
   createdAt?: Date;
   updatedAt?: Date;
+  // FIX #130: Include state for generatedCode access after refresh
+  state?: ConversationState;
 }
 
 export interface ConversationMessage {

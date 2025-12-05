@@ -859,6 +859,7 @@ ${refinementResult.error || 'Some tools may need manual fixes.'}`,
 
   /**
    * Save a message to the conversation's messages array
+   * FIX #130: Use save() instead of update() for reliable JSONB persistence
    */
   private async saveMessageToConversation(
     conversationId: string,
@@ -874,19 +875,17 @@ ${refinementResult.error || 'Some tools may need manual fixes.'}`,
     }
 
     // Append message to existing messages array
-    const messages = Array.isArray(conversation.messages) ? conversation.messages : [];
+    const messages = Array.isArray(conversation.messages) ? [...conversation.messages] : [];
     messages.push(message);
 
-    // Generate title from first user message if messages were empty
-    const updateData: any = {
-      messages,
-      updatedAt: new Date(),
-    };
+    // Update the entity directly
+    conversation.messages = messages;
+    conversation.updatedAt = new Date();
 
     // If this is the first user message, update the title
     if (message.role === 'user' && messages.filter(m => m.role === 'user').length === 1) {
       const title = message.content.substring(0, 50) + (message.content.length > 50 ? '...' : '');
-      updateData.state = {
+      conversation.state = {
         ...conversation.state,
         metadata: {
           ...(conversation.state?.metadata || {}),
@@ -896,15 +895,16 @@ ${refinementResult.error || 'Some tools may need manual fixes.'}`,
       this.logger.log(`Set conversation title to: "${title}"`);
     }
 
-    // Update conversation with new messages
-    await this.conversationRepo.update(conversationId, updateData);
+    // Use save() for reliable JSONB column persistence
+    await this.conversationRepo.save(conversation);
 
-    this.logger.log(`Saved ${message.role} message to conversation ${conversationId}`);
+    this.logger.log(`Saved ${message.role} message to conversation ${conversationId} (total: ${messages.length})`);
   }
 
   /**
-   * FIX #128: Sync generated code and relevant state to conversation.state
+   * FIX #128 + #130: Sync generated code and relevant state to conversation.state
    * This ensures deployment service can read the generated code from the conversation
+   * Uses save() instead of update() for reliable JSONB persistence
    */
   private async syncGeneratedCodeToConversation(
     conversationId: string,
@@ -923,7 +923,7 @@ ${refinementResult.error || 'Some tools may need manual fixes.'}`,
     const tools = state.generatedCode?.metadata?.tools || [];
 
     // Build state object to sync to conversation
-    const syncedState = {
+    conversation.state = {
       ...conversation.state,
       generatedCode: state.generatedCode,
       serverName: state.generatedCode?.metadata?.serverName,
@@ -937,12 +937,10 @@ ${refinementResult.error || 'Some tools may need manual fixes.'}`,
         toolCount: tools.length,
       },
     };
+    conversation.updatedAt = new Date();
 
-    // Use type assertion to work around TypeORM's strict typing for JSONB columns
-    await this.conversationRepo.update(conversationId, {
-      state: syncedState as any,
-      updatedAt: new Date(),
-    });
+    // Use save() for reliable JSONB column persistence
+    await this.conversationRepo.save(conversation);
 
     this.logger.log(
       `Synced generated code to conversation ${conversationId} (${tools.length} tools)`,
