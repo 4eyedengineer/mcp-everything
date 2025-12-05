@@ -1048,8 +1048,8 @@ MIT
 
     // Validate basic structure for main server files
     if (extractedCode.includes('import { Server }')) {
-      if (!extractedCode.includes('server.run()')) {
-        this.logger.warn('Generated server code missing server.run() call');
+      if (!extractedCode.includes('server.connect(transport)') && !extractedCode.includes('await server.connect(')) {
+        this.logger.warn('Generated server code missing server.connect(transport) call');
       }
       if (!extractedCode.includes('setRequestHandler')) {
         this.logger.warn('Generated server code missing request handlers');
@@ -1093,7 +1093,7 @@ async function ${tool.name}Implementation(args: any): Promise<{ content: [{ type
 **OUTPUT FORMAT REQUIREMENTS:**
 1. Start immediately with TypeScript imports - NO commentary, explanations, or markdown
 2. Use ONLY the @modelcontextprotocol/sdk package
-3. End with server.run() call
+3. Wrap server startup in async main() function with await server.connect(transport)
 4. NO TODO comments, placeholders, or incomplete code
 5. Every function must be fully implemented
 
@@ -1101,7 +1101,7 @@ async function ${tool.name}Implementation(args: any): Promise<{ content: [{ type
 \`\`\`typescript
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { CallToolRequestSchema, ListToolsRequestSchema, McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 
 // Tool implementations here
 
@@ -1119,7 +1119,12 @@ const server = new Server(
 
 // Handlers here
 
-server.run();
+async function main() {
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+}
+
+main().catch(console.error);
 \`\`\`
 
 **VALIDATION CHECKLIST (verify before responding):**
@@ -1128,7 +1133,7 @@ server.run();
 - [ ] Every tool has complete implementation
 - [ ] No TODO, FIXME, or placeholder comments
 - [ ] TypeScript syntax is valid
-- [ ] server.run() is called at the end
+- [ ] Uses async main() with await server.connect(transport)
 
 **NEVER:**
 - Include markdown code blocks in output
@@ -1220,8 +1225,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 });
 
-const transport = new StdioServerTransport();
-server.run();
+async function main() {
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+}
+
+main().catch(console.error);
 \`\`\`
 
 **CRITICAL:** Generate the complete TypeScript code following this exact structure. Replace the example with actual implementations for ALL ${validTools.length} tools. Each tool function must return real data, not placeholders.`;
@@ -1301,7 +1310,7 @@ try {
 - Code must start with TypeScript imports
 - NO commentary text before imports
 - NO markdown code blocks
-- Complete file from import to server.run()
+- Complete file from imports to main() function
 
 **2. TypeScript Syntax:**
 - Valid TypeScript that compiles
@@ -1314,7 +1323,7 @@ try {
 - Has ListToolsRequestSchema handler
 - Has CallToolRequestSchema handler
 - Proper error handling with McpError
-- server.run() called at end
+- Has async main() function with await server.connect(transport)
 
 **4. Implementation Completeness:**
 - ALL tools have real implementations
@@ -1349,7 +1358,7 @@ ISSUES: [actionable fixes needed]
     const validTools = tools.filter(t => t && t.name);
     const toolNames = validTools.map((t) => t.name).join(', ');
     const firstLine = code.split('\n')[0].trim();
-    const hasServerRun = code.includes('server.run()');
+    const hasServerConnect = code.includes('server.connect(transport)') || code.includes('await server.connect(');
     const hasTodos = /TODO|FIXME|placeholder|implement/i.test(code);
 
     return `**STRICT VALIDATION REQUIRED**
@@ -1362,7 +1371,7 @@ ${code}
 **Pre-check Results:**
 - First line: "${firstLine}"
 - Starts with import: ${firstLine.startsWith('import')}
-- Has server.run(): ${hasServerRun}
+- Has server.connect(transport): ${hasServerConnect}
 - Contains TODOs/placeholders: ${hasTodos}
 - TypeScript compiles: ${tsValidation.compiles}
 - Compilation errors: ${tsValidation.errors.join('; ') || 'None'}
@@ -1385,7 +1394,7 @@ ${code}
    - Missing required imports?
    - No ListToolsRequestSchema handler?
    - No CallToolRequestSchema handler?
-   - Missing server.run() call?
+   - Missing server.connect(transport) call in async main() function?
 
 4. **TypeScript Issues:**
    - Syntax errors preventing compilation?
@@ -1492,7 +1501,12 @@ ${validTools
   }
 });
 
-server.run();
+async function main() {
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+}
+
+main().catch(console.error);
 \`\`\`
 
 **Generate the complete corrected code following this exact structure. Address ALL validation issues identified.**`;

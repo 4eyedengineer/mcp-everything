@@ -111,8 +111,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 });
 
-const transport = new StdioServerTransport();
-server.run();
+async function main() {
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+}
+
+main().catch(console.error);
 `,
 
   packageJson: JSON.stringify(
@@ -216,8 +220,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
   return { tools: [] };
 });
 
-const transport = new StdioServerTransport();
-server.run();
+async function main() {
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+}
+
+main().catch(console.error);
 `,
 
   packageJson: JSON.stringify(
@@ -276,7 +284,7 @@ server.run();
 };
 
 /**
- * Server with incomplete implementation (missing server.run())
+ * Server with incomplete implementation (missing server.connect() call)
  */
 export const FIXTURE_INCOMPLETE_SERVER: GeneratedCode = {
   mainFile: `import { Server } from '@modelcontextprotocol/sdk/server/index.js';
@@ -302,7 +310,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
   return { tools: [] };
 });
 
-// Missing server.run() call - server won't start
+// Missing server.connect(transport) call - server won't start
 `,
 
   packageJson: JSON.stringify(

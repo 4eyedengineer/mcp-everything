@@ -474,7 +474,7 @@ docker logs <container-id>
 **Common causes**:
 - Missing MCP dependencies in package.json
 - Invalid TypeScript in generated code
-- Missing server.run() call
+- Missing server.connect(transport) call in async main() function
 
 ### Issue: Tools/call returns error
 
