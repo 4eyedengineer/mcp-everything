@@ -29,6 +29,7 @@ import {
 import {
   DeploymentErrorCode,
   ERROR_RETRY_CONFIG,
+  ERROR_USER_MESSAGES,
   RetryStrategy,
 } from './types/deployment-errors.types';
 
@@ -104,7 +105,27 @@ export class DeploymentOrchestratorService {
       const files = await this.getGeneratedFiles(conversationId);
 
       if (files.length === 0) {
-        throw new Error('No generated files found for this conversation');
+        // Update deployment record with failure - no files to deploy
+        await this.deploymentRepository.update(savedDeployment.id, {
+          status: 'failed',
+          errorMessage: ERROR_USER_MESSAGES[DeploymentErrorCode.NO_FILES_TO_DEPLOY],
+          deployedAt: new Date(),
+          metadata: {
+            ...(savedDeployment.metadata || {}),
+            errorCode: DeploymentErrorCode.NO_FILES_TO_DEPLOY,
+            retryStrategy: ERROR_RETRY_CONFIG[DeploymentErrorCode.NO_FILES_TO_DEPLOY].strategy,
+          } as Record<string, any>,
+        });
+
+        return {
+          success: false,
+          deploymentId: savedDeployment.id,
+          type: 'repo',
+          urls: {},
+          error: ERROR_USER_MESSAGES[DeploymentErrorCode.NO_FILES_TO_DEPLOY],
+          errorCode: DeploymentErrorCode.NO_FILES_TO_DEPLOY,
+          retryStrategy: ERROR_RETRY_CONFIG[DeploymentErrorCode.NO_FILES_TO_DEPLOY].strategy,
+        };
       }
 
       const serverName = options.serverName || this.getServerName(conversation);
@@ -228,7 +249,27 @@ export class DeploymentOrchestratorService {
       const files = await this.getGeneratedFiles(conversationId);
 
       if (files.length === 0) {
-        throw new Error('No generated files found for this conversation');
+        // Update deployment record with failure - no files to deploy
+        await this.deploymentRepository.update(savedDeployment.id, {
+          status: 'failed',
+          errorMessage: ERROR_USER_MESSAGES[DeploymentErrorCode.NO_FILES_TO_DEPLOY],
+          deployedAt: new Date(),
+          metadata: {
+            ...(savedDeployment.metadata || {}),
+            errorCode: DeploymentErrorCode.NO_FILES_TO_DEPLOY,
+            retryStrategy: ERROR_RETRY_CONFIG[DeploymentErrorCode.NO_FILES_TO_DEPLOY].strategy,
+          } as Record<string, any>,
+        });
+
+        return {
+          success: false,
+          deploymentId: savedDeployment.id,
+          type: 'gist',
+          urls: {},
+          error: ERROR_USER_MESSAGES[DeploymentErrorCode.NO_FILES_TO_DEPLOY],
+          errorCode: DeploymentErrorCode.NO_FILES_TO_DEPLOY,
+          retryStrategy: ERROR_RETRY_CONFIG[DeploymentErrorCode.NO_FILES_TO_DEPLOY].strategy,
+        };
       }
 
       // Extract tools from conversation state
