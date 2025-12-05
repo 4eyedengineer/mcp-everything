@@ -41,6 +41,7 @@
     <button
       mat-raised-button
       color="primary"
+      *ngIf="hasSuccessfulDeployment"
       (click)="onHostOnCloud()"
       [disabled]="isDeploying"
       class="host-button"
