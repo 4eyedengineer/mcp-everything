@@ -477,6 +477,8 @@ export class McpTestingService {
       serverDir,
       pendingResponses: new Map<string | number, { resolve: Function; reject: Function }>(),
       buffer: '',
+      stderrBuffer: '',  // Capture stderr for debugging
+      ready: false,      // Track readiness state
     });
 
     // Set up stdout handler to parse JSON-RPC responses
@@ -510,7 +512,11 @@ export class McpTestingService {
     });
 
     serverProcess.stderr?.on('data', (data) => {
-      this.logger.warn(`[${testId}] MCP server stderr: ${data.toString().trim()}`);
+      const processInfo = this.runningProcesses.get(testId);
+      if (processInfo) {
+        processInfo.stderrBuffer += data.toString();
+      }
+      this.logger.debug(`[${testId}] MCP server stderr: ${data.toString().trim()}`);
     });
 
     serverProcess.on('error', (error) => {
@@ -522,10 +528,113 @@ export class McpTestingService {
       this.runningProcesses.delete(testId);
     });
 
-    // Wait a bit for process to start
-    await new Promise(resolve => setTimeout(resolve, 500));
+    // Wait for server to be ready to accept messages
+    await this.waitForServerReady(testId, 10000); // 10 second max wait
 
     return serverProcess;
+  }
+
+  /**
+   * Wait for MCP server to be ready to accept messages
+   * Uses exponential backoff trying to initialize the server
+   */
+  private async waitForServerReady(testId: string, maxWaitMs: number): Promise<void> {
+    const processInfo = this.runningProcesses.get(testId);
+    if (!processInfo) {
+      throw new Error('MCP server process not found');
+    }
+
+    const startTime = Date.now();
+    let attempt = 0;
+    const baseDelayMs = 200;
+    const maxDelayMs = 2000;
+
+    while (Date.now() - startTime < maxWaitMs) {
+      attempt++;
+
+      // Check if process exited
+      if (processInfo.process.exitCode !== null) {
+        const stderr = processInfo.stderrBuffer || 'No stderr output';
+        throw new Error(`MCP server exited with code ${processInfo.process.exitCode}. Stderr: ${stderr}`);
+      }
+
+      // Check if stdin is writable
+      if (!processInfo.process.stdin?.writable) {
+        await this.delay(100);
+        continue;
+      }
+
+      // Try initialize
+      try {
+        const initResult = await this.sendInitializeMessage(testId, 3000);
+        if (initResult.success) {
+          this.logger.log(`[${testId}] MCP server ready after ${attempt} attempts (${Date.now() - startTime}ms)`);
+          processInfo.ready = true;
+          return;
+        }
+      } catch (error) {
+        this.logger.debug(`[${testId}] Initialize attempt ${attempt} failed: ${(error as Error).message}`);
+      }
+
+      // Exponential backoff
+      const delayMs = Math.min(baseDelayMs * Math.pow(1.5, attempt - 1), maxDelayMs);
+      await this.delay(delayMs);
+    }
+
+    const stderr = processInfo.stderrBuffer || 'No stderr output';
+    throw new Error(`MCP server failed to become ready within ${maxWaitMs}ms. Stderr: ${stderr.substring(0, 500)}`);
+  }
+
+  private delay(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  /**
+   * Send initialize message and wait for response
+   * Used for readiness checking with retry logic
+   */
+  private async sendInitializeMessage(
+    testId: string,
+    timeout: number
+  ): Promise<{ success: boolean; error?: string }> {
+    try {
+      const initMessage: McpMessage = {
+        jsonrpc: '2.0',
+        id: `init-${Date.now()}`,
+        method: 'initialize',
+        params: {
+          protocolVersion: '2024-11-05',
+          capabilities: {},
+          clientInfo: {
+            name: 'mcp-testing-service',
+            version: '1.0.0',
+          },
+        },
+      };
+
+      const response = await this.sendMcpMessageDirect(testId, initMessage, timeout / 1000);
+
+      if (response.error) {
+        return { success: false, error: response.error.message };
+      }
+
+      // Send initialized notification
+      const notificationMessage = {
+        jsonrpc: '2.0' as const,
+        method: 'notifications/initialized',
+      };
+      const processInfo = this.runningProcesses.get(testId);
+      if (processInfo) {
+        processInfo.process.stdin.write(JSON.stringify(notificationMessage) + '\n');
+      }
+
+      return { success: true };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
   }
 
   /**
@@ -609,6 +718,15 @@ export class McpTestingService {
     testId: string,
     timeout: number,
   ): Promise<{ success: boolean; error?: string }> {
+    const processInfo = this.runningProcesses.get(testId);
+
+    // If already initialized during readiness check, return success
+    if (processInfo?.ready) {
+      this.logger.debug(`[${testId}] Server already initialized during startup`);
+      return { success: true };
+    }
+
+    // Fallback to original logic if not already initialized
     try {
       const initMessage: McpMessage = {
         jsonrpc: '2.0',
@@ -635,7 +753,6 @@ export class McpTestingService {
         jsonrpc: '2.0' as const,
         method: 'notifications/initialized',
       };
-      const processInfo = this.runningProcesses.get(testId);
       if (processInfo) {
         processInfo.process.stdin.write(JSON.stringify(notificationMessage) + '\n');
       }
@@ -690,6 +807,20 @@ export class McpTestingService {
     const startTime = Date.now();
 
     try {
+      // Add diagnostic when serverTools is empty
+      if (serverTools.length === 0) {
+        const processInfo = this.runningProcesses.get(testId);
+        const stderr = processInfo?.stderrBuffer || 'No stderr captured';
+        return {
+          toolName: tool.name,
+          success: false,
+          executionTime: Date.now() - startTime,
+          error: `Server returned 0 tools. Server may have failed to start properly. Stderr: ${stderr.substring(0, 200)}`,
+          mcpCompliant: false,
+          timestamp: new Date(),
+        };
+      }
+
       // Verify tool is in the server's tool list
       const foundTool = serverTools.find((t: any) => t.name === tool.name);
 
