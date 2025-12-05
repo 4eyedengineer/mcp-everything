@@ -31,6 +31,11 @@ export class Conversation {
     intent?: string;
     extractedData?: Record<string, any>;
     metadata?: Record<string, any>;
+    // FIX #128: Add fields for generated code state sync
+    generatedCode?: any;
+    serverName?: string;
+    tools?: Array<{ name: string; description: string }>;
+    [key: string]: any; // Allow additional dynamic properties
   };
 
   @Column({ type: 'varchar', length: 100, nullable: true })

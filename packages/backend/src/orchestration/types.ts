@@ -61,9 +61,20 @@ export interface GraphState {
   // Code generation
   generatedCode?: {
     mainFile: string;
+    packageJson?: string;
+    tsConfig?: string;
     supportingFiles: Record<string, string>;
     tests?: string;
     documentation?: string;
+    metadata?: {
+      tools: Array<{
+        name: string;
+        description?: string;
+        inputSchema?: any;
+      }>;
+      iteration: number;
+      serverName: string;
+    };
   };
 
   // Execution and validation
