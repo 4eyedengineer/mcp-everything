@@ -98,6 +98,10 @@ export class GraphOrchestrationService {
       clarificationComplete: Annotation<boolean>,
       refinementIteration: Annotation<number>,
       refinementHistory: Annotation<GraphState['refinementHistory']>,
+      // NEW: User tool count constraints (Issue #137)
+      requestedToolCount: Annotation<number>,
+      requestedToolNames: Annotation<string[]>,
+      maxToolCount: Annotation<number>,
     });
 
     // Create graph
@@ -254,10 +258,99 @@ export class GraphOrchestrationService {
   }
 
   /**
+   * Extract user's requested tool count and names (Issue #137)
+   *
+   * Parses explicit tool counts and names from user input to prevent
+   * over-engineering by the ensemble phase.
+   *
+   * Patterns matched:
+   * - "with N tools" / "N tools"
+   * - "tools: tool1, tool2"
+   * - "tool1 and tool2 only"
+   * - "just/only tool1, tool2"
+   *
+   * @param userInput - Raw user input string
+   * @returns Extracted tool count and names, if found
+   */
+  private extractToolConstraints(userInput: string): {
+    requestedToolCount?: number;
+    requestedToolNames?: string[];
+  } {
+    const result: { requestedToolCount?: number; requestedToolNames?: string[] } = {};
+
+    // Pattern 1: Explicit count - "with N tools" or "N tools"
+    const countMatch = userInput.match(/(?:with\s+)?(\d+)\s+tools?\b/i);
+    if (countMatch) {
+      result.requestedToolCount = parseInt(countMatch[1], 10);
+      this.logger.log(`Extracted tool count: ${result.requestedToolCount}`);
+    }
+
+    // Pattern 2: Explicit tool list after "tools:" - "tools: add, multiply"
+    const toolsColonMatch = userInput.match(/tools?:\s*([^.]+?)(?:\.|$)/i);
+    if (toolsColonMatch) {
+      const toolList = toolsColonMatch[1]
+        .split(/,|\s+and\s+/)
+        .map(t => t.trim().toLowerCase().replace(/\s+/g, '_'))
+        .filter(t => t.length > 0 && !['only', 'just'].includes(t));
+
+      if (toolList.length > 0) {
+        result.requestedToolNames = toolList;
+        result.requestedToolCount = result.requestedToolCount || toolList.length;
+        this.logger.log(`Extracted tool names from "tools:": ${toolList.join(', ')}`);
+      }
+    }
+
+    // Pattern 3: "X and Y only" or "only X and Y" or "just X and Y"
+    if (!result.requestedToolNames) {
+      const onlyMatch = userInput.match(/(?:only|just)\s+([^.]+?)(?:\.|$)/i) ||
+                        userInput.match(/([^.]+?)\s+only(?:\.|$)/i);
+      if (onlyMatch) {
+        // Extract tool names from the match, split by "and" or comma
+        const toolText = onlyMatch[1]
+          .replace(/^with\s+/i, '')
+          .replace(/\s*tools?\s*/gi, '');
+
+        const toolList = toolText
+          .split(/,|\s+and\s+/)
+          .map(t => t.trim().toLowerCase().replace(/\s+/g, '_'))
+          .filter(t => t.length > 0 && !['only', 'just', 'with', 'the', 'a', 'an'].includes(t));
+
+        if (toolList.length > 0) {
+          result.requestedToolNames = toolList;
+          result.requestedToolCount = result.requestedToolCount || toolList.length;
+          this.logger.log(`Extracted tool names from "only/just": ${toolList.join(', ')}`);
+        }
+      }
+    }
+
+    // Pattern 4: Detect inline tool names like "add and multiply tools"
+    if (!result.requestedToolNames && result.requestedToolCount) {
+      // Look for patterns like "add and multiply" before "tools"
+      const beforeToolsMatch = userInput.match(/(?:with\s+)?([a-z_]+(?:\s+and\s+[a-z_]+)+)\s+tools?\b/i);
+      if (beforeToolsMatch) {
+        const toolList = beforeToolsMatch[1]
+          .split(/\s+and\s+/)
+          .map(t => t.trim().toLowerCase().replace(/\s+/g, '_'))
+          .filter(t => t.length > 0);
+
+        if (toolList.length > 0) {
+          result.requestedToolNames = toolList;
+          this.logger.log(`Extracted tool names before "tools": ${toolList.join(', ')}`);
+        }
+      }
+    }
+
+    return result;
+  }
+
+  /**
    * Node: Analyze user intent
    */
   private async analyzeIntent(state: GraphState): Promise<Partial<GraphState>> {
     this.logger.log('Executing node: analyzeIntent');
+
+    // Extract tool constraints BEFORE calling LLM (Issue #137)
+    const toolConstraints = this.extractToolConstraints(state.userInput);
 
     const prompt = `${getPlatformContextPrompt()}
 
@@ -306,6 +399,21 @@ ${state.messages.slice(-3).map(m => `${m.role}: ${m.content}`).join('\n')}
       reasoning: string;
     }>(response.content as string, this.logger);
 
+    // Calculate maxToolCount with small buffer (Issue #137)
+    // If user explicitly requested N tools, allow up to N+2
+    const maxToolCount = toolConstraints.requestedToolCount
+      ? toolConstraints.requestedToolCount + 2
+      : undefined;
+
+    // Build streaming message with tool constraint info
+    let intentMessage = `Analyzed intent: ${analysis.intent} (confidence: ${analysis.confidence})`;
+    if (toolConstraints.requestedToolCount) {
+      intentMessage += ` | Tool constraint: ${toolConstraints.requestedToolCount} tools`;
+      if (toolConstraints.requestedToolNames?.length) {
+        intentMessage += ` (${toolConstraints.requestedToolNames.join(', ')})`;
+      }
+    }
+
     return {
       intent: {
         type: analysis.intent,
@@ -315,6 +423,10 @@ ${state.messages.slice(-3).map(m => `${m.role}: ${m.content}`).join('\n')}
       extractedData: {
         githubUrl: analysis.githubUrl,
       },
+      // Pass through tool constraints (Issue #137)
+      requestedToolCount: toolConstraints.requestedToolCount,
+      requestedToolNames: toolConstraints.requestedToolNames,
+      maxToolCount,
       clarificationNeeded: analysis.missingInfo?.length > 0 ? {
         question: `I need more information: ${analysis.missingInfo.join(', ')}`,
         context: 'intent_analysis',
@@ -325,7 +437,7 @@ ${state.messages.slice(-3).map(m => `${m.role}: ${m.content}`).join('\n')}
         ...(state.streamingUpdates || []),
         {
           node: 'analyzeIntent',
-          message: `Analyzed intent: ${analysis.intent} (confidence: ${analysis.confidence})`,
+          message: intentMessage,
           timestamp: new Date(),
         },
       ],

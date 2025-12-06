@@ -96,6 +96,14 @@ export interface GraphState {
   // Final response
   response?: string;
 
+  // ===== USER TOOL COUNT CONSTRAINTS (Issue #137) =====
+
+  // Explicit tool count/names from user's request
+  // If set, the pipeline MUST respect these constraints
+  requestedToolCount?: number;        // e.g., "with 2 tools" → 2
+  requestedToolNames?: string[];      // e.g., "add and multiply" → ["add", "multiply"]
+  maxToolCount?: number;              // requestedToolCount + small buffer (e.g., +2)
+
   // Metadata
   currentNode: string;
   executedNodes: string[];
