@@ -40,6 +40,11 @@
 
 // Header
 .sidebar-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background-color: #f9f9f9;
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -194,6 +199,7 @@
 
 // Footer
 .sidebar-footer {
+  flex-shrink: 0;
   border-top: 1px solid #e5e5e5;
   padding: 8px;
 
