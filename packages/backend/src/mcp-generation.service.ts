@@ -198,7 +198,7 @@ export class McpGenerationService {
 
     const response = await this.anthropic.messages.create({
       model: 'claude-haiku-4-5-20251001',
-      max_tokens: 6000, // Increased for more complete code generation
+      max_tokens: 64000, // Haiku 4.5 max - no artificial limits
       system: systemPrompt,
       messages: [{ role: 'user', content: codePrompt }],
     });
@@ -231,7 +231,7 @@ export class McpGenerationService {
 
     const response = await this.anthropic.messages.create({
       model: 'claude-haiku-4-5-20251001',
-      max_tokens: 6000, // Increased for more complete code generation
+      max_tokens: 64000, // Haiku 4.5 max - no artificial limits
       system: systemPrompt,
       messages: [{ role: 'user', content: regenerationPrompt }],
     });
@@ -273,7 +273,7 @@ export class McpGenerationService {
 
       const response = await this.anthropic.messages.create({
         model: 'claude-haiku-4-5-20251001',
-        max_tokens: 2000,
+        max_tokens: 16000, // Generous limit for individual tool implementations
         system: systemPrompt,
         messages: [{ role: 'user', content: toolPrompt }],
       });
@@ -330,7 +330,7 @@ export class McpGenerationService {
 
     const response = await this.anthropic.messages.create({
       model: 'claude-haiku-4-5-20251001',
-      max_tokens: 1500,
+      max_tokens: 8000, // Generous limit for judge feedback
       system: systemPrompt,
       messages: [{ role: 'user', content: judgePrompt }],
     });

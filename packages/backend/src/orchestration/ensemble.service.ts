@@ -46,12 +46,12 @@ export class EnsembleService {
 
   constructor() {
     // Initialize Claude Haiku for all agents
-    // Increased maxTokens from 2048 to 4096 to prevent incomplete JSON responses
+    // Claude Haiku 4.5 supports up to 64K output tokens - use 8192 for agent responses
     this.llm = new ChatAnthropic({
       modelName: 'claude-haiku-4-5-20251001',
       temperature: 0.7,
       topP: undefined, // Fix for @langchain/anthropic bug sending top_p: -1
-      maxTokens: 4096,
+      maxTokens: 8192, // Generous limit for tool recommendations
       anthropicApiKey: process.env.ANTHROPIC_API_KEY,
     });
 
@@ -157,6 +157,9 @@ export class EnsembleService {
       }).slice(0, 10);
       this.logger.log(`Fallback gathered ${finalTools.length} tools from all agents`);
     }
+
+    // Step 5c: ENFORCE USER TOOL CONSTRAINTS (Issue #137)
+    finalTools = this.enforceToolConstraints(finalTools, state);
 
     // Step 6: Build generation plan
     const consensus: GraphState['generationPlan'] = {
@@ -304,6 +307,7 @@ export class EnsembleService {
    * Build Agent Input
    *
    * Formats research data into user message for agent.
+   * Includes tool count constraints if user specified them (Issue #137).
    *
    * @param state - Graph state
    * @returns Formatted input string
@@ -312,12 +316,26 @@ export class EnsembleService {
     const research = state.researchPhase;
     const extracted = state.extractedData;
 
+    // Build tool constraint instructions (Issue #137)
+    let toolConstraintSection = '';
+    if (state.requestedToolCount || state.requestedToolNames?.length) {
+      toolConstraintSection = `\n**⚠️ USER TOOL CONSTRAINTS (MUST RESPECT)**:\n`;
+      if (state.requestedToolCount) {
+        toolConstraintSection += `- Maximum tools: ${state.maxToolCount || state.requestedToolCount} (user requested ${state.requestedToolCount})\n`;
+      }
+      if (state.requestedToolNames?.length) {
+        toolConstraintSection += `- Required tools: ${state.requestedToolNames.join(', ')}\n`;
+        toolConstraintSection += `- ONLY recommend these specific tools. Do NOT add extra functionality.\n`;
+      }
+      toolConstraintSection += `- Do NOT expand scope beyond what the user explicitly requested.\n`;
+    }
+
     return `Analyze this repository and recommend MCP tools:
 
 **Repository**: ${extracted?.githubUrl}
 **Name**: ${extracted?.repositoryName}
 **Language**: ${research?.githubDeepDive?.basicInfo?.language || 'Unknown'}
-
+${toolConstraintSection}
 **Research Summary**:
 ${research?.synthesizedPlan?.summary || 'No summary available'}
 
@@ -596,5 +614,124 @@ Return JSON:
     if (tools.length > 15) return 'complex';
     if (tools.length < 5) return 'simple';
     return 'moderate';
+  }
+
+  /**
+   * Enforce Tool Constraints (Issue #137)
+   *
+   * Applies user's explicit tool count and name constraints.
+   * This is the final gate that ensures we don't over-engineer.
+   *
+   * Priority order:
+   * 1. If user specified tool names → include those first
+   * 2. If user specified tool count → cap at maxToolCount
+   * 3. Prefer high-priority tools when filtering
+   *
+   * @param tools - Tools from ensemble/voting
+   * @param state - Graph state with constraints
+   * @returns Filtered tools respecting user constraints
+   */
+  private enforceToolConstraints(
+    tools: ToolRecommendation[],
+    state: GraphState
+  ): ToolRecommendation[] {
+    // No constraints? Return original tools (capped at 10 for sanity)
+    if (!state.requestedToolCount && !state.requestedToolNames?.length) {
+      return tools.slice(0, 10);
+    }
+
+    const requestedNames = state.requestedToolNames || [];
+    const maxCount = state.maxToolCount || state.requestedToolCount || 10;
+
+    this.logger.log(
+      `Enforcing tool constraints: max=${maxCount}, requested names=[${requestedNames.join(', ')}]`
+    );
+
+    let result: ToolRecommendation[] = [];
+
+    // Step 1: If user specified tool names, prioritize matching tools
+    if (requestedNames.length > 0) {
+      // Find tools that match requested names (case-insensitive, underscore-tolerant)
+      const normalizedRequested = requestedNames.map(n =>
+        n.toLowerCase().replace(/[-\s]/g, '_')
+      );
+
+      for (const tool of tools) {
+        const normalizedToolName = tool.name.toLowerCase().replace(/[-\s]/g, '_');
+
+        // Check for exact match or partial match
+        const isMatch = normalizedRequested.some(reqName =>
+          normalizedToolName === reqName ||
+          normalizedToolName.includes(reqName) ||
+          reqName.includes(normalizedToolName)
+        );
+
+        if (isMatch) {
+          result.push(tool);
+        }
+      }
+
+      this.logger.log(`Found ${result.length} tools matching requested names`);
+
+      // If we didn't find matches for all requested names, create placeholders
+      if (result.length < requestedNames.length) {
+        const foundNames = new Set(result.map(t => t.name.toLowerCase().replace(/[-\s]/g, '_')));
+
+        for (const reqName of normalizedRequested) {
+          if (!foundNames.has(reqName)) {
+            // Create a placeholder tool for the missing name
+            result.push({
+              name: reqName,
+              description: `User-requested tool: ${reqName}`,
+              inputSchema: {
+                type: 'object',
+                properties: {
+                  input: { type: 'string', description: 'Input value' }
+                },
+                required: ['input']
+              },
+              outputFormat: 'JSON object with result',
+              priority: 'high',
+              estimatedComplexity: 'simple'
+            });
+            this.logger.log(`Created placeholder for missing requested tool: ${reqName}`);
+          }
+        }
+      }
+    }
+
+    // Step 2: If we have fewer tools than max, add more (sorted by priority)
+    if (result.length < maxCount) {
+      const remainingSlots = maxCount - result.length;
+      const usedNames = new Set(result.map(t => t.name.toLowerCase()));
+
+      // Sort by priority: high > medium > low
+      const priorityOrder = { high: 3, medium: 2, low: 1 };
+      const sortedTools = [...tools].sort((a, b) =>
+        (priorityOrder[b.priority] || 0) - (priorityOrder[a.priority] || 0)
+      );
+
+      for (const tool of sortedTools) {
+        if (result.length >= maxCount) break;
+        if (usedNames.has(tool.name.toLowerCase())) continue;
+
+        result.push(tool);
+        usedNames.add(tool.name.toLowerCase());
+      }
+    }
+
+    // Step 3: Cap at maxCount
+    if (result.length > maxCount) {
+      this.logger.warn(
+        `Capping tools from ${result.length} to ${maxCount} per user constraint`
+      );
+      result = result.slice(0, maxCount);
+    }
+
+    this.logger.log(
+      `Final tool count: ${result.length} (user requested: ${state.requestedToolCount || 'any'})`
+    );
+
+    return result;
   }
 }

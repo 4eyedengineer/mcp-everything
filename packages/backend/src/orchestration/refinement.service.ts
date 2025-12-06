@@ -52,22 +52,23 @@ export class RefinementService {
     private readonly mcpTestingService: McpTestingService,
     private readonly mcpGenerationService: McpGenerationService,
   ) {
-    // Initialize Claude Haiku for failure analysis (smaller responses)
+    // Initialize Claude Haiku for failure analysis
     this.llm = new ChatAnthropic({
       modelName: 'claude-haiku-4-5-20251001',
       temperature: 0.7,
       topP: undefined, // Fix for @langchain/anthropic bug sending top_p: -1
-      maxTokens: 4096,
+      maxTokens: 16000, // Generous limit for detailed failure analysis
       anthropicApiKey: process.env.ANTHROPIC_API_KEY,
     });
 
-    // Separate LLM instance for code generation with higher token limit
+    // Separate LLM instance for code generation with maximum token limit
+    // Claude Haiku 4.5 supports up to 64K output tokens
     // This prevents truncation of generated TypeScript files (Issue #136)
     this.codeGenLlm = new ChatAnthropic({
       modelName: 'claude-haiku-4-5-20251001',
       temperature: 0.3, // Lower temperature for more consistent code output
       topP: undefined,
-      maxTokens: 16384, // Much higher limit for complete code generation
+      maxTokens: 64000, // Maximum output for Haiku 4.5 - no truncation
       anthropicApiKey: process.env.ANTHROPIC_API_KEY,
     });
   }
@@ -269,6 +270,8 @@ export class RefinementService {
    * Uses LLM to generate the main TypeScript file for the MCP server
    * based on research findings and generation plan.
    *
+   * Respects user's tool count constraints (Issue #137).
+   *
    * @param state - Graph state with research and plan
    * @param serverName - Name of the MCP server
    * @returns Generated TypeScript code
@@ -292,22 +295,36 @@ export class RefinementService {
     const toolCount = validTools.length;
     const toolsList = validTools.map(t => `- ${t.name}: ${t.description}`).join('\n');
 
+    // Build constraint warning if user specified limits (Issue #137)
+    let constraintWarning = '';
+    if (state.requestedToolCount || state.requestedToolNames?.length) {
+      constraintWarning = `\n**⚠️ CRITICAL: USER TOOL CONSTRAINTS**\n`;
+      if (state.requestedToolCount) {
+        constraintWarning += `- User explicitly requested ${state.requestedToolCount} tools\n`;
+      }
+      if (state.requestedToolNames?.length) {
+        constraintWarning += `- User specifically requested: ${state.requestedToolNames.join(', ')}\n`;
+      }
+      constraintWarning += `- Implement EXACTLY the ${toolCount} tools listed below\n`;
+      constraintWarning += `- Do NOT add extra tools, helpers, or "nice-to-have" functionality\n`;
+    }
+
     const prompt = `Generate a complete TypeScript MCP server implementation.
 
 **Server Name**: ${serverName}
-
+${constraintWarning}
 **Research Findings**:
 ${JSON.stringify(research?.webSearchFindings, null, 2)}
 
 **Generation Plan**:
 ${JSON.stringify(plan, null, 2)}
 
-**Tools to Implement** (${toolCount} total):
+**Tools to Implement** (EXACTLY ${toolCount} tools - no more, no less):
 ${toolsList}
 
 **Requirements**:
 1. Use @modelcontextprotocol/sdk for MCP protocol
-2. Implement ALL ${toolCount} tools from the plan above
+2. Implement EXACTLY ${toolCount} tools from the plan above - no additional tools
 3. Use proper TypeScript types
 4. Include error handling for all tools
 5. Follow MCP protocol exactly: return { content: [{ type: 'text', text: '...' }] }
@@ -317,7 +334,7 @@ ${toolsList}
 **Output Format**: Return ONLY the complete TypeScript code, no explanations.
 Start with imports.`;
 
-    this.logger.log(`Prompt prepared for ${toolCount} valid tools`);
+    this.logger.log(`Prompt prepared for ${toolCount} valid tools (user constraint: ${state.requestedToolCount || 'none'})`);
 
 
     try {
