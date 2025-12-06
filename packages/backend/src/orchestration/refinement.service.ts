@@ -46,17 +46,28 @@ import { safeParseJSON } from './json-utils';
 export class RefinementService {
   private readonly logger = new Logger(RefinementService.name);
   private readonly llm: ChatAnthropic;
+  private readonly codeGenLlm: ChatAnthropic;
 
   constructor(
     private readonly mcpTestingService: McpTestingService,
     private readonly mcpGenerationService: McpGenerationService,
   ) {
-    // Initialize Claude Haiku for failure analysis and code refinement
+    // Initialize Claude Haiku for failure analysis (smaller responses)
     this.llm = new ChatAnthropic({
       modelName: 'claude-haiku-4-5-20251001',
       temperature: 0.7,
       topP: undefined, // Fix for @langchain/anthropic bug sending top_p: -1
       maxTokens: 4096,
+      anthropicApiKey: process.env.ANTHROPIC_API_KEY,
+    });
+
+    // Separate LLM instance for code generation with higher token limit
+    // This prevents truncation of generated TypeScript files (Issue #136)
+    this.codeGenLlm = new ChatAnthropic({
+      modelName: 'claude-haiku-4-5-20251001',
+      temperature: 0.3, // Lower temperature for more consistent code output
+      topP: undefined,
+      maxTokens: 16384, // Much higher limit for complete code generation
       anthropicApiKey: process.env.ANTHROPIC_API_KEY,
     });
   }
@@ -310,7 +321,8 @@ Start with imports.`;
 
 
     try {
-      const response = await this.llm.invoke(prompt);
+      // Use codeGenLlm with higher token limit to prevent truncation (Issue #136)
+      const response = await this.codeGenLlm.invoke(prompt);
       let code = response.content.toString();
 
       // Remove markdown code blocks if present
@@ -319,7 +331,14 @@ Start with imports.`;
         code = codeBlockMatch[1];
       }
 
-      this.logger.log(`Generated main file: ${code.length} characters`);
+      // Detect truncation: valid TypeScript files must end with proper structure
+      const truncationDetected = this.detectTruncation(code);
+      if (truncationDetected) {
+        this.logger.warn(`Code truncation detected! Attempting recovery...`);
+        code = this.attemptTruncationRecovery(code);
+      }
+
+      this.logger.log(`Generated main file: ${code.length} characters (truncation: ${truncationDetected})`);
       return code;
     } catch (error) {
       this.logger.error(`Code generation failed: ${error.message}`);
@@ -635,7 +654,8 @@ Return ONLY the complete corrected TypeScript code (no explanations, no markdown
 Start directly with the imports.`;
 
     try {
-      const response = await this.llm.invoke(prompt);
+      // Use codeGenLlm with higher token limit to prevent truncation (Issue #136)
+      const response = await this.codeGenLlm.invoke(prompt);
       const content = response.content.toString();
 
       // Extract TypeScript code (remove markdown if present)
@@ -645,7 +665,14 @@ Start directly with the imports.`;
         refinedCode = codeBlockMatch[1];
       }
 
-      this.logger.log(`Code refined: ${refinedCode.length} characters`);
+      // Detect truncation and attempt recovery (Issue #136)
+      const truncationDetected = this.detectTruncation(refinedCode);
+      if (truncationDetected) {
+        this.logger.warn(`Code truncation detected in refinement! Attempting recovery...`);
+        refinedCode = this.attemptTruncationRecovery(refinedCode);
+      }
+
+      this.logger.log(`Code refined: ${refinedCode.length} characters (truncation: ${truncationDetected})`);
 
       // Return new GeneratedCode with refined main file
       return {
@@ -662,5 +689,116 @@ Start directly with the imports.`;
       // Fallback: Return original code (will likely fail again, but graceful)
       return generatedCode;
     }
+  }
+
+  /**
+   * Detect Truncation
+   *
+   * Checks if generated TypeScript code appears to be truncated.
+   * Valid MCP server files should end with proper structure.
+   *
+   * Detection heuristics:
+   * 1. File should end with main() call or export
+   * 2. Braces should be balanced
+   * 3. No trailing incomplete statements
+   *
+   * @param code - Generated TypeScript code
+   * @returns True if truncation detected
+   */
+  private detectTruncation(code: string): boolean {
+    if (!code || code.length === 0) {
+      return true;
+    }
+
+    const trimmedCode = code.trim();
+
+    // Check 1: Valid TypeScript files should end with specific patterns
+    const validEndings = [
+      /main\(\)\.catch\([^)]*\);?\s*$/,           // main().catch(console.error);
+      /main\(\);?\s*$/,                            // main();
+      /export\s+\{[^}]*\};?\s*$/,                 // export { ... };
+      /export\s+default\s+\w+;?\s*$/,             // export default X;
+      /\}\s*$/,                                    // ends with closing brace
+    ];
+
+    const hasValidEnding = validEndings.some(pattern => pattern.test(trimmedCode));
+
+    // Check 2: Brace balance (opening vs closing)
+    const openBraces = (code.match(/\{/g) || []).length;
+    const closeBraces = (code.match(/\}/g) || []).length;
+    const bracesBalanced = openBraces === closeBraces;
+
+    // Check 3: Parentheses balance
+    const openParens = (code.match(/\(/g) || []).length;
+    const closeParens = (code.match(/\)/g) || []).length;
+    const parensBalanced = openParens === closeParens;
+
+    // Check 4: Look for obvious truncation patterns
+    const truncationPatterns = [
+      /[=+\-*/%&|^!<>]\s*$/,    // ends with operator
+      /,\s*$/,                   // ends with comma
+      /\(\s*$/,                  // ends with open paren
+      /\[\s*$/,                  // ends with open bracket
+      /:\s*$/,                   // ends with colon
+      /\.\s*$/,                  // ends with dot
+      /=>\s*$/,                  // ends with arrow
+      /\b(if|else|for|while|switch|try|catch|const|let|var|function|async|await|return)\s*$/i,
+    ];
+
+    const hasObviousTruncation = truncationPatterns.some(pattern => pattern.test(trimmedCode));
+
+    // Truncation detected if any of these conditions fail
+    const isTruncated = !hasValidEnding || !bracesBalanced || !parensBalanced || hasObviousTruncation;
+
+    if (isTruncated) {
+      this.logger.debug(`Truncation detection: validEnding=${hasValidEnding}, braces=${openBraces}/${closeBraces}, parens=${openParens}/${closeParens}, obviousTruncation=${hasObviousTruncation}`);
+    }
+
+    return isTruncated;
+  }
+
+  /**
+   * Attempt Truncation Recovery
+   *
+   * Tries to fix truncated code by adding missing closing structures.
+   * This is a best-effort recovery - the code may still not compile,
+   * but the refinement loop will catch and fix remaining issues.
+   *
+   * @param code - Truncated TypeScript code
+   * @returns Code with attempted fixes
+   */
+  private attemptTruncationRecovery(code: string): string {
+    let fixedCode = code.trim();
+
+    // Count unbalanced braces and add closing ones
+    const openBraces = (fixedCode.match(/\{/g) || []).length;
+    const closeBraces = (fixedCode.match(/\}/g) || []).length;
+    const missingBraces = openBraces - closeBraces;
+
+    if (missingBraces > 0) {
+      this.logger.debug(`Adding ${missingBraces} missing closing braces`);
+      fixedCode += '\n' + '}'.repeat(missingBraces);
+    }
+
+    // Count unbalanced parentheses
+    const openParens = (fixedCode.match(/\(/g) || []).length;
+    const closeParens = (fixedCode.match(/\)/g) || []).length;
+    const missingParens = openParens - closeParens;
+
+    if (missingParens > 0) {
+      this.logger.debug(`Adding ${missingParens} missing closing parentheses`);
+      // Insert before the closing braces we just added
+      const insertPos = fixedCode.length - missingBraces;
+      fixedCode = fixedCode.slice(0, insertPos) + ')'.repeat(missingParens) + fixedCode.slice(insertPos);
+    }
+
+    // Add main() call if missing and we have a main function
+    if (!fixedCode.includes('main()') && fixedCode.includes('async function main')) {
+      this.logger.debug('Adding missing main() call');
+      fixedCode += '\n\nmain().catch(console.error);';
+    }
+
+    this.logger.log(`Truncation recovery: added ${missingBraces} braces, ${missingParens} parens`);
+    return fixedCode;
   }
 }
