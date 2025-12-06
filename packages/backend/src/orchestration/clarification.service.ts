@@ -45,12 +45,14 @@ export class ClarificationService {
 
   constructor(private readonly envVariableService: EnvVariableService) {
     // Initialize Claude Haiku for gap detection and question formulation
+    // streaming: true is required by the Anthropic API configuration (Issue #142)
     this.llm = new ChatAnthropic({
       modelName: 'claude-haiku-4-5-20251001',
       temperature: 0.7,
       topP: undefined, // Fix for @langchain/anthropic bug sending top_p: -1
       maxTokens: 8000, // Generous limit for clarification questions
       anthropicApiKey: process.env.ANTHROPIC_API_KEY,
+      streaming: true,
     });
   }
 

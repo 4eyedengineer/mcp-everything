@@ -47,12 +47,14 @@ export class EnsembleService {
   constructor() {
     // Initialize Claude Haiku for all agents
     // Claude Haiku 4.5 supports up to 64K output tokens - use 8192 for agent responses
+    // streaming: true is required by the Anthropic API configuration (Issue #142)
     this.llm = new ChatAnthropic({
       modelName: 'claude-haiku-4-5-20251001',
       temperature: 0.7,
       topP: undefined, // Fix for @langchain/anthropic bug sending top_p: -1
       maxTokens: 8192, // Generous limit for tool recommendations
       anthropicApiKey: process.env.ANTHROPIC_API_KEY,
+      streaming: true,
     });
 
     // Load agent prompts (async in constructor workaround - init in onModuleInit)
