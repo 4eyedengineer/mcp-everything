@@ -10,6 +10,111 @@ import { getPlatformContextPrompt } from './platform-context';
 import { safeParseJSON } from './json-utils';
 
 /**
+ * MCP SDK Reference Implementation (Issue #140)
+ *
+ * This reference code is included in prompts to ensure the LLM uses correct
+ * library APIs for @modelcontextprotocol/sdk and zod v3.
+ *
+ * Common API mistakes this prevents:
+ * 1. StdioServerTransport({ stdin, stdout }) - WRONG, use StdioServerTransport()
+ * 2. error.errors - WRONG, Zod v3 uses error.issues
+ * 3. Missing type annotations causing TS7006 implicit any errors
+ */
+const MCP_REFERENCE_IMPLEMENTATION = `
+**⚠️ CRITICAL: Use these EXACT patterns from @modelcontextprotocol/sdk and zod v3**
+
+\`\`\`typescript
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import {
+  CallToolRequestSchema,
+  ListToolsRequestSchema,
+} from "@modelcontextprotocol/sdk/types.js";
+import { z } from "zod";
+
+// 1. Server initialization (correct pattern)
+const server = new Server(
+  { name: "my-server", version: "1.0.0" },
+  { capabilities: { tools: {} } }
+);
+
+// 2. Tool listing handler (correct pattern)
+server.setRequestHandler(ListToolsRequestSchema, async () => ({
+  tools: [
+    {
+      name: "my_tool",
+      description: "Description here",
+      inputSchema: {
+        type: "object",
+        properties: {
+          param1: { type: "string", description: "A parameter" },
+        },
+        required: ["param1"],
+      },
+    },
+  ],
+}));
+
+// 3. Tool call handler with Zod validation (correct pattern)
+server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  const { name, arguments: args } = request.params;
+
+  if (name === "my_tool") {
+    try {
+      // Zod validation with proper types
+      const schema = z.object({ param1: z.string() });
+      const validated = schema.parse(args);
+
+      // Your tool logic here
+      const result = \`Result for \${validated.param1}\`;
+
+      // MCP response format (MUST use this exact structure)
+      return {
+        content: [{ type: "text", text: result }],
+      };
+    } catch (error) {
+      // Zod v3 uses .issues NOT .errors
+      if (error instanceof z.ZodError) {
+        const messages = error.issues.map((issue: z.ZodIssue) =>
+          \`\${issue.path.join(".")}: \${issue.message}\`
+        ).join(", ");
+        return {
+          content: [{ type: "text", text: \`Validation error: \${messages}\` }],
+          isError: true,
+        };
+      }
+      return {
+        content: [{ type: "text", text: \`Error: \${error instanceof Error ? error.message : String(error)}\` }],
+        isError: true,
+      };
+    }
+  }
+
+  return {
+    content: [{ type: "text", text: \`Unknown tool: \${name}\` }],
+    isError: true,
+  };
+});
+
+// 4. Transport setup (NO ARGUMENTS - this is critical!)
+async function main() {
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+}
+
+main().catch(console.error);
+\`\`\`
+
+**Common Mistakes to AVOID:**
+- ❌ \`new StdioServerTransport({ stdin: process.stdin, stdout: process.stdout })\` - WRONG
+- ✅ \`new StdioServerTransport()\` - CORRECT (no arguments)
+- ❌ \`error.errors.map(...)\` - WRONG (Zod v2 API)
+- ✅ \`error.issues.map((issue: z.ZodIssue) => ...)\` - CORRECT (Zod v3 API)
+- ❌ \`(e) => e.message\` - WRONG (implicit any in strict mode)
+- ✅ \`(issue: z.ZodIssue) => issue.message\` - CORRECT (explicit type)
+`;
+
+/**
  * Refinement Service
  *
  * Orchestrates Phase 4: Generate-Test-Refine Loop
@@ -313,6 +418,8 @@ export class RefinementService {
 
 **Server Name**: ${serverName}
 ${constraintWarning}
+${MCP_REFERENCE_IMPLEMENTATION}
+
 **Research Findings**:
 ${JSON.stringify(research?.webSearchFindings, null, 2)}
 
@@ -323,13 +430,14 @@ ${JSON.stringify(plan, null, 2)}
 ${toolsList}
 
 **Requirements**:
-1. Use @modelcontextprotocol/sdk for MCP protocol
+1. Use @modelcontextprotocol/sdk for MCP protocol - FOLLOW THE REFERENCE IMPLEMENTATION EXACTLY
 2. Implement EXACTLY ${toolCount} tools from the plan above - no additional tools
-3. Use proper TypeScript types
-4. Include error handling for all tools
+3. Use proper TypeScript types (no implicit any)
+4. Include error handling using Zod v3 .issues (NOT .errors)
 5. Follow MCP protocol exactly: return { content: [{ type: 'text', text: '...' }] }
 6. Use axios for HTTP requests if needed
 7. Include proper authentication handling
+8. Use StdioServerTransport() with NO ARGUMENTS
 
 **Output Format**: Return ONLY the complete TypeScript code, no explanations.
 Start with imports.`;
@@ -501,6 +609,8 @@ Start with imports.`;
 
 **Your Role**: Debug and fix MCP server issues with surgical precision. Focus on root causes, not symptoms.
 
+${MCP_REFERENCE_IMPLEMENTATION}
+
 **MCP Server Metadata**:
 - Server Name: ${generatedCode.metadata.serverName}
 - Tools: ${generatedCode.metadata.tools.length}
@@ -629,6 +739,8 @@ Return ONLY valid JSON with failure analysis.`;
 
 **Your Role**: Fix MCP server code efficiently. Apply systematic fixes that address root causes.
 
+${MCP_REFERENCE_IMPLEMENTATION}
+
 **Original Code**:
 \`\`\`typescript
 ${generatedCode.mainFile}
@@ -658,13 +770,14 @@ ${i + 1}. **${f.toolName}** (${f.priority}):
 
 **Requirements**:
 1. Fix ALL issues listed above
-2. Maintain MCP protocol compliance:
+2. Maintain MCP protocol compliance - FOLLOW THE REFERENCE IMPLEMENTATION:
    - Return { content: [{ type: 'text', text: '...' }] }
-   - Include proper error handling
-   - Use JSON-RPC 2.0 format
+   - Use StdioServerTransport() with NO ARGUMENTS
+   - Use Zod v3 .issues (NOT .errors) for validation errors
+   - Include proper TypeScript types (no implicit any)
 3. Preserve working tools (don't break what works)
 4. Keep code structure and imports
-5. Ensure TypeScript compiles without errors
+5. Ensure TypeScript compiles without errors in strict mode
 
 **Return Format**:
 Return ONLY the complete corrected TypeScript code (no explanations, no markdown).
