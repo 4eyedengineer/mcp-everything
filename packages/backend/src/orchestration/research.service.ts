@@ -67,12 +67,14 @@ export class ResearchService {
     // private readonly researchCacheService: ResearchCacheService, // TODO: Implement caching
   ) {
     // Initialize Claude Haiku for cost-effective research synthesis
+    // streaming: true is required by the Anthropic API configuration (Issue #142)
     this.llm = new ChatAnthropic({
       modelName: 'claude-haiku-4-5-20251001',
       temperature: 0.7,
       topP: undefined, // Fix for @langchain/anthropic bug sending top_p: -1
       maxTokens: 16000, // Generous limit for research synthesis
       anthropicApiKey: process.env.ANTHROPIC_API_KEY,
+      streaming: true,
     });
   }
 

@@ -158,23 +158,27 @@ export class RefinementService {
     private readonly mcpGenerationService: McpGenerationService,
   ) {
     // Initialize Claude Haiku for failure analysis
+    // streaming: true is required by the Anthropic API configuration (Issue #142)
     this.llm = new ChatAnthropic({
       modelName: 'claude-haiku-4-5-20251001',
       temperature: 0.7,
       topP: undefined, // Fix for @langchain/anthropic bug sending top_p: -1
       maxTokens: 16000, // Generous limit for detailed failure analysis
       anthropicApiKey: process.env.ANTHROPIC_API_KEY,
+      streaming: true,
     });
 
     // Separate LLM instance for code generation with maximum token limit
     // Claude Haiku 4.5 supports up to 64K output tokens
     // This prevents truncation of generated TypeScript files (Issue #136)
+    // streaming: true is required by the Anthropic API configuration (Issue #142)
     this.codeGenLlm = new ChatAnthropic({
       modelName: 'claude-haiku-4-5-20251001',
       temperature: 0.3, // Lower temperature for more consistent code output
       topP: undefined,
       maxTokens: 64000, // Maximum output for Haiku 4.5 - no truncation
       anthropicApiKey: process.env.ANTHROPIC_API_KEY,
+      streaming: true,
     });
   }
 
