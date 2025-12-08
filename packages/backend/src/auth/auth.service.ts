@@ -1,7 +1,10 @@
-import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
+import { Injectable, Logger, UnauthorizedException, BadRequestException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
+import { randomBytes, createHash } from 'crypto';
+import * as bcrypt from 'bcrypt';
 import { UserService } from '../user/user.service';
+import { EmailService } from '../email/email.service';
 import { User } from '../database/entities/user.entity';
 import { RegisterDto } from './dto/register.dto';
 import { TokenResponseDto } from './dto/token-response.dto';
@@ -11,10 +14,13 @@ import { JwtPayload } from './strategies/jwt.strategy';
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
 
+  private readonly SALT_ROUNDS = 10;
+
   constructor(
     private readonly userService: UserService,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
+    private readonly emailService: EmailService,
   ) {}
 
   /**
@@ -193,6 +199,70 @@ export class AuthService {
         tier: user.tier,
       },
     };
+  }
+
+  /**
+   * Send password reset email.
+   * Generates a secure token, stores the hash, and sends email with reset link.
+   * Always returns success message to prevent email enumeration attacks.
+   */
+  async sendPasswordResetEmail(email: string): Promise<void> {
+    const user = await this.userService.findByEmail(email.toLowerCase());
+
+    // Always return success to prevent email enumeration
+    if (!user) {
+      this.logger.log(`Password reset requested for non-existent email: ${email}`);
+      return;
+    }
+
+    if (!user.isActive) {
+      this.logger.log(`Password reset requested for deactivated account: ${user.id}`);
+      return;
+    }
+
+    // Generate secure random token (32 bytes = 64 hex characters)
+    const token = randomBytes(32).toString('hex');
+
+    // Hash the token before storing (using SHA256)
+    const tokenHash = createHash('sha256').update(token).digest('hex');
+
+    // Store the hash in the database with expiry
+    await this.userService.setPasswordResetToken(user.id, tokenHash);
+
+    // Send email with the plain token (user clicks link with token)
+    const userName = user.firstName || user.email.split('@')[0];
+    await this.emailService.sendPasswordResetEmail({
+      email: user.email,
+      token,
+      userName,
+    });
+
+    this.logger.log(`Password reset email sent to user: ${user.id}`);
+  }
+
+  /**
+   * Reset password using a valid token.
+   * Validates token, updates password, and invalidates the token.
+   */
+  async resetPassword(token: string, newPassword: string): Promise<void> {
+    // Hash the provided token to compare with stored hash
+    const tokenHash = createHash('sha256').update(token).digest('hex');
+
+    // Find user by token hash (also validates expiry)
+    const user = await this.userService.findByResetTokenHash(tokenHash);
+
+    if (!user) {
+      throw new BadRequestException('Invalid or expired reset token');
+    }
+
+    // Hash the new password
+    const newPasswordHash = await bcrypt.hash(newPassword, this.SALT_ROUNDS);
+
+    // Update password and clear reset token
+    await this.userService.updatePassword(user.id, newPasswordHash);
+    await this.userService.clearPasswordResetToken(user.id);
+
+    this.logger.log(`Password reset successful for user: ${user.id}`);
   }
 
   /**

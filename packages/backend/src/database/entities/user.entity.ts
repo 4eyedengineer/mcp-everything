@@ -50,6 +50,12 @@ export class User {
   @Column({ type: 'timestamp', nullable: true })
   lastLoginAt?: Date;
 
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  passwordResetTokenHash?: string;
+
+  @Column({ type: 'timestamp', nullable: true })
+  passwordResetExpiresAt?: Date;
+
   @CreateDateColumn()
   createdAt: Date;
 
