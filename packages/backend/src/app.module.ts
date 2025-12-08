@@ -16,6 +16,7 @@ import { ValidationModule } from './validation/validation.module';
 import { UserModule } from './user/user.module';
 import { SubscriptionModule } from './subscription/subscription.module';
 import { HostingModule } from './hosting/hosting.module';
+import { EmailModule } from './email/email.module';
 import { LoggingModule } from './logging/logging.module';
 import { Conversation, ConversationMemory, Deployment, User, Subscription, UsageRecord, HostedServer, ErrorLog } from './database/entities';
 
@@ -302,6 +303,7 @@ main().catch((error) => {
     UserModule,
     SubscriptionModule,
     HostingModule,
+    EmailModule,
   ],
   controllers: [AppController],
   providers: [
