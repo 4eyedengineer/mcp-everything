@@ -18,6 +18,7 @@ import { SubscriptionModule } from './subscription/subscription.module';
 import { HostingModule } from './hosting/hosting.module';
 import { EmailModule } from './email/email.module';
 import { LoggingModule } from './logging/logging.module';
+import { MarketplaceModule } from './marketplace/marketplace.module';
 import { Conversation, ConversationMemory, Deployment, User, Subscription, UsageRecord, HostedServer, ErrorLog, McpServer } from './database/entities';
 
 // Basic DTO for generate endpoint
@@ -304,6 +305,7 @@ main().catch((error) => {
     SubscriptionModule,
     HostingModule,
     EmailModule,
+    MarketplaceModule,
   ],
   controllers: [AppController],
   providers: [
