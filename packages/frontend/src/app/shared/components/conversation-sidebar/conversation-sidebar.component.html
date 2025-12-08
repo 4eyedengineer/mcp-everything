@@ -78,6 +78,39 @@
     </div>
   </div>
 
+  <!-- Usage Display -->
+  <div class="usage-section" *ngIf="usage$ | async as usage">
+    <div class="usage-header">
+      <mat-icon>bar_chart</mat-icon>
+      <span>Monthly Usage</span>
+    </div>
+    <div class="usage-stats">
+      <ng-container *ngIf="!isUnlimited(usage.monthlyLimit); else unlimitedUsage">
+        <div class="usage-count">
+          {{ usage.serversDeployedThisMonth }} / {{ usage.monthlyLimit }} deployments
+        </div>
+        <mat-progress-bar
+          mode="determinate"
+          [value]="usage.percentUsed"
+          [color]="usage.percentUsed >= 80 ? 'warn' : 'primary'">
+        </mat-progress-bar>
+        <div class="usage-remaining" *ngIf="usage.remainingDeployments > 0">
+          {{ usage.remainingDeployments }} remaining
+        </div>
+        <div class="usage-limit-reached" *ngIf="usage.remainingDeployments === 0">
+          <mat-icon>warning</mat-icon>
+          Limit reached - <a routerLink="/account">Upgrade</a>
+        </div>
+      </ng-container>
+      <ng-template #unlimitedUsage>
+        <div class="usage-count unlimited">
+          <mat-icon>all_inclusive</mat-icon>
+          {{ usage.serversDeployedThisMonth }} deployments (unlimited)
+        </div>
+      </ng-template>
+    </div>
+  </div>
+
   <!-- Sidebar Footer -->
   <div class="sidebar-footer">
     <button

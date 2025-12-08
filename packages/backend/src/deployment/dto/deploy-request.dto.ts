@@ -102,6 +102,18 @@ export class DeploymentResponseDto {
   suggestedNames?: string[];
   /** Whether this deployment can be retried */
   canRetry?: boolean;
+
+  // Tier-based limit fields (returned when deployment is blocked)
+  /** Current usage count when limit exceeded */
+  currentUsage?: number;
+  /** Monthly limit for current tier */
+  limit?: number;
+  /** User's current tier (free, pro, enterprise) */
+  currentTier?: string;
+  /** Required tier for this deployment type */
+  requiredTier?: string;
+  /** URL to upgrade subscription */
+  upgradeUrl?: string;
 }
 
 /**
