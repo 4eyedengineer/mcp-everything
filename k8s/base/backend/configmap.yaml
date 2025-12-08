@@ -1,0 +1,28 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mcp-config
+  labels:
+    app: mcp-backend
+    app.kubernetes.io/name: mcp-backend
+    app.kubernetes.io/component: backend
+data:
+  # Application settings
+  NODE_ENV: "production"
+  PORT: "3000"
+
+  # API settings
+  API_PREFIX: "/api/v1"
+
+  # CORS settings
+  CORS_ORIGIN: "*"
+
+  # Logging
+  LOG_LEVEL: "info"
+
+  # LangGraph settings
+  LANGGRAPH_MAX_ITERATIONS: "10"
+
+  # Generation settings
+  GENERATION_TIMEOUT_MS: "120000"
+  MAX_CONCURRENT_GENERATIONS: "5"
