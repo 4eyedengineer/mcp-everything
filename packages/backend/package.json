@@ -27,7 +27,13 @@
     "test:tool-discovery": "ts-node src/scripts/test-tool-discovery.ts",
     "test:tool-discovery:built": "npm run build && node dist/scripts/test-tool-discovery.js",
     "test:mcp-generation": "ts-node src/scripts/test-mcp-generation.ts",
-    "test:mcp-generation:built": "npm run build && node dist/scripts/test-mcp-generation.js"
+    "test:mcp-generation:built": "npm run build && node dist/scripts/test-mcp-generation.js",
+    "migration:run": "typeorm migration:run -d dist/database/data-source.js",
+    "migration:revert": "typeorm migration:revert -d dist/database/data-source.js",
+    "migration:generate": "typeorm migration:generate -d dist/database/data-source.js",
+    "migration:create": "typeorm migration:create",
+    "migration:show": "typeorm migration:show -d dist/database/data-source.js",
+    "seed": "node dist/database/seeds/run-seeds.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.17.1",

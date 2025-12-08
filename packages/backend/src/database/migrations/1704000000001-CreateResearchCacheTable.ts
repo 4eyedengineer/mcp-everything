@@ -95,16 +95,16 @@ export class CreateResearchCacheTable1704000000001 implements MigrationInterface
     `);
 
     /**
-     * Index on createdAt for freshness queries
+     * Index on cachedAt for freshness queries
      * - Enables "recent cache" queries
      * - Partial index for 7-day window
-     * - Query: SELECT * FROM research_cache WHERE createdAt > NOW() - INTERVAL '1 day'
+     * - Query: SELECT * FROM research_cache WHERE cachedAt > NOW() - INTERVAL '1 day'
      * - Use case: Find recently cached research to avoid immediate expiration
      */
     await queryRunner.query(`
-      CREATE INDEX "IDX_research_cache_created_at_recent"
-      ON "research_cache" ("createdAt" DESC)
-      WHERE (NOW() - "createdAt") < INTERVAL '7 days'
+      CREATE INDEX "IDX_research_cache_cached_at_recent"
+      ON "research_cache" ("cachedAt" DESC)
+      WHERE (NOW() - "cachedAt") < INTERVAL '7 days'
     `);
 
     // === VECTOR SIMILARITY INDEXES ===
