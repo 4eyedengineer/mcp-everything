@@ -1,0 +1,160 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-rules
+  namespace: monitoring
+  labels:
+    app: prometheus
+data:
+  mcp-alerts.yaml: |
+    groups:
+      - name: mcp-generation-alerts
+        rules:
+          # High Generation Error Rate
+          - alert: HighGenerationErrorRate
+            expr: rate(mcp_generation_errors_total[5m]) > 0.1
+            for: 5m
+            labels:
+              severity: critical
+              team: backend
+            annotations:
+              summary: "High MCP server generation error rate"
+              description: "Error rate is {{ $value | printf \"%.2f\" }} errors/second over the last 5 minutes"
+              runbook_url: "https://github.com/4eyedengineer/mcp-everything/blob/main/docs/runbooks/high-generation-error-rate.md"
+
+          # Slow Generations
+          - alert: SlowGenerations
+            expr: histogram_quantile(0.95, sum(rate(mcp_generation_duration_seconds_bucket[15m])) by (le)) > 300
+            for: 10m
+            labels:
+              severity: warning
+              team: backend
+            annotations:
+              summary: "MCP server generation time exceeding 5 minutes"
+              description: "P95 generation time is {{ $value | printf \"%.0f\" }} seconds"
+              runbook_url: "https://github.com/4eyedengineer/mcp-everything/blob/main/docs/runbooks/slow-generations.md"
+
+          # No Generations
+          - alert: NoGenerations
+            expr: sum(rate(mcp_generation_total[1h])) == 0
+            for: 1h
+            labels:
+              severity: warning
+              team: backend
+            annotations:
+              summary: "No MCP server generations in the last hour"
+              description: "The generation pipeline may be stuck or not receiving requests"
+              runbook_url: "https://github.com/4eyedengineer/mcp-everything/blob/main/docs/runbooks/no-generations.md"
+
+      - name: mcp-api-alerts
+        rules:
+          # High API Error Rate
+          - alert: HighApiErrorRate
+            expr: sum(rate(mcp_api_requests_total{status_code=~"5.."}[5m])) / sum(rate(mcp_api_requests_total[5m])) > 0.05
+            for: 5m
+            labels:
+              severity: critical
+              team: backend
+            annotations:
+              summary: "High API error rate (5xx responses)"
+              description: "API error rate is {{ $value | printf \"%.2f\" }}% over the last 5 minutes"
+              runbook_url: "https://github.com/4eyedengineer/mcp-everything/blob/main/docs/runbooks/high-api-error-rate.md"
+
+          # High API Latency
+          - alert: HighApiLatency
+            expr: histogram_quantile(0.95, sum(rate(mcp_api_latency_seconds_bucket[5m])) by (le)) > 2
+            for: 5m
+            labels:
+              severity: warning
+              team: backend
+            annotations:
+              summary: "High API latency"
+              description: "P95 API latency is {{ $value | printf \"%.2f\" }} seconds"
+              runbook_url: "https://github.com/4eyedengineer/mcp-everything/blob/main/docs/runbooks/high-api-latency.md"
+
+          # High API Request Rate
+          - alert: HighApiRequestRate
+            expr: sum(rate(mcp_api_requests_total[5m])) > 1000
+            for: 5m
+            labels:
+              severity: info
+              team: backend
+            annotations:
+              summary: "High API request rate"
+              description: "Request rate is {{ $value | printf \"%.0f\" }} req/s. Consider scaling."
+              runbook_url: "https://github.com/4eyedengineer/mcp-everything/blob/main/docs/runbooks/high-api-request-rate.md"
+
+      - name: mcp-infrastructure-alerts
+        rules:
+          # High Memory Usage
+          - alert: HighMemoryUsage
+            expr: mcp_process_resident_memory_bytes / 1024 / 1024 / 1024 > 1.5
+            for: 10m
+            labels:
+              severity: warning
+              team: infrastructure
+            annotations:
+              summary: "High memory usage"
+              description: "Memory usage is {{ $value | printf \"%.2f\" }} GB"
+              runbook_url: "https://github.com/4eyedengineer/mcp-everything/blob/main/docs/runbooks/high-memory-usage.md"
+
+          # High CPU Usage
+          - alert: HighCpuUsage
+            expr: rate(mcp_process_cpu_seconds_total[5m]) > 0.8
+            for: 10m
+            labels:
+              severity: warning
+              team: infrastructure
+            annotations:
+              summary: "High CPU usage"
+              description: "CPU usage is {{ $value | printf \"%.0f\" }}%"
+              runbook_url: "https://github.com/4eyedengineer/mcp-everything/blob/main/docs/runbooks/high-cpu-usage.md"
+
+          # Event Loop Lag
+          - alert: HighEventLoopLag
+            expr: mcp_nodejs_eventloop_lag_seconds > 0.1
+            for: 5m
+            labels:
+              severity: warning
+              team: backend
+            annotations:
+              summary: "High Node.js event loop lag"
+              description: "Event loop lag is {{ $value | printf \"%.3f\" }} seconds"
+              runbook_url: "https://github.com/4eyedengineer/mcp-everything/blob/main/docs/runbooks/high-event-loop-lag.md"
+
+          # Process Restart
+          - alert: ProcessRestarted
+            expr: changes(mcp_process_start_time_seconds[15m]) > 0
+            labels:
+              severity: info
+              team: infrastructure
+            annotations:
+              summary: "MCP backend process restarted"
+              description: "The backend process was restarted in the last 15 minutes"
+              runbook_url: "https://github.com/4eyedengineer/mcp-everything/blob/main/docs/runbooks/process-restarted.md"
+
+      - name: mcp-business-alerts
+        rules:
+          # Low Success Rate
+          - alert: LowGenerationSuccessRate
+            expr: sum(mcp_generation_total{status="success"}) / sum(mcp_generation_total) < 0.8
+            for: 30m
+            labels:
+              severity: warning
+              team: backend
+            annotations:
+              summary: "Low generation success rate"
+              description: "Generation success rate is {{ $value | printf \"%.0f\" }}%"
+              runbook_url: "https://github.com/4eyedengineer/mcp-everything/blob/main/docs/runbooks/low-generation-success-rate.md"
+
+          # Deployment Failures
+          - alert: HighDeploymentFailureRate
+            expr: sum(rate(mcp_deployments_total{status="failure"}[1h])) / sum(rate(mcp_deployments_total[1h])) > 0.2
+            for: 30m
+            labels:
+              severity: warning
+              team: infrastructure
+            annotations:
+              summary: "High deployment failure rate"
+              description: "Deployment failure rate is {{ $value | printf \"%.0f\" }}%"
+              runbook_url: "https://github.com/4eyedengineer/mcp-everything/blob/main/docs/runbooks/high-deployment-failure-rate.md"

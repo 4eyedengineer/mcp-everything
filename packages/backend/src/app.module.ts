@@ -24,6 +24,7 @@ import { LoggingModule } from './logging/logging.module';
 import { AuthModule } from './auth/auth.module';
 import { MarketplaceModule } from './marketplace/marketplace.module';
 import { HealthModule } from './health/health.module';
+import { MetricsModule } from './metrics/metrics.module';
 import { Conversation, ConversationMemory, Deployment, User, Subscription, UsageRecord, HostedServer, ErrorLog, McpServer } from './database/entities';
 
 // Basic DTO for generate endpoint
@@ -310,6 +311,7 @@ main().catch((error) => {
     AuthModule,
     MarketplaceModule,
     HealthModule,
+    MetricsModule,
   ],
   controllers: [AppController],
   providers: [
