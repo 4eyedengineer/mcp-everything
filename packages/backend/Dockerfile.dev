@@ -1,0 +1,37 @@
+# Development Dockerfile for hot-reload support
+FROM node:20-alpine
+
+# Install system dependencies
+RUN apk add --no-cache \
+    python3 \
+    make \
+    g++ \
+    docker-cli \
+    curl
+
+# Set working directory
+WORKDIR /app
+
+# Copy package files from monorepo root
+COPY package*.json ./
+COPY packages/backend/package*.json ./packages/backend/
+COPY packages/shared/package*.json ./packages/shared/
+
+# Install all dependencies (including dev)
+RUN npm ci
+
+# Copy source code (will be overridden by volume mounts for hot reload)
+COPY packages/shared ./packages/shared
+COPY packages/backend ./packages/backend
+
+# Build shared package
+RUN npm run build --workspace=@mcp-everything/shared
+
+# Create directories for runtime
+RUN mkdir -p /app/generated-servers /app/logs
+
+# Expose port
+EXPOSE 3000
+
+# Run with hot reload
+CMD ["npm", "run", "start:dev", "--workspace=@mcp-everything/backend"]
