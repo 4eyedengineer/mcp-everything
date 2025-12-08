@@ -11,8 +11,10 @@ import {
   ReadinessResponse,
   LivenessResponse,
 } from './health.types';
+import { Public } from '../auth/decorators/public.decorator';
 
 @Controller('api/v1/health')
+@Public() // Health check endpoints must always be accessible
 export class HealthController {
   constructor(private readonly healthService: HealthService) {}
 

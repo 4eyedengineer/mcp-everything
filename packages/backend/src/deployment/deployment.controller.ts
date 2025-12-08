@@ -12,10 +12,8 @@ import {
   Logger,
   NotFoundException,
   UseGuards,
-  Req,
   ForbiddenException,
 } from '@nestjs/common';
-import { Request } from 'express';
 import { ThrottlerGuard } from '@nestjs/throttler';
 import { DeploymentOrchestratorService } from './deployment.service';
 import { DeploymentRouterService, TierRestrictedDeploymentOptions } from './services/deployment-router.service';
@@ -34,23 +32,14 @@ import { DeploymentType, DeploymentStatus } from './types/deployment.types';
 import { DeploymentRetryService } from './services/retry.service';
 import { DeploymentErrorCode } from './types/deployment-errors.types';
 import { User } from '../database/entities/user.entity';
-
-// TODO: Uncomment when authentication is implemented
-// import { AuthGuard } from '@nestjs/passport';
-
-// Helper to get current user from request
-function getCurrentUser(req: Request): User | null {
-  return (req as any).user || null;
-}
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
 
 /**
  * Deployment API Controller
  *
  * Rate limited to 10 requests per minute per IP address.
- * Authentication will be required when implemented.
+ * All routes require authentication (handled by global JWT guard).
  */
-// TODO: Add authentication when implemented
-// @UseGuards(AuthGuard('jwt'))
 @Controller('api/deploy')
 @UseGuards(ThrottlerGuard)
 export class DeploymentController {
@@ -64,54 +53,26 @@ export class DeploymentController {
 
   /**
    * Deploy generated MCP server to a GitHub repository
-   * Enforces tier-based usage limits when user is authenticated
+   * Enforces tier-based usage limits for the authenticated user
    */
   @Post('github')
   @HttpCode(HttpStatus.OK)
   async deployToGitHub(
-    @Req() req: Request,
+    @CurrentUser() user: User,
     @Body() dto: DeployToGitHubDto,
   ): Promise<DeploymentResponseDto> {
     this.logger.log(`Deploy to GitHub request for conversation: ${dto.conversationId}`);
 
     try {
-      const user = getCurrentUser(req);
+      const routerOptions: TierRestrictedDeploymentOptions = {
+        ...dto.options,
+        deploymentType: 'repo',
+      };
 
-      // If user is authenticated, route through tier-based system
-      if (user) {
-        const routerOptions: TierRestrictedDeploymentOptions = {
-          ...dto.options,
-          deploymentType: 'repo',
-        };
-
-        const result = await this.routerService.routeDeployment(
-          user.id,
-          dto.conversationId,
-          routerOptions,
-        );
-
-        return {
-          success: result.success,
-          deploymentId: result.deploymentId,
-          type: result.type,
-          urls: result.urls,
-          error: result.error,
-          errorCode: result.errorCode,
-          retryStrategy: result.retryStrategy,
-          retryAfterMs: result.retryAfterMs,
-          suggestedNames: result.suggestedNames,
-          canRetry: result.errorCode
-            ? this.retryService.canRetry(result.errorCode)
-            : undefined,
-        };
-      }
-
-      // Fallback for unauthenticated requests (development/testing)
-      // TODO: Remove this fallback once authentication is fully implemented
-      this.logger.warn('Unauthenticated deployment request - bypassing usage limits');
-      const result = await this.deploymentService.deployToGitHub(
+      const result = await this.routerService.routeDeployment(
+        user.id,
         dto.conversationId,
-        dto.options,
+        routerOptions,
       );
 
       return {
@@ -156,54 +117,26 @@ export class DeploymentController {
 
   /**
    * Deploy generated MCP server to a GitHub Gist
-   * Enforces tier-based usage limits when user is authenticated
+   * Enforces tier-based usage limits for the authenticated user
    */
   @Post('gist')
   @HttpCode(HttpStatus.OK)
   async deployToGist(
-    @Req() req: Request,
+    @CurrentUser() user: User,
     @Body() dto: DeployToGistDto,
   ): Promise<DeploymentResponseDto> {
     this.logger.log(`Deploy to Gist request for conversation: ${dto.conversationId}`);
 
     try {
-      const user = getCurrentUser(req);
+      const routerOptions: TierRestrictedDeploymentOptions = {
+        ...dto.options,
+        deploymentType: 'gist',
+      };
 
-      // If user is authenticated, route through tier-based system
-      if (user) {
-        const routerOptions: TierRestrictedDeploymentOptions = {
-          ...dto.options,
-          deploymentType: 'gist',
-        };
-
-        const result = await this.routerService.routeDeployment(
-          user.id,
-          dto.conversationId,
-          routerOptions,
-        );
-
-        return {
-          success: result.success,
-          deploymentId: result.deploymentId,
-          type: result.type,
-          urls: result.urls,
-          error: result.error,
-          errorCode: result.errorCode,
-          retryStrategy: result.retryStrategy,
-          retryAfterMs: result.retryAfterMs,
-          suggestedNames: result.suggestedNames,
-          canRetry: result.errorCode
-            ? this.retryService.canRetry(result.errorCode)
-            : undefined,
-        };
-      }
-
-      // Fallback for unauthenticated requests (development/testing)
-      // TODO: Remove this fallback once authentication is fully implemented
-      this.logger.warn('Unauthenticated deployment request - bypassing usage limits');
-      const result = await this.deploymentService.deployToGist(
+      const result = await this.routerService.routeDeployment(
+        user.id,
         dto.conversationId,
-        dto.options,
+        routerOptions,
       );
 
       return {

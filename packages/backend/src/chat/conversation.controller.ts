@@ -1,6 +1,7 @@
 import { Controller, Get, Post, Delete, Patch, Body, Param } from '@nestjs/common';
 import { ConversationService } from '../conversation.service';
 import { DeploymentService } from '../database/services/deployment.service';
+// Note: All routes protected by global JWT guard - user authenticated automatically
 
 interface CreateConversationDto {
   sessionId: string;

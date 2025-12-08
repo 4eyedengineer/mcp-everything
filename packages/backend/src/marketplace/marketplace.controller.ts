@@ -7,13 +7,10 @@ import {
   Body,
   Param,
   Query,
-  Req,
   HttpCode,
   HttpStatus,
-  UnauthorizedException,
   ParseUUIDPipe,
 } from '@nestjs/common';
-import { Request } from 'express';
 import { MarketplaceService } from './marketplace.service';
 import { CreateServerDto } from './dto/create-server.dto';
 import { UpdateServerDto } from './dto/update-server.dto';
@@ -24,19 +21,8 @@ import {
   CategoryResponse,
 } from './dto/server-response.dto';
 import { User } from '../database/entities/user.entity';
-
-// TODO: Replace with proper auth guard once authentication is implemented
-function getCurrentUser(req: Request): User | null {
-  return (req as any).user || null;
-}
-
-function requireUser(req: Request): User {
-  const user = getCurrentUser(req);
-  if (!user) {
-    throw new UnauthorizedException('Authentication required');
-  }
-  return user;
-}
+import { Public } from '../auth/decorators/public.decorator';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
 
 @Controller('api/v1/marketplace')
 export class MarketplaceController {
@@ -48,6 +34,7 @@ export class MarketplaceController {
    * List and search servers with filters and pagination
    * GET /api/v1/marketplace/servers
    */
+  @Public()
   @Get('servers')
   async listServers(
     @Query() query: SearchServersDto,
@@ -59,6 +46,7 @@ export class MarketplaceController {
    * Get featured servers
    * GET /api/v1/marketplace/servers/featured
    */
+  @Public()
   @Get('servers/featured')
   async getFeaturedServers(
     @Query('limit') limit?: number,
@@ -70,6 +58,7 @@ export class MarketplaceController {
    * Get popular servers by download count
    * GET /api/v1/marketplace/servers/popular
    */
+  @Public()
   @Get('servers/popular')
   async getPopularServers(
     @Query('limit') limit?: number,
@@ -81,6 +70,7 @@ export class MarketplaceController {
    * Get recently added servers
    * GET /api/v1/marketplace/servers/recent
    */
+  @Public()
   @Get('servers/recent')
   async getRecentServers(
     @Query('limit') limit?: number,
@@ -92,6 +82,7 @@ export class MarketplaceController {
    * Get all categories with server counts
    * GET /api/v1/marketplace/categories
    */
+  @Public()
   @Get('categories')
   async getCategories(): Promise<CategoryResponse[]> {
     return this.marketplaceService.getCategories();
@@ -101,6 +92,7 @@ export class MarketplaceController {
    * Get a server by slug
    * GET /api/v1/marketplace/servers/:slug
    */
+  @Public()
   @Get('servers/:slug')
   async getServerBySlug(@Param('slug') slug: string): Promise<ServerResponse> {
     return this.marketplaceService.findBySlug(slug);
@@ -110,6 +102,7 @@ export class MarketplaceController {
    * Record a download and increment counter
    * POST /api/v1/marketplace/servers/:id/download
    */
+  @Public()
   @Post('servers/:id/download')
   @HttpCode(HttpStatus.OK)
   async recordDownload(
@@ -128,9 +121,8 @@ export class MarketplaceController {
   @Post('servers')
   async createServer(
     @Body() dto: CreateServerDto,
-    @Req() req: Request,
+    @CurrentUser() user: User,
   ): Promise<ServerResponse> {
-    const user = requireUser(req);
     return this.marketplaceService.create(dto, user);
   }
 
@@ -139,8 +131,7 @@ export class MarketplaceController {
    * GET /api/v1/marketplace/my-servers
    */
   @Get('my-servers')
-  async getMyServers(@Req() req: Request): Promise<ServerSummaryResponse[]> {
-    const user = requireUser(req);
+  async getMyServers(@CurrentUser() user: User): Promise<ServerSummaryResponse[]> {
     return this.marketplaceService.findByUser(user.id);
   }
 
@@ -152,9 +143,8 @@ export class MarketplaceController {
   async updateServer(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateServerDto,
-    @Req() req: Request,
+    @CurrentUser() user: User,
   ): Promise<ServerResponse> {
-    const user = requireUser(req);
     return this.marketplaceService.update(id, dto, user);
   }
 
@@ -166,9 +156,8 @@ export class MarketplaceController {
   @HttpCode(HttpStatus.OK)
   async deleteServer(
     @Param('id', ParseUUIDPipe) id: string,
-    @Req() req: Request,
+    @CurrentUser() user: User,
   ): Promise<{ success: boolean }> {
-    const user = requireUser(req);
     await this.marketplaceService.delete(id, user);
     return { success: true };
   }
@@ -180,9 +169,8 @@ export class MarketplaceController {
   @Post('servers/:id/publish')
   async publishServer(
     @Param('id', ParseUUIDPipe) id: string,
-    @Req() req: Request,
+    @CurrentUser() user: User,
   ): Promise<ServerResponse> {
-    const user = requireUser(req);
     return this.marketplaceService.publish(id, user);
   }
 
@@ -193,9 +181,8 @@ export class MarketplaceController {
   @Post('servers/:id/unpublish')
   async unpublishServer(
     @Param('id', ParseUUIDPipe) id: string,
-    @Req() req: Request,
+    @CurrentUser() user: User,
   ): Promise<ServerResponse> {
-    const user = requireUser(req);
     return this.marketplaceService.unpublish(id, user);
   }
 }
