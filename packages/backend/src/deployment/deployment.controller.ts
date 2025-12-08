@@ -12,9 +12,13 @@ import {
   Logger,
   NotFoundException,
   UseGuards,
+  Req,
+  ForbiddenException,
 } from '@nestjs/common';
+import { Request } from 'express';
 import { ThrottlerGuard } from '@nestjs/throttler';
 import { DeploymentOrchestratorService } from './deployment.service';
+import { DeploymentRouterService, TierRestrictedDeploymentOptions } from './services/deployment-router.service';
 import {
   DeployToGitHubDto,
   DeployToGistDto,
@@ -29,9 +33,15 @@ import {
 import { DeploymentType, DeploymentStatus } from './types/deployment.types';
 import { DeploymentRetryService } from './services/retry.service';
 import { DeploymentErrorCode } from './types/deployment-errors.types';
+import { User } from '../database/entities/user.entity';
 
 // TODO: Uncomment when authentication is implemented
 // import { AuthGuard } from '@nestjs/passport';
+
+// Helper to get current user from request
+function getCurrentUser(req: Request): User | null {
+  return (req as any).user || null;
+}
 
 /**
  * Deployment API Controller
@@ -49,19 +59,56 @@ export class DeploymentController {
   constructor(
     private readonly deploymentService: DeploymentOrchestratorService,
     private readonly retryService: DeploymentRetryService,
+    private readonly routerService: DeploymentRouterService,
   ) {}
 
   /**
    * Deploy generated MCP server to a GitHub repository
+   * Enforces tier-based usage limits when user is authenticated
    */
   @Post('github')
   @HttpCode(HttpStatus.OK)
   async deployToGitHub(
+    @Req() req: Request,
     @Body() dto: DeployToGitHubDto,
   ): Promise<DeploymentResponseDto> {
     this.logger.log(`Deploy to GitHub request for conversation: ${dto.conversationId}`);
 
     try {
+      const user = getCurrentUser(req);
+
+      // If user is authenticated, route through tier-based system
+      if (user) {
+        const routerOptions: TierRestrictedDeploymentOptions = {
+          ...dto.options,
+          deploymentType: 'repo',
+        };
+
+        const result = await this.routerService.routeDeployment(
+          user.id,
+          dto.conversationId,
+          routerOptions,
+        );
+
+        return {
+          success: result.success,
+          deploymentId: result.deploymentId,
+          type: result.type,
+          urls: result.urls,
+          error: result.error,
+          errorCode: result.errorCode,
+          retryStrategy: result.retryStrategy,
+          retryAfterMs: result.retryAfterMs,
+          suggestedNames: result.suggestedNames,
+          canRetry: result.errorCode
+            ? this.retryService.canRetry(result.errorCode)
+            : undefined,
+        };
+      }
+
+      // Fallback for unauthenticated requests (development/testing)
+      // TODO: Remove this fallback once authentication is fully implemented
+      this.logger.warn('Unauthenticated deployment request - bypassing usage limits');
       const result = await this.deploymentService.deployToGitHub(
         dto.conversationId,
         dto.options,
@@ -82,6 +129,22 @@ export class DeploymentController {
           : undefined,
       };
     } catch (error) {
+      // Handle ForbiddenException from router (tier/limit errors)
+      if (error instanceof ForbiddenException) {
+        const errorBody = error.getResponse() as any;
+        this.logger.warn(`Deployment blocked: ${errorBody.message}`);
+        return {
+          success: false,
+          error: errorBody.message,
+          errorCode: errorBody.code,
+          currentUsage: errorBody.currentUsage,
+          limit: errorBody.limit,
+          currentTier: errorBody.currentTier,
+          requiredTier: errorBody.requiredTier,
+          upgradeUrl: errorBody.upgradeUrl,
+        };
+      }
+
       const err = error as Error;
       this.logger.error(`GitHub deployment failed: ${err.message}`);
       return {
@@ -93,15 +156,51 @@ export class DeploymentController {
 
   /**
    * Deploy generated MCP server to a GitHub Gist
+   * Enforces tier-based usage limits when user is authenticated
    */
   @Post('gist')
   @HttpCode(HttpStatus.OK)
   async deployToGist(
+    @Req() req: Request,
     @Body() dto: DeployToGistDto,
   ): Promise<DeploymentResponseDto> {
     this.logger.log(`Deploy to Gist request for conversation: ${dto.conversationId}`);
 
     try {
+      const user = getCurrentUser(req);
+
+      // If user is authenticated, route through tier-based system
+      if (user) {
+        const routerOptions: TierRestrictedDeploymentOptions = {
+          ...dto.options,
+          deploymentType: 'gist',
+        };
+
+        const result = await this.routerService.routeDeployment(
+          user.id,
+          dto.conversationId,
+          routerOptions,
+        );
+
+        return {
+          success: result.success,
+          deploymentId: result.deploymentId,
+          type: result.type,
+          urls: result.urls,
+          error: result.error,
+          errorCode: result.errorCode,
+          retryStrategy: result.retryStrategy,
+          retryAfterMs: result.retryAfterMs,
+          suggestedNames: result.suggestedNames,
+          canRetry: result.errorCode
+            ? this.retryService.canRetry(result.errorCode)
+            : undefined,
+        };
+      }
+
+      // Fallback for unauthenticated requests (development/testing)
+      // TODO: Remove this fallback once authentication is fully implemented
+      this.logger.warn('Unauthenticated deployment request - bypassing usage limits');
       const result = await this.deploymentService.deployToGist(
         dto.conversationId,
         dto.options,
@@ -122,6 +221,22 @@ export class DeploymentController {
           : undefined,
       };
     } catch (error) {
+      // Handle ForbiddenException from router (tier/limit errors)
+      if (error instanceof ForbiddenException) {
+        const errorBody = error.getResponse() as any;
+        this.logger.warn(`Deployment blocked: ${errorBody.message}`);
+        return {
+          success: false,
+          error: errorBody.message,
+          errorCode: errorBody.code,
+          currentUsage: errorBody.currentUsage,
+          limit: errorBody.limit,
+          currentTier: errorBody.currentTier,
+          requiredTier: errorBody.requiredTier,
+          upgradeUrl: errorBody.upgradeUrl,
+        };
+      }
+
       const err = error as Error;
       this.logger.error(`Gist deployment failed: ${err.message}`);
       return {

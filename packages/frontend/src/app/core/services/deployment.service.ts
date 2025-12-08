@@ -87,11 +87,18 @@ export interface DeploymentResponse {
   type?: 'gist' | 'repo' | 'enterprise' | 'none';
   urls?: DeploymentUrls;
   error?: string;
+  errorCode?: string;
   // Validation fields
   validationStatus?: ValidationStatus;
   validatedAt?: Date;
   toolsPassedCount?: number;
   toolsTestedCount?: number;
+  // Tier/usage limit fields
+  currentUsage?: number;
+  limit?: number;
+  currentTier?: string;
+  requiredTier?: string;
+  upgradeUrl?: string;
 }
 
 /**
@@ -225,10 +232,23 @@ export class DeploymentService {
     console.error(`${operation} failed:`, error);
 
     let errorMessage = 'An unexpected error occurred';
+    let errorCode: string | undefined;
+    let tierErrorData: Partial<DeploymentResponse> = {};
 
     if (error.error instanceof ErrorEvent) {
       // Client-side error
       errorMessage = error.error.message;
+    } else if (error.error?.errorCode) {
+      // Tier/usage limit error from backend
+      errorCode = error.error.errorCode;
+      errorMessage = error.error.error || error.error.message;
+      tierErrorData = {
+        currentUsage: error.error.currentUsage,
+        limit: error.error.limit,
+        currentTier: error.error.currentTier,
+        requiredTier: error.error.requiredTier,
+        upgradeUrl: error.error.upgradeUrl,
+      };
     } else if (error.error?.error) {
       // Backend error with message
       errorMessage = error.error.error;
@@ -245,7 +265,23 @@ export class DeploymentService {
 
     return throwError(() => ({
       success: false,
-      error: errorMessage
+      error: errorMessage,
+      errorCode,
+      ...tierErrorData
     } as DeploymentResponse));
+  }
+
+  /**
+   * Check if a deployment error is a usage limit error
+   */
+  isUsageLimitError(response: DeploymentResponse): boolean {
+    return response.errorCode === 'LIMIT_EXCEEDED';
+  }
+
+  /**
+   * Check if a deployment error is a tier restriction error
+   */
+  isTierRestrictionError(response: DeploymentResponse): boolean {
+    return response.errorCode === 'TIER_RESTRICTION';
   }
 }

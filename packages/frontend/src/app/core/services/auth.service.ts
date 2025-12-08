@@ -1,21 +1,25 @@
 import { Injectable } from '@angular/core';
-import { HttpClient } from '@angular/common/http';
-import { Observable, BehaviorSubject, tap } from 'rxjs';
+import { HttpClient, HttpErrorResponse } from '@angular/common/http';
+import { Router } from '@angular/router';
+import { BehaviorSubject, Observable, throwError } from 'rxjs';
+import { tap, catchError } from 'rxjs/operators';
 import { environment } from '../../../environments/environment';
+import { StateManagementService } from './state-management.service';
 
 export interface User {
   id: string;
   email: string;
-  firstName?: string;
-  lastName?: string;
-  tier: 'free' | 'pro' | 'enterprise';
+  name: string;
+  avatarUrl?: string;
+  provider?: 'local' | 'github' | 'google';
+  createdAt: string;
+  updatedAt: string;
 }
 
-export interface TokenResponse {
-  accessToken: string;
-  refreshToken: string;
-  expiresIn: number;
-  user: User;
+export interface RegisterRequest {
+  email: string;
+  password: string;
+  name: string;
 }
 
 export interface LoginRequest {
@@ -23,11 +27,11 @@ export interface LoginRequest {
   password: string;
 }
 
-export interface RegisterRequest {
-  email: string;
-  password: string;
-  firstName?: string;
-  lastName?: string;
+export interface TokenResponse {
+  accessToken: string;
+  refreshToken: string;
+  user: User;
+  expiresIn: number;
 }
 
 export interface ForgotPasswordRequest {
@@ -36,109 +40,260 @@ export interface ForgotPasswordRequest {
 
 export interface ResetPasswordRequest {
   token: string;
-  newPassword: string;
+  password: string;
 }
 
-export interface MessageResponse {
-  message: string;
-}
+const ACCESS_TOKEN_KEY = 'mcp-auth-token';
+const REFRESH_TOKEN_KEY = 'mcp-refresh-token';
 
 @Injectable({
   providedIn: 'root'
 })
 export class AuthService {
-  private readonly apiUrl = `${environment.apiUrl}/api/v1/auth`;
-  private readonly TOKEN_KEY = 'access_token';
-  private readonly REFRESH_TOKEN_KEY = 'refresh_token';
-  private readonly USER_KEY = 'user';
+  private readonly apiUrl = environment.apiUrl;
+  private currentUserSubject = new BehaviorSubject<User | null>(null);
+  private isAuthenticatedSubject = new BehaviorSubject<boolean>(false);
+  private isLoadingSubject = new BehaviorSubject<boolean>(true);
 
-  private currentUserSubject = new BehaviorSubject<User | null>(this.getStoredUser());
   public currentUser$ = this.currentUserSubject.asObservable();
+  public isAuthenticated$ = this.isAuthenticatedSubject.asObservable();
+  public isLoading$ = this.isLoadingSubject.asObservable();
 
-  constructor(private http: HttpClient) {}
-
-  get currentUser(): User | null {
-    return this.currentUserSubject.value;
+  constructor(
+    private http: HttpClient,
+    private router: Router,
+    private stateService: StateManagementService
+  ) {
+    this.checkStoredToken();
   }
 
-  get isAuthenticated(): boolean {
-    return !!this.getToken();
-  }
-
-  login(request: LoginRequest): Observable<TokenResponse> {
-    return this.http.post<TokenResponse>(`${this.apiUrl}/login`, request).pipe(
-      tap(response => this.handleAuthResponse(response))
+  /**
+   * Register a new user with email and password
+   */
+  register(data: RegisterRequest): Observable<TokenResponse> {
+    return this.http.post<TokenResponse>(`${this.apiUrl}/auth/register`, data).pipe(
+      tap(response => this.handleAuthResponse(response)),
+      catchError(error => this.handleError(error))
     );
   }
 
-  register(request: RegisterRequest): Observable<TokenResponse> {
-    return this.http.post<TokenResponse>(`${this.apiUrl}/register`, request).pipe(
-      tap(response => this.handleAuthResponse(response))
+  /**
+   * Login with email and password
+   */
+  login(email: string, password: string): Observable<TokenResponse> {
+    return this.http.post<TokenResponse>(`${this.apiUrl}/auth/login`, { email, password }).pipe(
+      tap(response => this.handleAuthResponse(response)),
+      catchError(error => this.handleError(error))
     );
   }
 
+  /**
+   * Logout the current user
+   */
   logout(): void {
-    this.http.post(`${this.apiUrl}/logout`, {}).subscribe({
-      complete: () => this.clearAuth()
-    });
-    this.clearAuth();
+    this.clearTokens();
+    this.currentUserSubject.next(null);
+    this.isAuthenticatedSubject.next(false);
+    this.stateService.setAuthenticated(false, null);
+    this.router.navigate(['/auth/login']);
   }
 
+  /**
+   * Refresh the access token using the refresh token
+   */
   refreshToken(): Observable<TokenResponse> {
     const refreshToken = this.getRefreshToken();
-    return this.http.post<TokenResponse>(`${this.apiUrl}/refresh`, { refreshToken }).pipe(
-      tap(response => this.handleAuthResponse(response))
-    );
-  }
+    if (!refreshToken) {
+      return throwError(() => new Error('No refresh token available'));
+    }
 
-  forgotPassword(request: ForgotPasswordRequest): Observable<MessageResponse> {
-    return this.http.post<MessageResponse>(`${this.apiUrl}/forgot-password`, request);
-  }
-
-  resetPassword(request: ResetPasswordRequest): Observable<MessageResponse> {
-    return this.http.post<MessageResponse>(`${this.apiUrl}/reset-password`, request);
-  }
-
-  getMe(): Observable<User> {
-    return this.http.get<User>(`${this.apiUrl}/me`).pipe(
-      tap(user => {
-        this.currentUserSubject.next(user);
-        localStorage.setItem(this.USER_KEY, JSON.stringify(user));
+    return this.http.post<TokenResponse>(`${this.apiUrl}/auth/refresh`, { refreshToken }).pipe(
+      tap(response => this.handleAuthResponse(response)),
+      catchError(error => {
+        this.logout();
+        return throwError(() => error);
       })
     );
   }
 
-  getToken(): string | null {
-    return localStorage.getItem(this.TOKEN_KEY);
+  /**
+   * Get the current user's profile
+   */
+  getProfile(): Observable<User> {
+    return this.http.get<User>(`${this.apiUrl}/auth/me`).pipe(
+      tap(user => {
+        this.currentUserSubject.next(user);
+        this.stateService.setAuthenticated(true, user);
+      }),
+      catchError(error => this.handleError(error))
+    );
   }
 
-  private getRefreshToken(): string | null {
-    return localStorage.getItem(this.REFRESH_TOKEN_KEY);
+  /**
+   * Handle OAuth callback - store tokens and fetch user profile
+   */
+  handleOAuthCallback(token: string, refreshToken: string): Observable<User> {
+    this.setTokens(token, refreshToken);
+    this.isAuthenticatedSubject.next(true);
+
+    return this.getProfile().pipe(
+      tap(() => {
+        this.router.navigate(['/chat']);
+      })
+    );
   }
 
-  private getStoredUser(): User | null {
-    const userJson = localStorage.getItem(this.USER_KEY);
-    if (userJson) {
-      try {
-        return JSON.parse(userJson);
-      } catch {
-        return null;
-      }
+  /**
+   * Request password reset email
+   */
+  forgotPassword(email: string): Observable<{ message: string }> {
+    return this.http.post<{ message: string }>(`${this.apiUrl}/auth/forgot-password`, { email }).pipe(
+      catchError(error => this.handleError(error))
+    );
+  }
+
+  /**
+   * Reset password using token from email
+   */
+  resetPassword(token: string, password: string): Observable<{ message: string }> {
+    return this.http.post<{ message: string }>(`${this.apiUrl}/auth/reset-password`, { token, password }).pipe(
+      catchError(error => this.handleError(error))
+    );
+  }
+
+  /**
+   * Check if there's a valid stored token and fetch the user profile
+   */
+  private checkStoredToken(): void {
+    const token = this.getAccessToken();
+    if (token) {
+      this.isAuthenticatedSubject.next(true);
+      this.getProfile().subscribe({
+        next: () => {
+          this.isLoadingSubject.next(false);
+        },
+        error: () => {
+          // Token is invalid - try to refresh
+          this.refreshToken().subscribe({
+            next: () => {
+              this.getProfile().subscribe({
+                next: () => this.isLoadingSubject.next(false),
+                error: () => {
+                  this.logout();
+                  this.isLoadingSubject.next(false);
+                }
+              });
+            },
+            error: () => {
+              this.logout();
+              this.isLoadingSubject.next(false);
+            }
+          });
+        }
+      });
+    } else {
+      this.isLoadingSubject.next(false);
     }
-    return null;
   }
 
+  /**
+   * Handle successful authentication response
+   */
   private handleAuthResponse(response: TokenResponse): void {
-    localStorage.setItem(this.TOKEN_KEY, response.accessToken);
-    localStorage.setItem(this.REFRESH_TOKEN_KEY, response.refreshToken);
-    localStorage.setItem(this.USER_KEY, JSON.stringify(response.user));
+    this.setTokens(response.accessToken, response.refreshToken);
     this.currentUserSubject.next(response.user);
+    this.isAuthenticatedSubject.next(true);
+    this.stateService.setAuthenticated(true, response.user);
   }
 
-  private clearAuth(): void {
-    localStorage.removeItem(this.TOKEN_KEY);
-    localStorage.removeItem(this.REFRESH_TOKEN_KEY);
-    localStorage.removeItem(this.USER_KEY);
-    this.currentUserSubject.next(null);
+  /**
+   * Handle HTTP errors
+   */
+  private handleError(error: HttpErrorResponse): Observable<never> {
+    let errorMessage = 'An unexpected error occurred';
+
+    if (error.error instanceof ErrorEvent) {
+      // Client-side error
+      errorMessage = error.error.message;
+    } else {
+      // Server-side error
+      errorMessage = error.error?.message || `Error: ${error.status}`;
+    }
+
+    return throwError(() => new Error(errorMessage));
+  }
+
+  /**
+   * Get the current user synchronously
+   */
+  get currentUser(): User | null {
+    return this.currentUserSubject.value;
+  }
+
+  /**
+   * Check if user is authenticated synchronously
+   */
+  get isAuthenticated(): boolean {
+    return this.isAuthenticatedSubject.value;
+  }
+
+  /**
+   * Get access token from storage
+   */
+  getAccessToken(): string | null {
+    try {
+      return localStorage.getItem(ACCESS_TOKEN_KEY);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Get refresh token from storage
+   */
+  private getRefreshToken(): string | null {
+    try {
+      return localStorage.getItem(REFRESH_TOKEN_KEY);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Store tokens in localStorage
+   */
+  private setTokens(accessToken: string, refreshToken: string): void {
+    try {
+      localStorage.setItem(ACCESS_TOKEN_KEY, accessToken);
+      localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
+    } catch (error) {
+      console.warn('Failed to store auth tokens:', error);
+    }
+  }
+
+  /**
+   * Clear tokens from localStorage
+   */
+  private clearTokens(): void {
+    try {
+      localStorage.removeItem(ACCESS_TOKEN_KEY);
+      localStorage.removeItem(REFRESH_TOKEN_KEY);
+    } catch (error) {
+      console.warn('Failed to clear auth tokens:', error);
+    }
+  }
+
+  /**
+   * Get OAuth login URL for GitHub
+   */
+  getGitHubLoginUrl(): string {
+    return `${this.apiUrl}/auth/github`;
+  }
+
+  /**
+   * Get OAuth login URL for Google
+   */
+  getGoogleLoginUrl(): string {
+    return `${this.apiUrl}/auth/google`;
   }
 }

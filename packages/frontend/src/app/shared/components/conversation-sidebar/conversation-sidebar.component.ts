@@ -1,11 +1,14 @@
-import { Component, EventEmitter, Input, Output } from '@angular/core';
+import { Component, EventEmitter, Input, Output, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { Router } from '@angular/router';
+import { Router, RouterLink } from '@angular/router';
 import { MatIconModule } from '@angular/material/icon';
 import { MatButtonModule } from '@angular/material/button';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatMenuModule } from '@angular/material/menu';
+import { MatProgressBarModule } from '@angular/material/progress-bar';
+import { Observable } from 'rxjs';
 import { sidebarAnimations } from '../../animations/sidebar.animations';
+import { SubscriptionService, UsageInfo } from '../../../core/services/subscription.service';
 
 interface Conversation {
   id: string;
@@ -19,16 +22,18 @@ interface Conversation {
   standalone: true,
   imports: [
     CommonModule,
+    RouterLink,
     MatIconModule,
     MatButtonModule,
     MatTooltipModule,
-    MatMenuModule
+    MatMenuModule,
+    MatProgressBarModule
   ],
   templateUrl: './conversation-sidebar.component.html',
   styleUrls: ['./conversation-sidebar.component.scss'],
   animations: sidebarAnimations
 })
-export class ConversationSidebarComponent {
+export class ConversationSidebarComponent implements OnInit {
   @Input() isOpen = false;
   @Input() conversations: Conversation[] = [];
   @Output() close = new EventEmitter<void>();
@@ -37,7 +42,23 @@ export class ConversationSidebarComponent {
   @Output() deleteConversation = new EventEmitter<string>();
   @Output() renameConversation = new EventEmitter<{id: string, title: string}>();
 
-  constructor(private router: Router) {}
+  usage$: Observable<UsageInfo | null>;
+
+  constructor(
+    private router: Router,
+    private subscriptionService: SubscriptionService
+  ) {
+    this.usage$ = this.subscriptionService.usage$;
+  }
+
+  ngOnInit(): void {
+    // Load usage data when sidebar opens
+    this.subscriptionService.getUsage().subscribe();
+  }
+
+  isUnlimited(limit: number): boolean {
+    return this.subscriptionService.isUnlimited(limit);
+  }
 
   onClose(): void {
     this.close.emit();

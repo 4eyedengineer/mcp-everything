@@ -1,6 +1,7 @@
 import { NgModule } from '@angular/core';
 import { RouterModule, Routes } from '@angular/router';
 import { AuthGuard } from './core/guards/auth.guard';
+import { NoAuthGuard } from './core/guards/no-auth.guard';
 
 const routes: Routes = [
   {
@@ -9,8 +10,18 @@ const routes: Routes = [
     pathMatch: 'full'
   },
   {
+    path: 'auth',
+    loadChildren: () => import('./features/auth/auth.module').then(m => m.AuthModule),
+    canActivate: [NoAuthGuard],
+    data: {
+      title: 'Authentication',
+      description: 'Sign in or create an account'
+    }
+  },
+  {
     path: 'chat',
     loadChildren: () => import('./features/chat/chat.module').then(m => m.ChatModule),
+    canActivate: [AuthGuard],
     data: {
       title: 'Chat',
       description: 'Chat with AI to design and generate MCP servers'
@@ -27,6 +38,7 @@ const routes: Routes = [
   {
     path: 'servers',
     loadChildren: () => import('./features/servers/servers.module').then(m => m.ServersModule),
+    canActivate: [AuthGuard],
     data: {
       title: 'My Servers',
       description: 'Manage your hosted MCP servers'
@@ -35,6 +47,7 @@ const routes: Routes = [
   {
     path: 'account',
     loadChildren: () => import('./features/account/account.module').then(m => m.AccountModule),
+    canActivate: [AuthGuard],
     data: {
       title: 'Account',
       description: 'Manage your account and settings'
