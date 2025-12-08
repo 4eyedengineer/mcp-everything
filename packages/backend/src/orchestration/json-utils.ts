@@ -1,4 +1,12 @@
-import { Logger } from '@nestjs/common';
+/**
+ * Simple logger interface for JSON parsing
+ * Compatible with both NestJS Logger and StructuredLoggerService
+ */
+export interface SimpleLogger {
+  warn(message: string, context?: any): void;
+  log(message: string, context?: any): void;
+  error(message: string, trace?: string, context?: any): void;
+}
 
 /**
  * Safely extract and parse JSON from an LLM response
@@ -7,7 +15,7 @@ import { Logger } from '@nestjs/common';
  * This fixes the issue where the greedy regex \{[\s\S]*\} matches from
  * the first { to the last }, potentially including extra text.
  */
-export function safeParseJSON<T>(text: string, logger?: Logger): T {
+export function safeParseJSON<T>(text: string, logger?: SimpleLogger): T {
   // Remove markdown code blocks if present
   let cleaned = text.replace(/```json\s*/gi, '').replace(/```\s*/g, '');
 
@@ -117,7 +125,7 @@ export function safeParseJSON<T>(text: string, logger?: Logger): T {
 /**
  * Extract JSON array from LLM response using bracket balancing
  */
-export function safeParseJSONArray<T>(text: string, logger?: Logger): T[] {
+export function safeParseJSONArray<T>(text: string, logger?: SimpleLogger): T[] {
   // Remove markdown code blocks if present
   let cleaned = text.replace(/```json\s*/gi, '').replace(/```\s*/g, '');
 

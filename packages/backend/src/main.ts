@@ -1,16 +1,25 @@
 import { NestFactory } from '@nestjs/core';
-import { Logger, ValidationPipe } from '@nestjs/common';
+import { ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module';
 import { GlobalExceptionFilter } from './logging/global-exception.filter';
 import { ErrorLoggingService } from './logging/error-logging.service';
+import { StructuredLoggerService } from './logging/structured-logger.service';
 
 async function bootstrap() {
-  const logger = new Logger('Bootstrap');
+  // Create structured logger for bootstrap
+  const bootstrapLogger = new StructuredLoggerService().setContext('Bootstrap');
 
   const app = await NestFactory.create(AppModule, {
     // Enable raw body for Stripe webhooks
     rawBody: true,
+    // Use structured logger for NestJS internal logging
+    bufferLogs: true,
   });
+
+  // Set up the structured logger as the application logger
+  const structuredLogger = app.get(StructuredLoggerService);
+  structuredLogger.setContext('NestApplication');
+  app.useLogger(structuredLogger);
 
   // Enable CORS for frontend with SSE-specific configuration
   app.enableCors({
@@ -45,10 +54,11 @@ async function bootstrap() {
   const port = process.env.PORT || 3000;
   await app.listen(port);
 
-  logger.log(`MCP Everything Backend is running on: http://localhost:${port}`);
+  bootstrapLogger.log(`MCP Everything Backend is running on: http://localhost:${port}`);
 }
 
 bootstrap().catch((error) => {
-  Logger.error('Failed to start application', error, 'Bootstrap');
+  const errorLogger = new StructuredLoggerService().setContext('Bootstrap');
+  errorLogger.error('Failed to start application', error.stack);
   process.exit(1);
 });
