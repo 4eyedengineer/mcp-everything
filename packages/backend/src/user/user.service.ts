@@ -245,4 +245,65 @@ export class UserService {
     this.logger.log(`Created usage record for user ${userId}: limit=${saved.monthlyLimit}`);
     return saved;
   }
+
+  /**
+   * Set password reset token for a user.
+   * Stores the hash of the token (never plain token) with 1 hour expiry.
+   */
+  async setPasswordResetToken(userId: string, tokenHash: string): Promise<void> {
+    const expiresAt = new Date();
+    expiresAt.setHours(expiresAt.getHours() + 1);
+
+    await this.userRepository.update(userId, {
+      passwordResetTokenHash: tokenHash,
+      passwordResetExpiresAt: expiresAt,
+    });
+
+    this.logger.log(`Password reset token set for user: ${userId}`);
+  }
+
+  /**
+   * Find user by password reset token hash and validate expiry.
+   * Returns null if token is invalid or expired.
+   */
+  async findByResetTokenHash(tokenHash: string): Promise<User | null> {
+    const user = await this.userRepository.findOne({
+      where: { passwordResetTokenHash: tokenHash },
+    });
+
+    if (!user) {
+      return null;
+    }
+
+    // Check if token has expired
+    if (!user.passwordResetExpiresAt || user.passwordResetExpiresAt < new Date()) {
+      this.logger.log(`Password reset token expired for user: ${user.id}`);
+      return null;
+    }
+
+    return user;
+  }
+
+  /**
+   * Update user's password hash.
+   */
+  async updatePassword(userId: string, newPasswordHash: string): Promise<void> {
+    await this.userRepository.update(userId, {
+      passwordHash: newPasswordHash,
+    });
+
+    this.logger.log(`Password updated for user: ${userId}`);
+  }
+
+  /**
+   * Clear password reset token after successful reset or expiry.
+   */
+  async clearPasswordResetToken(userId: string): Promise<void> {
+    await this.userRepository.update(userId, {
+      passwordResetTokenHash: undefined,
+      passwordResetExpiresAt: undefined,
+    });
+
+    this.logger.log(`Password reset token cleared for user: ${userId}`);
+  }
 }
