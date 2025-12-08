@@ -1,0 +1,76 @@
+<div class="auth-container">
+  <div class="auth-card">
+    <div class="auth-header">
+      <h1>Sign in to MCP Everything</h1>
+      <p>Generate and deploy MCP servers with AI</p>
+    </div>
+
+    <div class="oauth-buttons">
+      <button mat-stroked-button class="oauth-button github" (click)="loginWithGitHub()">
+        <mat-icon svgIcon="github">code</mat-icon>
+        <span>Continue with GitHub</span>
+      </button>
+      <button mat-stroked-button class="oauth-button google" (click)="loginWithGoogle()">
+        <mat-icon>g_mobiledata</mat-icon>
+        <span>Continue with Google</span>
+      </button>
+    </div>
+
+    <div class="divider">
+      <span>or continue with email</span>
+    </div>
+
+    <form [formGroup]="loginForm" (ngSubmit)="onSubmit()" class="auth-form">
+      <mat-form-field appearance="outline" class="full-width">
+        <mat-label>Email</mat-label>
+        <input matInput formControlName="email" type="email" autocomplete="email">
+        <mat-icon matPrefix>email</mat-icon>
+        @if (emailControl?.hasError('required') && emailControl?.touched) {
+          <mat-error>Email is required</mat-error>
+        }
+        @if (emailControl?.hasError('email') && emailControl?.touched) {
+          <mat-error>Please enter a valid email address</mat-error>
+        }
+      </mat-form-field>
+
+      <mat-form-field appearance="outline" class="full-width">
+        <mat-label>Password</mat-label>
+        <input matInput formControlName="password" [type]="hidePassword ? 'password' : 'text'" autocomplete="current-password">
+        <mat-icon matPrefix>lock</mat-icon>
+        <button mat-icon-button matSuffix (click)="togglePasswordVisibility()" type="button">
+          <mat-icon>{{ hidePassword ? 'visibility_off' : 'visibility' }}</mat-icon>
+        </button>
+        @if (passwordControl?.hasError('required') && passwordControl?.touched) {
+          <mat-error>Password is required</mat-error>
+        }
+        @if (passwordControl?.hasError('minlength') && passwordControl?.touched) {
+          <mat-error>Password must be at least 8 characters</mat-error>
+        }
+      </mat-form-field>
+
+      <div class="forgot-password">
+        <a routerLink="/auth/forgot-password">Forgot password?</a>
+      </div>
+
+      @if (error) {
+        <div class="error-message">
+          <mat-icon>error</mat-icon>
+          <span>{{ error }}</span>
+        </div>
+      }
+
+      <button mat-flat-button color="primary" type="submit" [disabled]="isLoading" class="submit-button">
+        @if (isLoading) {
+          <mat-spinner diameter="20"></mat-spinner>
+        } @else {
+          <span>Sign in</span>
+        }
+      </button>
+    </form>
+
+    <div class="auth-footer">
+      <span>Don't have an account?</span>
+      <a routerLink="/auth/register">Sign up</a>
+    </div>
+  </div>
+</div>
