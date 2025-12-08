@@ -106,6 +106,52 @@ export class AuthService {
   }
 
   /**
+   * Validate OAuth user and return authentication tokens.
+   * Creates new user or links to existing account.
+   */
+  async validateOAuthUser(data: {
+    provider: 'github' | 'google';
+    providerId: string;
+    email: string | undefined;
+    username?: string;
+    accessToken: string;
+  }): Promise<TokenResponseDto> {
+    this.logger.log(`OAuth validation for ${data.provider} user: ${data.providerId}`);
+
+    // Find existing user by provider ID
+    let user =
+      data.provider === 'github'
+        ? await this.userService.findByGithubId(data.providerId)
+        : await this.userService.findByGoogleId(data.providerId);
+
+    if (!user && data.email) {
+      // Check if user exists by email
+      user = await this.userService.findByEmail(data.email);
+
+      if (user) {
+        // Link OAuth account to existing user
+        this.logger.log(`Linking ${data.provider} account to existing user: ${user.id}`);
+        await this.userService.linkOAuthAccount(user.id, data.provider, data.providerId, data.username);
+      }
+    }
+
+    if (!user) {
+      // Create new user from OAuth
+      this.logger.log(`Creating new user from ${data.provider} OAuth`);
+      user = await this.userService.createUser({
+        email: data.email || `${data.providerId}@${data.provider}.oauth`,
+        githubId: data.provider === 'github' ? data.providerId : undefined,
+        githubUsername: data.provider === 'github' ? data.username : undefined,
+        googleId: data.provider === 'google' ? data.providerId : undefined,
+      });
+    }
+
+    await this.userService.updateLastLogin(user.id);
+    this.logger.log(`OAuth user authenticated: ${user.id}`);
+    return this.generateTokens(user);
+  }
+
+  /**
    * Generate access and refresh tokens for a user.
    */
   private generateTokens(user: User): TokenResponseDto {

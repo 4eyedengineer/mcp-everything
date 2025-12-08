@@ -97,6 +97,31 @@ export class UserService {
     return bcrypt.compare(password, user.passwordHash);
   }
 
+  async linkOAuthAccount(
+    userId: string,
+    provider: 'github' | 'google',
+    providerId: string,
+    username?: string,
+  ): Promise<User> {
+    const user = await this.findById(userId);
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    if (provider === 'github') {
+      user.githubId = providerId;
+      if (username) {
+        user.githubUsername = username;
+      }
+    } else if (provider === 'google') {
+      user.googleId = providerId;
+    }
+
+    const savedUser = await this.userRepository.save(user);
+    this.logger.log(`Linked ${provider} account to user ${userId}`);
+    return savedUser;
+  }
+
   async updateLastLogin(userId: string): Promise<void> {
     await this.userRepository.update(userId, { lastLoginAt: new Date() });
   }
