@@ -1,17 +1,22 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
-import { Strategy, Profile, VerifyCallback } from 'passport-google-oauth20';
+import { Strategy, Profile } from 'passport-google-oauth20';
 import { ConfigService } from '@nestjs/config';
-import { AuthService } from '../auth.service';
+
+export interface GoogleProfile {
+  id: string;
+  email: string;
+  firstName: string | undefined;
+  lastName: string | undefined;
+  displayName: string | undefined;
+  photos: Array<{ value: string }>;
+}
 
 @Injectable()
 export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
   private readonly logger = new Logger(GoogleStrategy.name);
 
-  constructor(
-    private readonly configService: ConfigService,
-    private readonly authService: AuthService,
-  ) {
+  constructor(private readonly configService: ConfigService) {
     super({
       clientID: configService.get<string>('GOOGLE_CLIENT_ID'),
       clientSecret: configService.get<string>('GOOGLE_CLIENT_SECRET'),
@@ -21,34 +26,27 @@ export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
   }
 
   async validate(
-    accessToken: string,
-    refreshToken: string,
+    _accessToken: string,
+    _refreshToken: string,
     profile: Profile,
-    done: VerifyCallback,
-  ): Promise<void> {
-    try {
-      const { id, emails, name } = profile;
-      const email = emails?.[0]?.value;
+  ): Promise<GoogleProfile> {
+    const { id, emails, name, displayName, photos } = profile;
+    const email = emails?.[0]?.value;
 
-      if (!email) {
-        this.logger.warn(`Google OAuth: No email found in profile for Google ID ${id}`);
-        return done(new Error('No email found in Google profile'), undefined);
-      }
-
-      this.logger.log(`Google OAuth: Validating user ${email}`);
-
-      const result = await this.authService.validateOAuthUser({
-        provider: 'google',
-        providerId: id,
-        email,
-        firstName: name?.givenName,
-        lastName: name?.familyName,
-      });
-
-      done(null, result);
-    } catch (error) {
-      this.logger.error(`Google OAuth validation failed: ${error}`);
-      done(error as Error, undefined);
+    if (!email) {
+      this.logger.warn(`Google OAuth: No email found in profile for Google ID ${id}`);
+      throw new Error('No email found in Google profile');
     }
+
+    this.logger.log(`Google OAuth validated for user: ${email} (${id})`);
+
+    return {
+      id,
+      email,
+      firstName: name?.givenName,
+      lastName: name?.familyName,
+      displayName,
+      photos: photos || [],
+    };
   }
 }

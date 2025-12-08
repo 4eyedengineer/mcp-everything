@@ -20,6 +20,7 @@ import { EmailModule } from './email/email.module';
 import { LoggingModule } from './logging/logging.module';
 import { AuthModule } from './auth/auth.module';
 import { MarketplaceModule } from './marketplace/marketplace.module';
+import { HealthModule } from './health/health.module';
 import { Conversation, ConversationMemory, Deployment, User, Subscription, UsageRecord, HostedServer, ErrorLog, McpServer } from './database/entities';
 
 // Basic DTO for generate endpoint
@@ -53,15 +54,6 @@ export class AppController {
   @Get()
   getHello(): string {
     return 'MCP Everything Backend is running!';
-  }
-
-  @Get('health')
-  getHealth(): object {
-    return {
-      status: 'ok',
-      timestamp: new Date().toISOString(),
-      service: 'mcp-everything-backend'
-    };
   }
 
   @Post('chat')
@@ -308,6 +300,7 @@ main().catch((error) => {
     EmailModule,
     AuthModule,
     MarketplaceModule,
+    HealthModule,
   ],
   controllers: [AppController],
   providers: [

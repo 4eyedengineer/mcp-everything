@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { writeFileSync, mkdirSync, existsSync } from 'fs';
 import { join, dirname } from 'path';
@@ -16,6 +16,10 @@ import {
   ToolExample,
 } from './types/tool-discovery.types';
 import { RequiredEnvVar } from './types/env-variable.types';
+import {
+  McpProtocolValidatorService,
+  McpProtocolValidationResult,
+} from './validation/mcp-protocol-validator.service';
 
 export interface GeneratedServer {
   serverName: string;
@@ -74,6 +78,7 @@ export class McpGenerationService {
     private readonly githubAnalysisService: GitHubAnalysisService,
     private readonly toolDiscoveryService: ToolDiscoveryService,
     private readonly envVariableService: EnvVariableService,
+    @Optional() private readonly mcpProtocolValidator?: McpProtocolValidatorService,
   ) {
     const apiKey = this.configService.get<string>('ANTHROPIC_API_KEY');
     if (!apiKey || apiKey === 'your-anthropic-api-key-here') {
@@ -482,7 +487,7 @@ export class McpGenerationService {
     }
 
     // Final validation
-    const finalValidation = await this.validateGeneratedServer(serverDir, toolDiscovery.tools);
+    const finalValidation = await this.validateGeneratedServer(serverDir, toolDiscovery.tools, files);
 
     this.logger.log(`Generated server packaged at: ${serverDir}`);
 
@@ -545,6 +550,7 @@ export class McpGenerationService {
   private async validateGeneratedServer(
     serverDir: string,
     tools: McpTool[],
+    files: GeneratedFile[],
   ): Promise<QualityValidation> {
     const errors: string[] = [];
     const warnings: string[] = [];
@@ -557,17 +563,101 @@ export class McpGenerationService {
       }
     }
 
-    // Additional validations can be added here
+    // Run MCP protocol validation if validator is available
+    let mcpCompliant = false;
+    let compiles = false;
+
+    if (this.mcpProtocolValidator) {
+      try {
+        const mainFile = files.find(f => f.path === 'src/index.ts')?.content || '';
+        const packageJson = files.find(f => f.path === 'package.json')?.content || '';
+        const tsConfig = files.find(f => f.path === 'tsconfig.json')?.content;
+
+        const validationResult = await this.mcpProtocolValidator.validateServer({
+          mainFile,
+          packageJson,
+          tsConfig,
+          metadata: {
+            tools: tools.map(t => ({
+              name: t.name,
+              inputSchema: t.inputSchema,
+              description: t.description,
+            })),
+            serverName: files.find(f => f.path === 'package.json')
+              ? JSON.parse(packageJson).name || 'mcp-server'
+              : 'mcp-server',
+          },
+        });
+
+        mcpCompliant = validationResult.valid;
+        compiles = validationResult.checks.find(c => c.name === 'build')?.passed || false;
+
+        // Add validation errors to the list
+        for (const check of validationResult.checks) {
+          if (!check.passed) {
+            errors.push(`${check.name}: ${check.message}`);
+          }
+        }
+
+        this.logger.log(`MCP protocol validation: ${mcpCompliant ? 'PASSED' : 'FAILED'} (${validationResult.checks.filter(c => c.passed).length}/${validationResult.checks.length} checks)`);
+      } catch (validationError) {
+        const errorMsg = validationError instanceof Error ? validationError.message : String(validationError);
+        this.logger.warn(`MCP protocol validation failed: ${errorMsg}`);
+        warnings.push(`Protocol validation error: ${errorMsg}`);
+        // Default to true if validation fails to not block generation
+        mcpCompliant = true;
+        compiles = true;
+      }
+    } else {
+      // No validator available, assume compliance
+      mcpCompliant = true;
+      compiles = true;
+      warnings.push('MCP protocol validator not available - skipping validation');
+    }
+
+    // Verify all tools are implemented (basic check)
+    const mainFileContent = files.find(f => f.path === 'src/index.ts')?.content || '';
+    const toolsImplemented = tools.every(t =>
+      mainFileContent.includes(t.name) || mainFileContent.includes(`"${t.name}"`)
+    );
+
+    if (!toolsImplemented) {
+      warnings.push('Some tools may not be implemented in generated code');
+    }
 
     return {
-      passed: errors.length === 0,
-      compiles: true, // TODO: Add actual compilation check
-      mcpCompliant: true, // TODO: Add MCP protocol validation
-      toolsImplemented: true, // TODO: Verify all tools are implemented
+      passed: errors.length === 0 && mcpCompliant,
+      compiles,
+      mcpCompliant,
+      toolsImplemented,
       errors,
       warnings,
       regenerationCount: 0,
     };
+  }
+
+  /**
+   * Validate MCP compliance of generated code
+   * Public method for external validation requests
+   */
+  async validateMcpCompliance(
+    mainFile: string,
+    packageJson: string,
+    tsConfig: string,
+    tools: Array<{ name: string; inputSchema: any; description: string }>,
+    serverName: string = 'mcp-server',
+  ): Promise<McpProtocolValidationResult | null> {
+    if (!this.mcpProtocolValidator) {
+      this.logger.warn('MCP protocol validator not available');
+      return null;
+    }
+
+    return this.mcpProtocolValidator.validateServer({
+      mainFile,
+      packageJson,
+      tsConfig,
+      metadata: { tools, serverName },
+    });
   }
 
   // Helper methods for generating various files

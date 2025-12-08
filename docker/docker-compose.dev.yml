@@ -64,7 +64,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - ../generated-servers:/app/generated-servers
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/api/v1/health"]
+      test: ["CMD", "curl", "-sf", "http://localhost:3000/api/v1/health/ready"]
       interval: 10s
       timeout: 5s
       retries: 10

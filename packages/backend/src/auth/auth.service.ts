@@ -7,14 +7,6 @@ import { RegisterDto } from './dto/register.dto';
 import { TokenResponseDto } from './dto/token-response.dto';
 import { JwtPayload } from './strategies/jwt.strategy';
 
-export interface OAuthUserData {
-  provider: 'google' | 'github';
-  providerId: string;
-  email: string;
-  firstName?: string;
-  lastName?: string;
-}
-
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
@@ -114,85 +106,53 @@ export class AuthService {
   }
 
   /**
-   * Validate OAuth user and create/link account if needed.
-   * Returns the user for token generation.
+   * Validate OAuth user and return authentication tokens.
+   * Creates new user or links to existing account.
    */
-  async validateOAuthUser(data: OAuthUserData): Promise<User> {
-    const { provider, providerId, email, firstName, lastName } = data;
+  async validateOAuthUser(data: {
+    provider: 'github' | 'google';
+    providerId: string;
+    email: string | undefined;
+    username?: string;
+    firstName?: string;
+    lastName?: string;
+    accessToken?: string;
+  }): Promise<TokenResponseDto> {
+    this.logger.log(`OAuth validation for ${data.provider} user: ${data.providerId}`);
 
-    this.logger.log(`OAuth login attempt: ${provider} user ${email}`);
+    // Find existing user by provider ID
+    let user =
+      data.provider === 'github'
+        ? await this.userService.findByGithubId(data.providerId)
+        : await this.userService.findByGoogleId(data.providerId);
 
-    // Try to find user by provider ID first
-    let user: User | null = null;
+    if (!user && data.email) {
+      // Check if user exists by email
+      user = await this.userService.findByEmail(data.email);
 
-    if (provider === 'google') {
-      user = await this.userService.findByGoogleId(providerId);
-    } else if (provider === 'github') {
-      user = await this.userService.findByGithubId(providerId);
-    }
-
-    // If found by provider ID, update last login and return
-    if (user) {
-      if (!user.isActive) {
-        throw new UnauthorizedException('User account is deactivated');
+      if (user) {
+        // Link OAuth account to existing user
+        this.logger.log(`Linking ${data.provider} account to existing user: ${user.id}`);
+        await this.userService.linkOAuthAccount(user.id, data.provider, data.providerId, data.username);
       }
-      await this.userService.updateLastLogin(user.id);
-      this.logger.log(`OAuth login: Existing ${provider} user ${user.id}`);
-      return user;
     }
 
-    // Try to find by email to link accounts
-    user = await this.userService.findByEmail(email);
-
-    if (user) {
-      // Link the OAuth provider to existing account
-      if (!user.isActive) {
-        throw new UnauthorizedException('User account is deactivated');
-      }
-
-      await this.linkOAuthProvider(user.id, provider, providerId);
-      await this.userService.updateLastLogin(user.id);
-      this.logger.log(`OAuth login: Linked ${provider} to existing user ${user.id}`);
-
-      // Refetch to get updated user
-      user = await this.userService.findById(user.id);
-      return user!;
-    }
-
-    // Create new user with OAuth provider
-    user = await this.userService.createUser({
-      email,
-      firstName,
-      lastName,
-      googleId: provider === 'google' ? providerId : undefined,
-      githubId: provider === 'github' ? providerId : undefined,
-    });
-
-    this.logger.log(`OAuth login: Created new user ${user.id} via ${provider}`);
-    return user;
-  }
-
-  /**
-   * Link an OAuth provider to an existing user account.
-   */
-  private async linkOAuthProvider(
-    userId: string,
-    provider: 'google' | 'github',
-    providerId: string,
-  ): Promise<void> {
-    const user = await this.userService.findById(userId);
     if (!user) {
-      throw new UnauthorizedException('User not found');
+      // Create new user from OAuth
+      this.logger.log(`Creating new user from ${data.provider} OAuth`);
+      user = await this.userService.createUser({
+        email: data.email || `${data.providerId}@${data.provider}.oauth`,
+        firstName: data.firstName,
+        lastName: data.lastName,
+        githubId: data.provider === 'github' ? data.providerId : undefined,
+        githubUsername: data.provider === 'github' ? data.username : undefined,
+        googleId: data.provider === 'google' ? data.providerId : undefined,
+      });
     }
 
-    if (provider === 'google') {
-      user.googleId = providerId;
-    } else if (provider === 'github') {
-      user.githubId = providerId;
-    }
-
-    await this.userService.updateUser(userId, user);
-    this.logger.log(`Linked ${provider} provider to user ${userId}`);
+    await this.userService.updateLastLogin(user.id);
+    this.logger.log(`OAuth user authenticated: ${user.id}`);
+    return this.generateTokens(user);
   }
 
   /**

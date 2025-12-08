@@ -26,10 +26,13 @@ import { TokenResponseDto, RefreshTokenDto } from './dto/token-response.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { JwtRefreshGuard } from './guards/jwt-refresh.guard';
 import { LocalAuthGuard } from './guards/local-auth.guard';
+import { GitHubAuthGuard } from './guards/github-auth.guard';
 import { GoogleAuthGuard } from './guards/google-auth.guard';
 import { CurrentUser } from './decorators/current-user.decorator';
 import { Public } from './decorators/public.decorator';
 import { User } from '../database/entities/user.entity';
+import { GitHubProfile } from './strategies/github.strategy';
+import { GoogleProfile } from './strategies/google.strategy';
 
 @ApiTags('Authentication')
 @Controller('api/v1/auth')
@@ -143,6 +146,40 @@ export class AuthController {
     };
   }
 
+  // ==================== GitHub OAuth ====================
+
+  @Get('github')
+  @Public()
+  @UseGuards(GitHubAuthGuard)
+  @ApiOperation({ summary: 'Initiate GitHub OAuth flow' })
+  @ApiResponse({ status: 302, description: 'Redirects to GitHub for authentication' })
+  async githubAuth() {
+    // Initiates GitHub OAuth flow - handled by GitHubAuthGuard
+  }
+
+  @Get('github/callback')
+  @Public()
+  @UseGuards(GitHubAuthGuard)
+  @ApiExcludeEndpoint()
+  async githubAuthCallback(
+    @CurrentUser() profile: GitHubProfile,
+    @Res() res: Response,
+  ) {
+    const tokens = await this.authService.validateOAuthUser({
+      provider: 'github',
+      providerId: profile.id,
+      email: profile.email,
+      username: profile.username,
+      accessToken: profile.accessToken,
+    });
+
+    // Redirect to frontend with tokens as query parameters
+    const frontendUrl = this.configService.get<string>('FRONTEND_URL', 'http://localhost:4200');
+    res.redirect(
+      `${frontendUrl}/auth/callback?token=${tokens.accessToken}&refresh=${tokens.refreshToken}`,
+    );
+  }
+
   // ==================== Google OAuth ====================
 
   @Get('google')
@@ -157,16 +194,21 @@ export class AuthController {
   @Get('google/callback')
   @Public()
   @UseGuards(GoogleAuthGuard)
-  @ApiExcludeEndpoint() // Don't show callback in Swagger
+  @ApiExcludeEndpoint()
   async googleAuthCallback(
-    @CurrentUser() user: User,
+    @CurrentUser() profile: GoogleProfile,
     @Res() res: Response,
-  ): Promise<void> {
-    const tokens = this.authService.generateTokens(user);
-    const frontendUrl = this.configService.get<string>('FRONTEND_URL', 'http://localhost:4200');
+  ) {
+    const tokens = await this.authService.validateOAuthUser({
+      provider: 'google',
+      providerId: profile.id,
+      email: profile.email,
+      firstName: profile.firstName,
+      lastName: profile.lastName,
+    });
 
-    // Redirect to frontend with tokens as query params
-    // The frontend should extract these and store them securely
+    // Redirect to frontend with tokens as query parameters
+    const frontendUrl = this.configService.get<string>('FRONTEND_URL', 'http://localhost:4200');
     res.redirect(
       `${frontendUrl}/auth/callback?token=${tokens.accessToken}&refresh=${tokens.refreshToken}`,
     );

@@ -1,7 +1,11 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { ChatAnthropic } from '@langchain/anthropic';
 import { McpTestingService, GeneratedCode, McpServerTestResult } from '../testing/mcp-testing.service';
 import { McpGenerationService } from '../mcp-generation.service';
+import {
+  McpProtocolValidatorService,
+  McpProtocolValidationResult,
+} from '../validation/mcp-protocol-validator.service';
 import {
   GraphState,
   FailureAnalysis,
@@ -156,6 +160,7 @@ export class RefinementService {
   constructor(
     private readonly mcpTestingService: McpTestingService,
     private readonly mcpGenerationService: McpGenerationService,
+    @Optional() private readonly mcpProtocolValidator?: McpProtocolValidatorService,
   ) {
     // Initialize Claude Haiku for failure analysis
     // streaming: true is required by the Anthropic API configuration (Issue #142)
@@ -226,17 +231,91 @@ export class RefinementService {
 
     // Step 3: Check if all tools work
     if (testResults.overallSuccess && testResults.toolsPassedCount === testResults.toolsFound) {
-      this.logger.log(
-        `✅ SUCCESS! All ${testResults.toolsPassedCount} tools work (iteration ${iteration})`
-      );
+      // Step 3b: Run protocol compliance validation if available
+      let protocolValid = true;
+      let protocolValidation: McpProtocolValidationResult | null = null;
 
-      return {
-        success: true,
-        generatedCode,
-        testResults,
-        iterations: iteration,
-        shouldContinue: false,
-      };
+      if (this.mcpProtocolValidator) {
+        this.logger.log(`Running MCP protocol compliance validation...`);
+        try {
+          protocolValidation = await this.mcpProtocolValidator.validateServer({
+            mainFile: generatedCode.mainFile,
+            packageJson: generatedCode.packageJson,
+            tsConfig: generatedCode.tsConfig,
+            metadata: {
+              tools: generatedCode.metadata.tools,
+              serverName: generatedCode.metadata.serverName,
+            },
+          });
+
+          protocolValid = protocolValidation.valid;
+
+          if (protocolValid) {
+            this.logger.log(
+              `✅ Protocol validation PASSED (${protocolValidation.checks.filter(c => c.passed).length}/${protocolValidation.checks.length} checks)`
+            );
+          } else {
+            this.logger.warn(
+              `⚠️ Protocol validation FAILED: ${protocolValidation.errors.join(', ')}`
+            );
+          }
+        } catch (validationError) {
+          const errorMsg = validationError instanceof Error ? validationError.message : String(validationError);
+          this.logger.warn(`Protocol validation error: ${errorMsg}`);
+          // Don't fail on validation errors, just log
+          protocolValid = true;
+        }
+      }
+
+      // Only succeed if both tool tests and protocol validation pass
+      if (protocolValid) {
+        this.logger.log(
+          `✅ SUCCESS! All ${testResults.toolsPassedCount} tools work (iteration ${iteration})`
+        );
+
+        return {
+          success: true,
+          generatedCode,
+          testResults,
+          iterations: iteration,
+          shouldContinue: false,
+        };
+      } else {
+        // Protocol validation failed - treat as failure and continue refinement
+        this.logger.warn(`Tools pass but protocol validation failed - continuing refinement`);
+
+        // Convert protocol validation failures to failure analysis
+        const protocolFailures: FailureAnalysis = {
+          failureCount: protocolValidation?.errors.length || 1,
+          categories: [{ type: 'mcp_protocol', count: protocolValidation?.errors.length || 1 }],
+          rootCauses: protocolValidation?.errors || ['Protocol validation failed'],
+          fixes: protocolValidation?.checks
+            .filter(c => !c.passed)
+            .map(c => ({
+              toolName: c.name.includes(':') ? c.name.split(':')[1] : 'server',
+              issue: c.message,
+              solution: `Fix ${c.name} compliance issue`,
+              priority: 'HIGH' as const,
+            })) || [],
+          recommendation: 'Fix MCP protocol compliance issues identified by validation',
+        };
+
+        // Continue to refinement with protocol-specific fixes
+        const refinedCode = await this.refineCode(
+          generatedCode,
+          protocolFailures,
+          state.generationPlan!
+        );
+
+        return {
+          success: false,
+          generatedCode: refinedCode,
+          testResults,
+          failureAnalysis: protocolFailures,
+          iterations: iteration,
+          shouldContinue: iteration < maxIterations,
+        };
+      }
     }
 
     // Step 4: Check max iterations
