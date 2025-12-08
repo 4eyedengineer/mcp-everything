@@ -46,3 +46,9 @@ temp/
 
 # Docker volumes
 docker/postgres-data/
+
+# E2E test outputs (keep README and .gitkeep)
+test-outputs/run-*/
+
+# Generated MCP servers (local builds)
+generated-servers/
