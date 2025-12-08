@@ -3,6 +3,7 @@ import {
   Post,
   Get,
   Body,
+  Res,
   UseGuards,
   HttpCode,
   HttpStatus,
@@ -13,8 +14,11 @@ import {
   ApiResponse,
   ApiBearerAuth,
   ApiBody,
+  ApiExcludeEndpoint,
 } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
+import { ConfigService } from '@nestjs/config';
+import { Response } from 'express';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
@@ -22,6 +26,7 @@ import { TokenResponseDto, RefreshTokenDto } from './dto/token-response.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { JwtRefreshGuard } from './guards/jwt-refresh.guard';
 import { LocalAuthGuard } from './guards/local-auth.guard';
+import { GoogleAuthGuard } from './guards/google-auth.guard';
 import { CurrentUser } from './decorators/current-user.decorator';
 import { Public } from './decorators/public.decorator';
 import { User } from '../database/entities/user.entity';
@@ -29,7 +34,10 @@ import { User } from '../database/entities/user.entity';
 @ApiTags('Authentication')
 @Controller('api/v1/auth')
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(
+    private readonly authService: AuthService,
+    private readonly configService: ConfigService,
+  ) {}
 
   @Post('register')
   @Public()
@@ -133,5 +141,34 @@ export class AuthController {
       isEmailVerified: user.isEmailVerified,
       createdAt: user.createdAt,
     };
+  }
+
+  // ==================== Google OAuth ====================
+
+  @Get('google')
+  @Public()
+  @UseGuards(GoogleAuthGuard)
+  @ApiOperation({ summary: 'Initiate Google OAuth login' })
+  @ApiResponse({ status: 302, description: 'Redirects to Google OAuth' })
+  async googleAuth(): Promise<void> {
+    // Guard initiates the OAuth flow - this method body is never executed
+  }
+
+  @Get('google/callback')
+  @Public()
+  @UseGuards(GoogleAuthGuard)
+  @ApiExcludeEndpoint() // Don't show callback in Swagger
+  async googleAuthCallback(
+    @CurrentUser() user: User,
+    @Res() res: Response,
+  ): Promise<void> {
+    const tokens = this.authService.generateTokens(user);
+    const frontendUrl = this.configService.get<string>('FRONTEND_URL', 'http://localhost:4200');
+
+    // Redirect to frontend with tokens as query params
+    // The frontend should extract these and store them securely
+    res.redirect(
+      `${frontendUrl}/auth/callback?token=${tokens.accessToken}&refresh=${tokens.refreshToken}`,
+    );
   }
 }

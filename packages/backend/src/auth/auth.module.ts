@@ -8,7 +8,9 @@ import { AuthService } from './auth.service';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { JwtRefreshStrategy } from './strategies/jwt-refresh.strategy';
 import { LocalStrategy } from './strategies/local.strategy';
+import { GoogleStrategy } from './strategies/google.strategy';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { GoogleAuthGuard } from './guards/google-auth.guard';
 import { UserModule } from '../user/user.module';
 
 @Module({
@@ -43,9 +45,11 @@ import { UserModule } from '../user/user.module';
     JwtStrategy,
     JwtRefreshStrategy,
     LocalStrategy,
+    GoogleStrategy,
     JwtAuthGuard,
+    GoogleAuthGuard,
   ],
-  exports: [AuthService, JwtAuthGuard, JwtModule],
+  exports: [AuthService, JwtAuthGuard, GoogleAuthGuard, JwtModule],
 })
 export class AuthModule {}
 
