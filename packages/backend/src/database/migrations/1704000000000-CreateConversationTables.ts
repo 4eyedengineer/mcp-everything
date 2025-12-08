@@ -4,6 +4,9 @@ export class CreateConversationTables1704000000000 implements MigrationInterface
   name = 'CreateConversationTables1704000000000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
+    // Enable UUID extension - required for uuid_generate_v4()
+    await queryRunner.query(`CREATE EXTENSION IF NOT EXISTS "uuid-ossp"`);
+
     await queryRunner.query(`
       CREATE TABLE "conversations" (
         "id" uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
