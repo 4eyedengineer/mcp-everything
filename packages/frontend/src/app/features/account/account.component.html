@@ -231,31 +231,114 @@
 
         <!-- Upgrade CTA (Free tier) -->
         <div class="upgrade-section" *ngIf="tierInfo.currentTier === 'free'">
-          <div class="upgrade-card">
+          <!-- Billing Interval Toggle -->
+          <div class="billing-toggle">
+            <button
+              class="interval-btn"
+              [class.active]="selectedBillingInterval === 'monthly'"
+              (click)="selectBillingInterval('monthly')">
+              Monthly
+            </button>
+            <button
+              class="interval-btn"
+              [class.active]="selectedBillingInterval === 'yearly'"
+              (click)="selectBillingInterval('yearly')">
+              Yearly
+              <span class="save-badge">Save 17%</span>
+            </button>
+          </div>
+
+          <div class="pricing-cards">
+            <!-- Pro Plan -->
+            <div class="upgrade-card pro">
+              <div class="upgrade-header">
+                <mat-icon>rocket_launch</mat-icon>
+                <h3>Pro</h3>
+              </div>
+              <p class="upgrade-description">
+                Unlock unlimited MCP server generation, private repositories, and CI/CD automation.
+              </p>
+              <ul class="upgrade-benefits">
+                <li><mat-icon>check</mat-icon> Unlimited MCP servers</li>
+                <li><mat-icon>check</mat-icon> Private GitHub repositories</li>
+                <li><mat-icon>check</mat-icon> Automated CI/CD pipelines</li>
+                <li><mat-icon>check</mat-icon> Priority support</li>
+              </ul>
+              <div class="upgrade-price">
+                <span class="price">{{ selectedBillingInterval === 'yearly' ? '$290' : '$29' }}</span>
+                <span class="period">{{ selectedBillingInterval === 'yearly' ? '/year' : '/month' }}</span>
+              </div>
+              <button
+                class="action-button primary upgrade-button"
+                (click)="upgradeToPro()"
+                [disabled]="isUpgrading">
+                <mat-icon *ngIf="!isUpgrading">upgrade</mat-icon>
+                <mat-icon *ngIf="isUpgrading" class="spinning">sync</mat-icon>
+                <span>{{ isUpgrading ? 'Loading...' : 'Upgrade to Pro' }}</span>
+              </button>
+            </div>
+
+            <!-- Enterprise Plan -->
+            <div class="upgrade-card enterprise">
+              <div class="upgrade-header">
+                <mat-icon>business</mat-icon>
+                <h3>Enterprise</h3>
+                <span class="popular-badge">Contact Us</span>
+              </div>
+              <p class="upgrade-description">
+                Everything in Pro plus custom domains, team features, SSO, and dedicated support.
+              </p>
+              <ul class="upgrade-benefits">
+                <li><mat-icon>check</mat-icon> Everything in Pro</li>
+                <li><mat-icon>check</mat-icon> Custom domains</li>
+                <li><mat-icon>check</mat-icon> Team collaboration</li>
+                <li><mat-icon>check</mat-icon> SSO integration</li>
+                <li><mat-icon>check</mat-icon> SLA guarantee</li>
+              </ul>
+              <div class="upgrade-price">
+                <span class="price">$99</span>
+                <span class="period">/month</span>
+              </div>
+              <button
+                class="action-button primary upgrade-button enterprise-btn"
+                (click)="upgradeToEnterprise()"
+                [disabled]="isUpgrading">
+                <mat-icon *ngIf="!isUpgrading">upgrade</mat-icon>
+                <mat-icon *ngIf="isUpgrading" class="spinning">sync</mat-icon>
+                <span>{{ isUpgrading ? 'Loading...' : 'Upgrade to Enterprise' }}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Upgrade from Pro to Enterprise -->
+        <div class="upgrade-section" *ngIf="tierInfo.currentTier === 'pro'">
+          <div class="upgrade-card enterprise solo">
             <div class="upgrade-header">
-              <mat-icon>rocket_launch</mat-icon>
-              <h3>Upgrade to Pro</h3>
+              <mat-icon>business</mat-icon>
+              <h3>Upgrade to Enterprise</h3>
             </div>
             <p class="upgrade-description">
-              Unlock unlimited MCP server generation, private repositories, and CI/CD automation.
+              Get custom domains, team features, SSO integration, and dedicated support.
             </p>
             <ul class="upgrade-benefits">
-              <li><mat-icon>check</mat-icon> Unlimited MCP servers</li>
-              <li><mat-icon>check</mat-icon> Private GitHub repositories</li>
-              <li><mat-icon>check</mat-icon> Automated CI/CD pipelines</li>
-              <li><mat-icon>check</mat-icon> Priority support</li>
+              <li><mat-icon>check</mat-icon> Everything in Pro</li>
+              <li><mat-icon>check</mat-icon> Custom domains</li>
+              <li><mat-icon>check</mat-icon> Team collaboration</li>
+              <li><mat-icon>check</mat-icon> SSO integration</li>
+              <li><mat-icon>check</mat-icon> SLA guarantee</li>
             </ul>
             <div class="upgrade-price">
-              <span class="price">$29</span>
+              <span class="price">$99</span>
               <span class="period">/month</span>
             </div>
             <button
-              class="action-button primary upgrade-button"
-              (click)="upgradeToPro()"
+              class="action-button primary upgrade-button enterprise-btn"
+              (click)="upgradeToEnterprise()"
               [disabled]="isUpgrading">
               <mat-icon *ngIf="!isUpgrading">upgrade</mat-icon>
               <mat-icon *ngIf="isUpgrading" class="spinning">sync</mat-icon>
-              <span>{{ isUpgrading ? 'Loading...' : 'Upgrade Now' }}</span>
+              <span>{{ isUpgrading ? 'Loading...' : 'Upgrade to Enterprise' }}</span>
             </button>
           </div>
         </div>

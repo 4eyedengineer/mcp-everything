@@ -1,9 +1,11 @@
-import { Component, OnInit } from '@angular/core';
+import { Component, OnInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
+import { ActivatedRoute, Router } from '@angular/router';
 import { MatIconModule } from '@angular/material/icon';
 import { MatTooltipModule } from '@angular/material/tooltip';
-import { Observable } from 'rxjs';
+import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
+import { Observable, Subscription } from 'rxjs';
 import { SubscriptionService, TierInfo, SubscriptionInfo, UsageInfo } from '../../core/services/subscription.service';
 
 interface UserProfile {
@@ -27,12 +29,13 @@ interface Settings {
     CommonModule,
     FormsModule,
     MatIconModule,
-    MatTooltipModule
+    MatTooltipModule,
+    MatSnackBarModule
   ],
   templateUrl: './account.component.html',
   styleUrls: ['./account.component.scss']
 })
-export class AccountComponent implements OnInit {
+export class AccountComponent implements OnInit, OnDestroy {
   // Placeholder data - will be replaced with actual user data
   profile: UserProfile = {
     email: 'user@example.com',
@@ -55,8 +58,16 @@ export class AccountComponent implements OnInit {
   subscription$: Observable<SubscriptionInfo | null>;
   usage$: Observable<UsageInfo | null>;
   isUpgrading = false;
+  checkoutMessage: string | null = null;
+  checkoutSuccess = false;
+  private queryParamsSub: Subscription | null = null;
 
-  constructor(private subscriptionService: SubscriptionService) {
+  constructor(
+    private subscriptionService: SubscriptionService,
+    private route: ActivatedRoute,
+    private router: Router,
+    private snackBar: MatSnackBar
+  ) {
     this.tierInfo$ = this.subscriptionService.tierInfo$;
     this.subscription$ = this.subscriptionService.subscription$;
     this.usage$ = this.subscriptionService.usage$;
@@ -64,12 +75,51 @@ export class AccountComponent implements OnInit {
 
   ngOnInit(): void {
     this.loadSubscriptionData();
+    this.handleCheckoutResult();
+  }
+
+  ngOnDestroy(): void {
+    this.queryParamsSub?.unsubscribe();
   }
 
   private loadSubscriptionData(): void {
     this.subscriptionService.getTierInfo().subscribe();
     this.subscriptionService.getSubscription().subscribe();
     this.subscriptionService.getUsage().subscribe();
+  }
+
+  private handleCheckoutResult(): void {
+    this.queryParamsSub = this.route.queryParams.subscribe(params => {
+      if (params['success'] === 'true') {
+        this.checkoutSuccess = true;
+        this.checkoutMessage = 'Your subscription has been activated! Thank you for upgrading.';
+        this.snackBar.open(this.checkoutMessage, 'Dismiss', {
+          duration: 5000,
+          panelClass: ['success-snackbar']
+        });
+        // Refresh subscription data to reflect the new tier
+        this.subscriptionService.refreshAll();
+        // Clean up URL
+        this.router.navigate([], {
+          relativeTo: this.route,
+          queryParams: {},
+          replaceUrl: true
+        });
+      } else if (params['canceled'] === 'true') {
+        this.checkoutSuccess = false;
+        this.checkoutMessage = 'Checkout was cancelled. You can try again when ready.';
+        this.snackBar.open(this.checkoutMessage, 'Dismiss', {
+          duration: 5000,
+          panelClass: ['info-snackbar']
+        });
+        // Clean up URL
+        this.router.navigate([], {
+          relativeTo: this.route,
+          queryParams: {},
+          replaceUrl: true
+        });
+      }
+    });
   }
 
   editProfile(): void {
@@ -111,19 +161,36 @@ export class AccountComponent implements OnInit {
   }
 
   // Subscription management methods
+  selectedBillingInterval: 'monthly' | 'yearly' = 'monthly';
+
   async upgradeToPro(): Promise<void> {
+    await this.startCheckout('pro', this.selectedBillingInterval);
+  }
+
+  async upgradeToEnterprise(): Promise<void> {
+    await this.startCheckout('enterprise', 'monthly');
+  }
+
+  async startCheckout(tier: 'pro' | 'enterprise', interval: 'monthly' | 'yearly' = 'monthly'): Promise<void> {
     this.isUpgrading = true;
     try {
-      const result = await this.subscriptionService.createCheckout('pro').toPromise();
+      const result = await this.subscriptionService.createCheckout(tier, interval).toPromise();
       if (result?.url) {
         window.location.href = result.url;
       }
     } catch (error) {
       console.error('Checkout failed:', error);
-      // TODO: Show error notification
+      this.snackBar.open('Failed to start checkout. Please try again.', 'Dismiss', {
+        duration: 5000,
+        panelClass: ['error-snackbar']
+      });
     } finally {
       this.isUpgrading = false;
     }
+  }
+
+  selectBillingInterval(interval: 'monthly' | 'yearly'): void {
+    this.selectedBillingInterval = interval;
   }
 
   async manageSubscription(): Promise<void> {

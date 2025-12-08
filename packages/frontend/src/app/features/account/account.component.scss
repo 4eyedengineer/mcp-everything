@@ -776,11 +776,78 @@
 }
 
 .upgrade-section {
+  .billing-toggle {
+    display: flex;
+    justify-content: center;
+    gap: 8px;
+    margin-bottom: 24px;
+    background-color: #f0f0f0;
+    border-radius: 8px;
+    padding: 4px;
+
+    .interval-btn {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 20px;
+      border: none;
+      background: none;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 500;
+      color: #666;
+      cursor: pointer;
+      transition: all 0.2s ease;
+
+      &.active {
+        background-color: white;
+        color: #1f1f1f;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+      }
+
+      &:hover:not(.active) {
+        color: #1f1f1f;
+      }
+
+      .save-badge {
+        padding: 2px 8px;
+        background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+        color: white;
+        border-radius: 12px;
+        font-size: 11px;
+        font-weight: 600;
+      }
+    }
+  }
+
+  .pricing-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 20px;
+  }
+
   .upgrade-card {
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
     border-radius: 12px;
     padding: 24px;
     color: white;
+
+    &.enterprise {
+      background: linear-gradient(135deg, #1f1f1f 0%, #404040 100%);
+
+      .upgrade-button.enterprise-btn {
+        background-color: white;
+        color: #1f1f1f;
+
+        &:hover {
+          background-color: #f0f0f0;
+        }
+      }
+    }
+
+    &.solo {
+      max-width: 400px;
+    }
 
     .upgrade-header {
       display: flex;
@@ -798,6 +865,17 @@
         margin: 0;
         font-size: 20px;
         font-weight: 600;
+        flex: 1;
+      }
+
+      .popular-badge {
+        padding: 4px 10px;
+        background: rgba(255, 255, 255, 0.2);
+        border-radius: 12px;
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
       }
     }
 
@@ -805,6 +883,7 @@
       margin: 0 0 16px 0;
       opacity: 0.9;
       line-height: 1.5;
+      font-size: 14px;
     }
 
     .upgrade-benefits {
