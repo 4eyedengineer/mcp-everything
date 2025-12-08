@@ -251,7 +251,7 @@ export interface ApiDocAnalysis {
     path: string;
     method: string;
     description: string;
-    parameters: any;
+    parameters?: any;
   }>;
   authentication: {
     type: string;
@@ -261,6 +261,7 @@ export interface ApiDocAnalysis {
     requests: number;
     window: string;
   };
+  baseUrl?: string;
 }
 
 export interface SynthesizedPlan {
