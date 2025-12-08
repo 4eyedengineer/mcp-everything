@@ -1,4 +1,4 @@
-import { Injectable, Logger, Inject, forwardRef, Optional } from '@nestjs/common';
+import { Injectable, Inject, forwardRef, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { StateGraph, END, START, Annotation, CompiledStateGraph } from '@langchain/langgraph';
 import { ChatAnthropic } from '@langchain/anthropic';
@@ -17,6 +17,7 @@ import { RefinementService } from './refinement.service';
 import { getPlatformContextPrompt } from './platform-context';
 import { safeParseJSON } from './json-utils';
 import { ErrorLoggingService } from '../logging/error-logging.service';
+import { StructuredLoggerService } from '../logging/structured-logger.service';
 
 /**
  * LangGraph Orchestration Service
@@ -24,7 +25,7 @@ import { ErrorLoggingService } from '../logging/error-logging.service';
  */
 @Injectable()
 export class GraphOrchestrationService {
-  private readonly logger = new Logger(GraphOrchestrationService.name);
+  private readonly logger: StructuredLoggerService;
   private readonly generatedServersDir: string;
   private graph: CompiledStateGraph<any, any, any, any>;
   private llm: ChatAnthropic;
@@ -42,9 +43,11 @@ export class GraphOrchestrationService {
     private ensembleService: EnsembleService,
     private clarificationService: ClarificationService,
     private refinementService: RefinementService,
-    // Error logging
+    // Logging services
+    structuredLogger: StructuredLoggerService,
     @Optional() private errorLoggingService?: ErrorLoggingService,
   ) {
+    this.logger = structuredLogger.setContext('GraphOrchestrationService');
     this.generatedServersDir = join(process.cwd(), '../../generated-servers');
     this.initializeLLM();
     this.buildGraph();
@@ -201,9 +204,17 @@ export class GraphOrchestrationService {
     userInput: string,
     conversationId?: string,
   ): Promise<AsyncGenerator<Partial<GraphState>>> {
+    const startTime = Date.now();
+
     try {
       // Load or create conversation
       const conversation = await this.loadOrCreateConversation(sessionId, conversationId);
+
+      this.logger.log('Starting graph execution', {
+        conversationId: conversation.id,
+        sessionId,
+        inputLength: userInput.length,
+      });
 
       // Save user message to conversation immediately
       await this.saveMessageToConversation(conversation.id, {
@@ -235,10 +246,16 @@ export class GraphOrchestrationService {
 
       return this.processGraphStream(stream, conversation.id);
     } catch (error) {
-      this.logger.error(`Graph execution failed: ${error.message}`, error.stack);
+      const duration = Date.now() - startTime;
+      this.logger.error(`Graph execution failed: ${error.message}`, error.stack, {
+        conversationId,
+        sessionId,
+        duration,
+      });
       await this.logError(error, 'executeGraph', conversationId, {
         sessionId,
         userInput,
+        duration,
       });
       throw error;
     }
