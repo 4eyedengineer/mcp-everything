@@ -685,17 +685,142 @@ Return ONLY valid JSON.`;
    * API Documentation Agent (GitHub-specific)
    *
    * Extracts API documentation from GitHub repository:
-   * - OpenAPI/Swagger specs
+   * - OpenAPI/Swagger specs (openapi.json, swagger.yaml, etc.)
    * - README.md API sections
-   * - Inline code documentation
+   * - Inline code documentation and examples
+   *
+   * Uses LLM to synthesize API patterns from repository content.
    *
    * @param githubUrl - GitHub repository URL
    * @returns API documentation with endpoints and auth details
    */
   private async apiDocumentationAgent(githubUrl: string): Promise<ApiDocAnalysis | undefined> {
-    // TODO: Implement GitHub-specific API doc extraction
-    // For MVP, return undefined (optional field)
-    return undefined;
+    this.logger.log(`Extracting API docs from GitHub: ${githubUrl}`);
+
+    try {
+      // Use existing GitHubAnalysisService for repository analysis
+      const analysis = await this.githubAnalysisService.analyzeRepository(githubUrl);
+
+      if (!analysis) {
+        this.logger.warn(`Failed to analyze repository: ${githubUrl}`);
+        return undefined;
+      }
+
+      // Collect content for LLM analysis
+      const contentParts: string[] = [];
+
+      // Add README content (prioritize API sections)
+      if (analysis.readme?.content) {
+        const readme = analysis.readme.content.slice(0, 6000);
+        contentParts.push(`## README\n${readme}`);
+      }
+
+      // Add API patterns from source analysis
+      if (analysis.apiPatterns && analysis.apiPatterns.length > 0) {
+        const patterns = analysis.apiPatterns
+          .map(p => `- ${p.type}: ${p.endpoints.join(', ')}`)
+          .join('\n');
+        contentParts.push(`## API Patterns Detected\n${patterns}`);
+      }
+
+      // Add source file snippets (looking for API client code)
+      if (analysis.sourceFiles && analysis.sourceFiles.length > 0) {
+        const apiFiles = analysis.sourceFiles
+          .filter(f =>
+            f.path.includes('api') ||
+            f.path.includes('client') ||
+            f.path.includes('service') ||
+            f.content.includes('fetch(') ||
+            f.content.includes('axios') ||
+            f.content.includes('request(')
+          )
+          .slice(0, 3);
+
+        for (const file of apiFiles) {
+          const snippet = file.content.slice(0, 1500);
+          contentParts.push(`## ${file.path}\n\`\`\`${file.language || 'javascript'}\n${snippet}\n\`\`\``);
+        }
+      }
+
+      if (contentParts.length === 0) {
+        this.logger.warn(`No API-relevant content found in ${githubUrl}`);
+        return undefined;
+      }
+
+      // Use LLM to extract API info from GitHub content
+      const prompt = `${getPlatformContextPrompt()}
+
+**Task**: Analyze this SDK/API client repository content and extract API information.
+
+**Repository**: ${analysis.metadata.name}
+**Description**: ${analysis.metadata.description || 'No description'}
+**Language**: ${analysis.metadata.language || 'Unknown'}
+
+**Content**:
+${contentParts.join('\n\n').slice(0, 10000)}
+
+**Extract**:
+1. API Base URL (if mentioned in code or docs)
+2. Authentication method from code patterns or docs
+3. API endpoints/operations from code or documentation
+4. Any rate limit information
+
+**Output Format** (STRICT JSON):
+\`\`\`json
+{
+  "baseUrl": "https://api.example.com or null",
+  "authentication": {
+    "type": "api_key|oauth|bearer_token|basic_auth|none|unknown",
+    "details": "How authentication works based on code/docs"
+  },
+  "endpoints": [
+    {
+      "method": "GET|POST|PUT|DELETE",
+      "path": "/endpoint/path",
+      "description": "What this endpoint does"
+    }
+  ],
+  "rateLimit": {
+    "requests": 0,
+    "window": "unknown"
+  }
+}
+\`\`\`
+
+Return ONLY valid JSON.`;
+
+      const result = await this.llm.invoke(prompt);
+      const content = result.content.toString();
+
+      const parsed = safeParseJSON<{
+        baseUrl?: string;
+        authentication?: { type: string; details?: string };
+        endpoints?: Array<{ method: string; path: string; description: string }>;
+        rateLimit?: { requests: number; window: string };
+      }>(content, this.logger);
+
+      this.logger.log(`Extracted ${parsed.endpoints?.length || 0} endpoints from GitHub repo`);
+
+      return {
+        endpoints: parsed.endpoints?.map(ep => ({
+          method: ep.method,
+          path: ep.path,
+          description: ep.description,
+        })) || [],
+        authentication: {
+          type: parsed.authentication?.type || 'unknown',
+          details: parsed.authentication?.details || 'Authentication details not extracted',
+        },
+        rateLimit: parsed.rateLimit ? {
+          requests: parsed.rateLimit.requests,
+          window: parsed.rateLimit.window,
+        } : undefined,
+        baseUrl: parsed.baseUrl || undefined,
+      };
+    } catch (error) {
+      this.logger.warn(`GitHub API doc extraction failed: ${error.message}`);
+      return undefined;
+    }
   }
 
   /**
@@ -705,7 +830,8 @@ Return ONLY valid JSON.`;
   /**
    * Scrape API Documentation from Website
    *
-   * Uses WebFetch to scrape API documentation pages
+   * Fetches API documentation pages and uses LLM to extract structured
+   * API information including endpoints, authentication, and rate limits.
    *
    * @param url - Documentation URL
    * @returns Structured API documentation
@@ -713,51 +839,368 @@ Return ONLY valid JSON.`;
   private async scrapeApiDocumentation(url: string): Promise<ApiDocAnalysis | undefined> {
     this.logger.log(`Scraping API docs from: ${url}`);
 
-    // TODO: Implement website scraping with WebFetch
-    // For MVP, return basic structure
-    return {
-      endpoints: [],
-      authentication: {
-        type: 'unknown',
-        details: 'Authentication details not yet extracted',
-      },
-      rateLimit: {
-        requests: 0,
-        window: 'per hour',
-      },
-    };
+    try {
+      // Fetch the documentation page
+      const response = await axios.get(url, {
+        timeout: 15000,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (compatible; MCPEverything/1.0; +https://mcp-everything.dev)',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        },
+      });
+
+      const html = response.data;
+
+      // Convert HTML to text (basic strip)
+      const text = this.htmlToText(html).slice(0, 12000); // Limit context for LLM
+
+      if (text.length < 100) {
+        this.logger.warn(`Insufficient content extracted from ${url}`);
+        return undefined;
+      }
+
+      // Use LLM to extract structured API information
+      const prompt = `${getPlatformContextPrompt()}
+
+**Task**: Analyze this API documentation and extract structured information.
+
+**Documentation content**:
+${text}
+
+**Extract the following**:
+1. Base URL for the API (look for patterns like "api.example.com", "https://...")
+2. Authentication method (API key, OAuth, Bearer token, Basic Auth, etc.)
+3. Main API endpoints with their HTTP methods and paths
+4. Rate limits if mentioned
+
+**Output Format** (STRICT JSON only):
+\`\`\`json
+{
+  "baseUrl": "https://api.example.com or null if not found",
+  "authentication": {
+    "type": "api_key|oauth|bearer_token|basic_auth|none|unknown",
+    "header": "Header name if applicable (e.g., 'Authorization', 'X-API-Key')",
+    "details": "Brief description of how auth works"
+  },
+  "endpoints": [
+    {
+      "method": "GET|POST|PUT|DELETE|PATCH",
+      "path": "/endpoint/path",
+      "description": "What this endpoint does"
+    }
+  ],
+  "rateLimit": {
+    "requests": 1000,
+    "window": "per minute|per hour|per day"
+  }
+}
+\`\`\`
+
+Return ONLY valid JSON. If information is not available, use null or empty values.`;
+
+      const result = await this.llm.invoke(prompt);
+      const content = result.content.toString();
+
+      const parsed = safeParseJSON<{
+        baseUrl?: string;
+        authentication?: { type: string; header?: string; details?: string };
+        endpoints?: Array<{ method: string; path: string; description: string }>;
+        rateLimit?: { requests: number; window: string };
+      }>(content, this.logger);
+
+      this.logger.log(`Extracted ${parsed.endpoints?.length || 0} endpoints from ${url}`);
+
+      return {
+        endpoints: parsed.endpoints?.map(ep => ({
+          method: ep.method,
+          path: ep.path,
+          description: ep.description,
+        })) || [],
+        authentication: {
+          type: parsed.authentication?.type || 'unknown',
+          details: parsed.authentication?.details || 'Authentication details not extracted',
+        },
+        rateLimit: parsed.rateLimit ? {
+          requests: parsed.rateLimit.requests,
+          window: parsed.rateLimit.window,
+        } : undefined,
+        baseUrl: parsed.baseUrl || undefined,
+      };
+    } catch (error) {
+      this.logger.warn(`API doc scraping failed for ${url}: ${error.message}`);
+      return undefined;
+    }
+  }
+
+  /**
+   * Helper: Convert HTML to plain text
+   *
+   * Basic HTML stripping for LLM consumption
+   *
+   * @param html - HTML content
+   * @returns Plain text content
+   */
+  private htmlToText(html: string): string {
+    return html
+      // Remove script and style tags and their contents
+      .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+      // Remove HTML comments
+      .replace(/<!--[\s\S]*?-->/g, '')
+      // Remove tags but keep content
+      .replace(/<[^>]+>/g, ' ')
+      // Decode common HTML entities
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      // Normalize whitespace
+      .replace(/\s+/g, ' ')
+      .trim();
   }
 
   /**
    * Find GitHub Repos for Service
    *
-   * Searches GitHub for official/popular repos related to the service
+   * Searches GitHub for official/popular repos related to the service using:
+   * 1. GitHub Search API for SDK/client repositories
+   * 2. Tavily web search as a fallback for additional repos
    *
    * @param serviceName - Service name (e.g., "Stripe", "OpenAI")
-   * @returns List of relevant GitHub repos
+   * @returns List of relevant GitHub repos sorted by stars
    */
   private async findGitHubReposForService(serviceName: string): Promise<Array<{url: string; stars: number}>> {
     this.logger.log(`Searching for GitHub repos: ${serviceName}`);
+    const repos: Array<{url: string; stars: number}> = [];
 
-    // TODO: Use GitHub API or web search to find repos
-    // For MVP, return empty array (graceful degradation)
-    return [];
+    // 1. Search GitHub directly using GitHubAnalysisService's Octokit
+    try {
+      const searchQuery = `${serviceName} sdk OR api OR client in:name,description`;
+      const response = await this.searchGitHubRepos(searchQuery, 5);
+
+      for (const repo of response) {
+        repos.push({
+          url: repo.url,
+          stars: repo.stars,
+        });
+      }
+      this.logger.log(`Found ${repos.length} repos via GitHub Search API`);
+    } catch (error) {
+      this.logger.warn(`GitHub search failed: ${error.message}`);
+    }
+
+    // 2. Web search for SDK repositories as fallback
+    if (repos.length < 3 && process.env.TAVILY_API_KEY) {
+      try {
+        const searchResults = await this.tavilySearch(
+          `${serviceName} official SDK GitHub repository`,
+          3
+        );
+        for (const result of searchResults) {
+          if (result.url.includes('github.com') && !repos.some(r => r.url === result.url)) {
+            repos.push({
+              url: result.url,
+              stars: 0, // Unknown from web search
+            });
+          }
+        }
+        this.logger.log(`Added ${repos.length} total repos after Tavily search`);
+      } catch (error) {
+        this.logger.warn(`Tavily search for repos failed: ${error.message}`);
+      }
+    }
+
+    // Sort by stars (descending) and limit to 5
+    return repos.sort((a, b) => b.stars - a.stars).slice(0, 5);
+  }
+
+  /**
+   * Helper: Search GitHub repositories
+   *
+   * Uses Octokit to search GitHub repositories
+   *
+   * @param query - Search query string
+   * @param limit - Maximum number of results
+   * @returns Array of repository info
+   */
+  private async searchGitHubRepos(query: string, limit: number): Promise<Array<{url: string; stars: number; name: string}>> {
+    const { Octokit } = await import('@octokit/rest');
+    const octokit = new Octokit({
+      auth: process.env.GITHUB_TOKEN,
+    });
+
+    const response = await octokit.search.repos({
+      q: query,
+      sort: 'stars',
+      order: 'desc',
+      per_page: limit,
+    });
+
+    return response.data.items.map(repo => ({
+      url: repo.html_url,
+      stars: repo.stargazers_count,
+      name: repo.full_name,
+    }));
   }
 
   /**
    * Find Official Documentation
    *
-   * Uses web search to find official API documentation
+   * Uses Tavily web search to find official API documentation.
+   * Prioritizes official domains and developer documentation sites.
    *
    * @param serviceName - Service name (e.g., "Stripe API")
-   * @returns Official documentation URL
+   * @returns Official documentation URL and description
    */
   private async findOfficialDocumentation(serviceName: string): Promise<{url?: string; description?: string}> {
     this.logger.log(`Finding official docs for: ${serviceName}`);
 
-    // TODO: Implement web search for official docs
-    // For MVP, return empty (graceful degradation)
-    return {};
+    if (!process.env.TAVILY_API_KEY) {
+      this.logger.warn('TAVILY_API_KEY not configured, skipping doc search');
+      return {};
+    }
+
+    try {
+      // Search for official documentation with multiple queries
+      const queries = [
+        `${serviceName} API documentation official`,
+        `${serviceName} developer docs REST API`,
+        `${serviceName} API reference`,
+      ];
+
+      for (const query of queries) {
+        const results = await this.tavilySearch(query, 5);
+
+        for (const result of results) {
+          // Prioritize official domains
+          if (this.isOfficialDomain(result.url, serviceName)) {
+            this.logger.log(`Found official docs: ${result.url}`);
+            return {
+              url: result.url,
+              description: result.title || result.snippet,
+            };
+          }
+        }
+      }
+
+      // If no official domain found, return the first documentation-like result
+      const fallbackResults = await this.tavilySearch(`${serviceName} API documentation`, 3);
+      for (const result of fallbackResults) {
+        if (this.isDocumentationUrl(result.url)) {
+          this.logger.log(`Found fallback docs: ${result.url}`);
+          return {
+            url: result.url,
+            description: result.title || result.snippet,
+          };
+        }
+      }
+
+      this.logger.warn(`No official documentation found for ${serviceName}`);
+      return {};
+    } catch (error) {
+      this.logger.warn(`Documentation search failed: ${error.message}`);
+      return {};
+    }
+  }
+
+  /**
+   * Helper: Check if URL is from an official domain for the service
+   *
+   * @param url - URL to check
+   * @param serviceName - Service name to match
+   * @returns true if URL appears to be official
+   */
+  private isOfficialDomain(url: string, serviceName: string): boolean {
+    try {
+      const lowerService = serviceName.toLowerCase().replace(/\s+/g, '').replace(/api$/i, '');
+      const domain = new URL(url).hostname.toLowerCase();
+
+      // Check if domain contains service name
+      if (domain.includes(lowerService)) {
+        return true;
+      }
+
+      // Check for common official patterns
+      if (domain.startsWith('developer.') || domain.startsWith('docs.') || domain.startsWith('api.')) {
+        return true;
+      }
+
+      return false;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Helper: Check if URL looks like documentation
+   *
+   * @param url - URL to check
+   * @returns true if URL appears to be documentation
+   */
+  private isDocumentationUrl(url: string): boolean {
+    const lowerUrl = url.toLowerCase();
+    return (
+      lowerUrl.includes('/docs') ||
+      lowerUrl.includes('/api') ||
+      lowerUrl.includes('/reference') ||
+      lowerUrl.includes('/documentation') ||
+      lowerUrl.includes('developer')
+    );
+  }
+
+  /**
+   * Helper: Search using Tavily API
+   *
+   * Performs web search using Tavily's search API for finding documentation,
+   * repositories, and other relevant content.
+   *
+   * @param query - Search query string
+   * @param maxResults - Maximum number of results to return
+   * @returns Array of search results with url, title, and snippet
+   */
+  private async tavilySearch(
+    query: string,
+    maxResults: number = 5
+  ): Promise<Array<{ url: string; title: string; snippet: string; score: number }>> {
+    const tavilyApiKey = process.env.TAVILY_API_KEY;
+
+    if (!tavilyApiKey) {
+      throw new Error('TAVILY_API_KEY not configured');
+    }
+
+    try {
+      const response = await axios.post(
+        'https://api.tavily.com/search',
+        {
+          api_key: tavilyApiKey,
+          query,
+          search_depth: 'basic',
+          include_answer: false,
+          include_raw_content: false,
+          max_results: maxResults,
+        },
+        {
+          headers: { 'Content-Type': 'application/json' },
+          timeout: 10000,
+        }
+      );
+
+      if (!response.data?.results) {
+        return [];
+      }
+
+      return response.data.results.map((result: any) => ({
+        url: result.url,
+        title: result.title || '',
+        snippet: result.content || result.snippet || '',
+        score: result.score || 0.5,
+      }));
+    } catch (error) {
+      this.logger.warn(`Tavily search failed for "${query}": ${error.message}`);
+      throw error;
+    }
   }
 
   /**
