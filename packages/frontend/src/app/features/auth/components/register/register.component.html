@@ -1,0 +1,111 @@
+<div class="auth-container">
+  <div class="auth-card">
+    <div class="auth-header">
+      <h1>Create your account</h1>
+      <p>Start generating MCP servers with AI</p>
+    </div>
+
+    <div class="oauth-buttons">
+      <button mat-stroked-button class="oauth-button github" (click)="loginWithGitHub()">
+        <mat-icon svgIcon="github">code</mat-icon>
+        <span>Sign up with GitHub</span>
+      </button>
+      <button mat-stroked-button class="oauth-button google" (click)="loginWithGoogle()">
+        <mat-icon>g_mobiledata</mat-icon>
+        <span>Sign up with Google</span>
+      </button>
+    </div>
+
+    <div class="divider">
+      <span>or sign up with email</span>
+    </div>
+
+    <form [formGroup]="registerForm" (ngSubmit)="onSubmit()" class="auth-form">
+      <mat-form-field appearance="outline" class="full-width">
+        <mat-label>Full Name</mat-label>
+        <input matInput formControlName="name" type="text" autocomplete="name">
+        <mat-icon matPrefix>person</mat-icon>
+        @if (nameControl?.hasError('required') && nameControl?.touched) {
+          <mat-error>Name is required</mat-error>
+        }
+        @if (nameControl?.hasError('minlength') && nameControl?.touched) {
+          <mat-error>Name must be at least 2 characters</mat-error>
+        }
+      </mat-form-field>
+
+      <mat-form-field appearance="outline" class="full-width">
+        <mat-label>Email</mat-label>
+        <input matInput formControlName="email" type="email" autocomplete="email">
+        <mat-icon matPrefix>email</mat-icon>
+        @if (emailControl?.hasError('required') && emailControl?.touched) {
+          <mat-error>Email is required</mat-error>
+        }
+        @if (emailControl?.hasError('email') && emailControl?.touched) {
+          <mat-error>Please enter a valid email address</mat-error>
+        }
+      </mat-form-field>
+
+      <mat-form-field appearance="outline" class="full-width">
+        <mat-label>Password</mat-label>
+        <input matInput formControlName="password" [type]="hidePassword ? 'password' : 'text'" autocomplete="new-password">
+        <mat-icon matPrefix>lock</mat-icon>
+        <button mat-icon-button matSuffix (click)="togglePasswordVisibility()" type="button">
+          <mat-icon>{{ hidePassword ? 'visibility_off' : 'visibility' }}</mat-icon>
+        </button>
+        @if (passwordControl?.hasError('required') && passwordControl?.touched) {
+          <mat-error>Password is required</mat-error>
+        }
+        @if (passwordControl?.hasError('minlength') && passwordControl?.touched) {
+          <mat-error>Password must be at least 8 characters</mat-error>
+        }
+        @if (passwordControl?.hasError('passwordStrength') && passwordControl?.touched) {
+          <mat-error>Password must contain uppercase, lowercase, and a number</mat-error>
+        }
+      </mat-form-field>
+
+      <mat-form-field appearance="outline" class="full-width">
+        <mat-label>Confirm Password</mat-label>
+        <input matInput formControlName="confirmPassword" [type]="hideConfirmPassword ? 'password' : 'text'" autocomplete="new-password">
+        <mat-icon matPrefix>lock_outline</mat-icon>
+        <button mat-icon-button matSuffix (click)="toggleConfirmPasswordVisibility()" type="button">
+          <mat-icon>{{ hideConfirmPassword ? 'visibility_off' : 'visibility' }}</mat-icon>
+        </button>
+        @if (confirmPasswordControl?.hasError('required') && confirmPasswordControl?.touched) {
+          <mat-error>Please confirm your password</mat-error>
+        }
+        @if (confirmPasswordControl?.hasError('passwordMismatch') && confirmPasswordControl?.touched) {
+          <mat-error>Passwords do not match</mat-error>
+        }
+      </mat-form-field>
+
+      <div class="terms-checkbox">
+        <mat-checkbox formControlName="acceptTerms" color="primary">
+          I agree to the <a href="/terms" target="_blank">Terms of Service</a> and <a href="/privacy" target="_blank">Privacy Policy</a>
+        </mat-checkbox>
+        @if (acceptTermsControl?.hasError('required') && acceptTermsControl?.touched) {
+          <div class="terms-error">You must accept the terms to continue</div>
+        }
+      </div>
+
+      @if (error) {
+        <div class="error-message">
+          <mat-icon>error</mat-icon>
+          <span>{{ error }}</span>
+        </div>
+      }
+
+      <button mat-flat-button color="primary" type="submit" [disabled]="isLoading" class="submit-button">
+        @if (isLoading) {
+          <mat-spinner diameter="20"></mat-spinner>
+        } @else {
+          <span>Create account</span>
+        }
+      </button>
+    </form>
+
+    <div class="auth-footer">
+      <span>Already have an account?</span>
+      <a routerLink="/auth/login">Sign in</a>
+    </div>
+  </div>
+</div>
