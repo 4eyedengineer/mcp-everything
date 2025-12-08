@@ -7,6 +7,84 @@
       <p class="subtitle">Browse and discover AI-generated MCP servers from various sources</p>
     </div>
 
+    <!-- Featured Section -->
+    <section class="featured-section" *ngIf="(featuredServers$ | async)?.length">
+      <div class="section-header">
+        <h2>
+          <mat-icon>star</mat-icon>
+          Featured Servers
+        </h2>
+      </div>
+      <div class="featured-grid">
+        <mcp-server-card
+          *ngFor="let server of featuredServers$ | async"
+          [server]="server"
+          (viewDetails)="viewDetails($event)"
+          (download)="downloadServer($event)">
+        </mcp-server-card>
+      </div>
+    </section>
+
+    <!-- Search & Filters Section -->
+    <section class="filters-section">
+      <div class="search-bar">
+        <mat-icon class="search-icon">search</mat-icon>
+        <input
+          type="text"
+          placeholder="Search MCP servers..."
+          [value]="searchQuery"
+          (input)="onSearchChange($event)"
+          class="search-input"
+        />
+        <button *ngIf="searchQuery" class="clear-search" (click)="searchQuery = ''; onCategoryChange()">
+          <mat-icon>close</mat-icon>
+        </button>
+      </div>
+
+      <div class="filter-controls">
+        <div class="filter-group">
+          <label>Category</label>
+          <select [(ngModel)]="selectedCategory" (ngModelChange)="onCategoryChange()" class="filter-select">
+            <option value="">All Categories</option>
+            <option *ngFor="let cat of categories$ | async" [value]="cat.key">
+              {{ cat.name }} <span *ngIf="cat.serverCount">({{ cat.serverCount }})</span>
+            </option>
+          </select>
+        </div>
+
+        <div class="filter-group">
+          <label>Sort By</label>
+          <select [(ngModel)]="selectedSort" (ngModelChange)="onSortChange()" class="filter-select">
+            <option value="downloads">Most Downloaded</option>
+            <option value="rating">Highest Rated</option>
+            <option value="recent">Most Recent</option>
+            <option value="name">Name (A-Z)</option>
+          </select>
+        </div>
+
+        <button *ngIf="hasFilters" class="clear-filters-btn" (click)="clearFilters()">
+          <mat-icon>filter_alt_off</mat-icon>
+          Clear Filters
+        </button>
+      </div>
+    </section>
+
+    <!-- Results Info -->
+    <div class="results-info" *ngIf="!isLoading && totalItems > 0">
+      <span>Showing {{ (servers$ | async)?.length }} of {{ totalItems }} servers</span>
+    </div>
+
+    <!-- Error State -->
+    <div class="error-state" *ngIf="error">
+      <mat-icon class="error-icon">error_outline</mat-icon>
+      <h3>Something went wrong</h3>
+      <p>{{ error }}</p>
+      <button class="primary-button" (click)="loadServers()">
+        <mat-icon>refresh</mat-icon>
+        <span>Try Again</span>
+      </button>
+    </div>
+
     <!-- Loading State -->
     <div class="loading-state" *ngIf="isLoading">
       <div class="spinner-container">
@@ -16,64 +94,42 @@
     </div>
 
     <!-- Empty State -->
-    <div class="empty-state" *ngIf="!isLoading && servers.length === 0">
+    <div class="empty-state" *ngIf="!isLoading && !error && (servers$ | async)?.length === 0">
       <mat-icon class="empty-icon">inbox</mat-icon>
-      <h3>No MCP servers yet</h3>
-      <p>Start by generating your first MCP server using the chat interface</p>
-      <button class="primary-button" routerLink="/chat">
-        <mat-icon>chat</mat-icon>
-        <span>Start Chatting</span>
-      </button>
+      <h3>No MCP servers found</h3>
+      <p *ngIf="hasFilters">Try adjusting your search or filters</p>
+      <p *ngIf="!hasFilters">Start by generating your first MCP server using the chat interface</p>
+      <div class="empty-actions">
+        <button *ngIf="hasFilters" class="secondary-button" (click)="clearFilters()">
+          <mat-icon>filter_alt_off</mat-icon>
+          <span>Clear Filters</span>
+        </button>
+        <button class="primary-button" routerLink="/chat">
+          <mat-icon>chat</mat-icon>
+          <span>Start Chatting</span>
+        </button>
+      </div>
     </div>
 
     <!-- Servers Grid -->
-    <div class="servers-grid" *ngIf="!isLoading && servers.length > 0">
-      <div *ngFor="let server of servers" class="server-card">
-        <!-- Card Header -->
-        <div class="card-header">
-          <div class="card-icon">
-            <mat-icon>memory</mat-icon>
-          </div>
-          <div class="card-title-section">
-            <h3 class="card-title">{{ server.name }}</h3>
-            <p class="card-subtitle">{{ server.source }}</p>
-          </div>
-        </div>
-
-        <!-- Card Content -->
-        <div class="card-content">
-          <p class="server-description">{{ server.description }}</p>
-
-          <!-- Tags -->
-          <div class="server-tags">
-            <span *ngFor="let tag of server.tags" class="tag">{{ tag }}</span>
-          </div>
-
-          <!-- Metadata -->
-          <div class="server-meta">
-            <span class="meta-item">
-              <mat-icon>calendar_today</mat-icon>
-              <span>{{ server.createdAt | date:'mediumDate' }}</span>
-            </span>
-            <span class="meta-item">
-              <mat-icon>download</mat-icon>
-              <span>{{ server.downloadCount }} downloads</span>
-            </span>
-          </div>
-        </div>
-
-        <!-- Card Actions -->
-        <div class="card-actions">
-          <button class="action-button secondary" (click)="viewDetails(server)">
-            <mat-icon>visibility</mat-icon>
-            <span>View Details</span>
-          </button>
-          <button class="action-button primary" (click)="downloadServer(server)">
-            <mat-icon>download</mat-icon>
-            <span>Download</span>
-          </button>
-        </div>
-      </div>
+    <div class="servers-grid" *ngIf="!isLoading && !error && (servers$ | async)?.length">
+      <mcp-server-card
+        *ngFor="let server of servers$ | async"
+        [server]="server"
+        (viewDetails)="viewDetails($event)"
+        (download)="downloadServer($event)">
+      </mcp-server-card>
     </div>
+
+    <!-- Pagination -->
+    <mat-paginator
+      *ngIf="!isLoading && !error && totalItems > pageSize"
+      [length]="totalItems"
+      [pageSize]="pageSize"
+      [pageIndex]="currentPage - 1"
+      [pageSizeOptions]="[10, 20, 50]"
+      (page)="onPageChange($event)"
+      class="paginator">
+    </mat-paginator>
   </div>
 </div>

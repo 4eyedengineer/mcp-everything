@@ -1,0 +1,52 @@
+<div class="server-card">
+  <!-- Card Header -->
+  <div class="card-header">
+    <div class="card-icon">
+      <mat-icon>{{ getCategoryIcon() }}</mat-icon>
+    </div>
+    <div class="card-title-section">
+      <h3 class="card-title">{{ server.name }}</h3>
+      <p class="card-subtitle">{{ getAuthorDisplay() }}</p>
+    </div>
+    <span *ngIf="server.featured" class="featured-badge">Featured</span>
+  </div>
+
+  <!-- Card Content -->
+  <div class="card-content">
+    <p class="server-description">{{ server.description }}</p>
+
+    <!-- Tags -->
+    <div class="server-tags" *ngIf="server.tags && server.tags.length > 0">
+      <span *ngFor="let tag of server.tags.slice(0, 3)" class="tag">{{ tag }}</span>
+      <span *ngIf="server.tags.length > 3" class="tag more">+{{ server.tags.length - 3 }}</span>
+    </div>
+
+    <!-- Metadata -->
+    <div class="server-meta">
+      <span class="meta-item">
+        <mat-icon>calendar_today</mat-icon>
+        <span>{{ server.createdAt | date:'mediumDate' }}</span>
+      </span>
+      <span class="meta-item">
+        <mat-icon>download</mat-icon>
+        <span>{{ server.downloadCount | number }} downloads</span>
+      </span>
+      <span class="meta-item" *ngIf="server.rating > 0">
+        <mat-icon>star</mat-icon>
+        <span>{{ server.rating | number:'1.1-1' }} ({{ server.ratingCount }})</span>
+      </span>
+    </div>
+  </div>
+
+  <!-- Card Actions -->
+  <div class="card-actions" *ngIf="showActions">
+    <button class="action-button secondary" (click)="onViewDetails()">
+      <mat-icon>visibility</mat-icon>
+      <span>View Details</span>
+    </button>
+    <button class="action-button primary" (click)="onDownload()">
+      <mat-icon>download</mat-icon>
+      <span>Download</span>
+    </button>
+  </div>
+</div>
