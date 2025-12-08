@@ -1,9 +1,12 @@
 import { Module } from '@nestjs/common';
+import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule as NestConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
 // Simple controller for basic testing
 import { Controller, Get, Post, Body, Injectable, Logger } from '@nestjs/common';
+import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
+import { Public } from './auth/decorators/public.decorator';
 import { IsString, IsUrl, IsOptional } from 'class-validator';
 import { ConversationService } from './conversation.service';
 import { GitHubAnalysisService } from './github-analysis.service';
@@ -51,11 +54,13 @@ export class AppController {
     private readonly mcpGenerationService: McpGenerationService
   ) {}
 
+  @Public()
   @Get()
   getHello(): string {
     return 'MCP Everything Backend is running!';
   }
 
+  @Public()
   @Post('chat')
   async chat(@Body() chatDto: ChatDto): Promise<object> {
     try {
@@ -72,6 +77,7 @@ export class AppController {
     }
   }
 
+  @Public()
   @Post('analyze')
   async analyzeRepository(@Body() generateDto: GenerateServerDto): Promise<object> {
     try {
@@ -89,6 +95,7 @@ export class AppController {
     }
   }
 
+  @Public()
   @Post('discover-tools')
   async discoverTools(@Body() generateDto: GenerateServerDto): Promise<object> {
     try {
@@ -117,6 +124,7 @@ export class AppController {
     }
   }
 
+  @Public()
   @Post('generate-mcp')
   async generateMcpServer(@Body() generateDto: GenerateServerDto): Promise<object> {
     try {
@@ -134,6 +142,7 @@ export class AppController {
     }
   }
 
+  @Public()
   @Post('generate')
   async generateMcpServerSimple(@Body() generateDto: GenerateServerDto): Promise<object> {
     // Simple template-based generation for testing
@@ -304,6 +313,12 @@ main().catch((error) => {
   ],
   controllers: [AppController],
   providers: [
+    // Global JWT authentication guard - protects all routes by default
+    // Use @Public() decorator to make specific routes accessible without authentication
+    {
+      provide: APP_GUARD,
+      useClass: JwtAuthGuard,
+    },
     GitHubAnalysisService,
     ConversationService,
     ToolDiscoveryService,

@@ -3,6 +3,7 @@ import { Observable, Subject } from 'rxjs';
 import { map } from 'rxjs/operators';
 import { GraphOrchestrationService } from '../orchestration/graph.service';
 import { GraphState } from '../orchestration/types';
+import { Public } from '../auth/decorators/public.decorator';
 
 interface ChatRequest {
   message: string;
@@ -314,6 +315,7 @@ export class ChatController implements OnModuleDestroy {
   /**
    * Health check endpoint
    */
+  @Public()
   @Get('health')
   health(): { status: string; timestamp: Date; activeSessions: number } {
     return {

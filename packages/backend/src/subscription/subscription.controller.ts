@@ -5,20 +5,13 @@ import {
   Body,
   HttpCode,
   HttpStatus,
-  Req,
-  UnauthorizedException,
 } from '@nestjs/common';
-import { Request } from 'express';
 import { SubscriptionService } from './subscription.service';
 import { UserService } from '../user/user.service';
 import { CreateCheckoutDto, SubscriptionDto, UsageDto, TierInfoDto } from './dto/subscription.dto';
 import { TIER_CONFIG, UserTier } from './tier-config';
 import { User } from '../database/entities/user.entity';
-
-// TODO: Replace with proper auth guard once authentication is implemented
-function getCurrentUser(req: Request): User | null {
-  return (req as any).user || null;
-}
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
 
 @Controller('api/subscription')
 export class SubscriptionController {
@@ -28,12 +21,7 @@ export class SubscriptionController {
   ) {}
 
   @Get()
-  async getSubscription(@Req() req: Request): Promise<SubscriptionDto> {
-    const user = getCurrentUser(req);
-    if (!user) {
-      throw new UnauthorizedException('Not authenticated');
-    }
-
+  async getSubscription(@CurrentUser() user: User): Promise<SubscriptionDto> {
     const subscription = await this.subscriptionService.getActiveSubscription(user.id);
     return {
       tier: (user.tier as 'free' | 'pro' | 'enterprise') || 'free',
@@ -45,12 +33,7 @@ export class SubscriptionController {
   }
 
   @Get('tier')
-  async getTierInfo(@Req() req: Request): Promise<TierInfoDto> {
-    const user = getCurrentUser(req);
-    if (!user) {
-      throw new UnauthorizedException('Not authenticated');
-    }
-
+  async getTierInfo(@CurrentUser() user: User): Promise<TierInfoDto> {
     const usage = await this.userService.getCurrentUsage(user.id);
     const tierConfig = TIER_CONFIG[(user.tier as UserTier) || UserTier.FREE];
 
@@ -74,26 +57,16 @@ export class SubscriptionController {
   }
 
   @Get('usage')
-  async getUsage(@Req() req: Request): Promise<UsageDto> {
-    const user = getCurrentUser(req);
-    if (!user) {
-      throw new UnauthorizedException('Not authenticated');
-    }
-
+  async getUsage(@CurrentUser() user: User): Promise<UsageDto> {
     return this.userService.getUsageStats(user.id);
   }
 
   @Post('checkout')
   @HttpCode(HttpStatus.OK)
   async createCheckout(
-    @Req() req: Request,
+    @CurrentUser() user: User,
     @Body() dto: CreateCheckoutDto,
   ): Promise<{ sessionId: string; url: string }> {
-    const user = getCurrentUser(req);
-    if (!user) {
-      throw new UnauthorizedException('Not authenticated');
-    }
-
     return this.subscriptionService.createCheckoutSession(
       user.id,
       dto.tier,
@@ -103,12 +76,7 @@ export class SubscriptionController {
 
   @Post('portal')
   @HttpCode(HttpStatus.OK)
-  async createPortal(@Req() req: Request): Promise<{ url: string }> {
-    const user = getCurrentUser(req);
-    if (!user) {
-      throw new UnauthorizedException('Not authenticated');
-    }
-
+  async createPortal(@CurrentUser() user: User): Promise<{ url: string }> {
     return this.subscriptionService.createPortalSession(user.id);
   }
 }

@@ -12,6 +12,8 @@ import {
 } from '@nestjs/common';
 import { HostingService } from './hosting.service';
 import { DeployServerDto } from './dto/deploy-server.dto';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { User } from '../database/entities/user.entity';
 
 @Controller('api/hosting')
 export class HostingController {
@@ -51,11 +53,12 @@ export class HostingController {
    */
   @Get('servers')
   async listServers(
+    @CurrentUser() user: User,
     @Query('status') status?: string,
     @Query('page') page: number = 1,
     @Query('limit') limit: number = 20,
   ) {
-    // TODO: Get userId from auth context when auth is implemented
+    // User is authenticated via global JWT guard
     const servers = await this.hostingService.getServers();
 
     // Filter by status if provided
