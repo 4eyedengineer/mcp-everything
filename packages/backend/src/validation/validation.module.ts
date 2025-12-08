@@ -8,6 +8,7 @@ import { ValidationService } from './validation.service';
 import { ValidationController } from './validation.controller';
 import { LocalDockerValidatorProvider } from './providers/local-docker-validator.provider';
 import { GitHubActionsValidatorProvider } from './providers/github-actions-validator.provider';
+import { McpProtocolValidatorService } from './mcp-protocol-validator.service';
 import { DeploymentModule } from '../deployment/deployment.module';
 
 /**
@@ -27,7 +28,8 @@ import { DeploymentModule } from '../deployment/deployment.module';
     LocalDockerValidatorProvider,
     GitHubActionsValidatorProvider,
     McpTestingService,
+    McpProtocolValidatorService,
   ],
-  exports: [ValidationService],
+  exports: [ValidationService, McpProtocolValidatorService],
 })
 export class ValidationModule {}
