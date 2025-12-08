@@ -6,3 +6,4 @@ export { User } from './user.entity';
 export { Subscription } from './subscription.entity';
 export { UsageRecord } from './usage.entity';
 export { HostedServer } from './hosted-server.entity';
+export { ErrorLog } from './error-log.entity';
