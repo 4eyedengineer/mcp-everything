@@ -6,7 +6,10 @@ import {
   UseGuards,
   HttpCode,
   HttpStatus,
+  Res,
 } from '@nestjs/common';
+import { Response } from 'express';
+import { ConfigService } from '@nestjs/config';
 import {
   ApiTags,
   ApiOperation,
@@ -22,14 +25,19 @@ import { TokenResponseDto, RefreshTokenDto } from './dto/token-response.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { JwtRefreshGuard } from './guards/jwt-refresh.guard';
 import { LocalAuthGuard } from './guards/local-auth.guard';
+import { GitHubAuthGuard } from './guards/github-auth.guard';
 import { CurrentUser } from './decorators/current-user.decorator';
 import { Public } from './decorators/public.decorator';
 import { User } from '../database/entities/user.entity';
+import { GitHubProfile } from './strategies/github.strategy';
 
 @ApiTags('Authentication')
 @Controller('api/v1/auth')
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(
+    private readonly authService: AuthService,
+    private readonly configService: ConfigService,
+  ) {}
 
   @Post('register')
   @Public()
@@ -133,5 +141,39 @@ export class AuthController {
       isEmailVerified: user.isEmailVerified,
       createdAt: user.createdAt,
     };
+  }
+
+  @Get('github')
+  @Public()
+  @UseGuards(GitHubAuthGuard)
+  @ApiOperation({ summary: 'Initiate GitHub OAuth flow' })
+  @ApiResponse({ status: 302, description: 'Redirects to GitHub for authentication' })
+  async githubAuth() {
+    // Initiates GitHub OAuth flow - handled by GitHubAuthGuard
+  }
+
+  @Get('github/callback')
+  @Public()
+  @UseGuards(GitHubAuthGuard)
+  @ApiOperation({ summary: 'GitHub OAuth callback' })
+  @ApiResponse({ status: 302, description: 'Redirects to frontend with tokens' })
+  @ApiResponse({ status: 401, description: 'GitHub authentication failed' })
+  async githubAuthCallback(
+    @CurrentUser() profile: GitHubProfile,
+    @Res() res: Response,
+  ) {
+    const tokens = await this.authService.validateOAuthUser({
+      provider: 'github',
+      providerId: profile.id,
+      email: profile.email,
+      username: profile.username,
+      accessToken: profile.accessToken,
+    });
+
+    // Redirect to frontend with tokens as query parameters
+    const frontendUrl = this.configService.get<string>('FRONTEND_URL', 'http://localhost:4200');
+    res.redirect(
+      `${frontendUrl}/auth/callback?token=${tokens.accessToken}&refresh=${tokens.refreshToken}`,
+    );
   }
 }
