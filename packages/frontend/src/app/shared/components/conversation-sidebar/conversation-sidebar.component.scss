@@ -197,6 +197,92 @@
   }
 }
 
+// Usage Section
+.usage-section {
+  flex-shrink: 0;
+  padding: 12px 16px;
+  border-top: 1px solid #e5e5e5;
+  background-color: #f5f5f5;
+
+  .usage-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+    color: #6b6b6b;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+
+    mat-icon {
+      font-size: 16px;
+      width: 16px;
+      height: 16px;
+    }
+  }
+
+  .usage-stats {
+    .usage-count {
+      font-size: 13px;
+      color: #1f1f1f;
+      margin-bottom: 6px;
+
+      &.unlimited {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        color: #4caf50;
+
+        mat-icon {
+          font-size: 16px;
+          width: 16px;
+          height: 16px;
+        }
+      }
+    }
+
+    mat-progress-bar {
+      height: 6px;
+      border-radius: 3px;
+      margin-bottom: 4px;
+
+      ::ng-deep .mdc-linear-progress__buffer {
+        background-color: #e0e0e0;
+      }
+    }
+
+    .usage-remaining {
+      font-size: 11px;
+      color: #8e8e8e;
+    }
+
+    .usage-limit-reached {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 12px;
+      color: #f57c00;
+
+      mat-icon {
+        font-size: 14px;
+        width: 14px;
+        height: 14px;
+      }
+
+      a {
+        color: #1976d2;
+        text-decoration: none;
+        font-weight: 500;
+
+        &:hover {
+          text-decoration: underline;
+        }
+      }
+    }
+  }
+}
+
 // Footer
 .sidebar-footer {
   flex-shrink: 0;
