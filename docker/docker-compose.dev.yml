@@ -1,0 +1,103 @@
+services:
+  # PostgreSQL Database with pgvector extension for vector similarity search
+  postgres:
+    image: pgvector/pgvector:pg15
+    container_name: mcp-dev-postgres
+    environment:
+      POSTGRES_USER: mcp
+      POSTGRES_PASSWORD: mcp_secret
+      POSTGRES_DB: mcp_everything
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../scripts/init-db.sql:/docker-entrypoint-initdb.d/01-init-db.sql
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mcp"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Redis for caching and job queues
+  redis:
+    image: redis:7-alpine
+    container_name: mcp-dev-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Backend API
+  backend:
+    build:
+      context: ..
+      dockerfile: packages/backend/Dockerfile.dev
+    container_name: mcp-dev-backend
+    environment:
+      NODE_ENV: development
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: mcp
+      POSTGRES_PASSWORD: mcp_secret
+      POSTGRES_DB: mcp_everything
+      DATABASE_URL: postgresql://mcp:mcp_secret@postgres:5432/mcp_everything
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_URL: redis://redis:6379
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      GITHUB_TOKEN: ${GITHUB_TOKEN}
+      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-key-change-in-production}
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ../packages/backend/src:/app/packages/backend/src
+      - ../packages/shared/src:/app/packages/shared/src
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ../generated-servers:/app/generated-servers
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/v1/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # Frontend (Angular development server)
+  frontend:
+    build:
+      context: ..
+      dockerfile: packages/frontend/Dockerfile.dev
+    container_name: mcp-dev-frontend
+    environment:
+      API_URL: http://backend:3000
+    ports:
+      - "4200:4200"
+    depends_on:
+      backend:
+        condition: service_healthy
+    volumes:
+      - ../packages/frontend/src:/app/packages/frontend/src
+
+  # Local container registry for MCP server hosting
+  registry:
+    image: registry:2
+    container_name: mcp-dev-registry
+    ports:
+      - "5001:5000"
+    environment:
+      REGISTRY_STORAGE_DELETE_ENABLED: "true"
+
+volumes:
+  postgres_data:
+
+networks:
+  default:
+    name: mcp-dev-network

@@ -32,7 +32,12 @@
     "docker:build": "docker-compose build",
     "docker:up": "docker-compose up -d",
     "docker:down": "docker-compose down",
-    "setup:check": "node scripts/setup-check.js"
+    "setup:check": "node scripts/setup-check.js",
+    "dev:all": "./scripts/dev-start.sh",
+    "dev:up": "docker-compose -f docker/docker-compose.dev.yml up -d",
+    "dev:down": "docker-compose -f docker/docker-compose.dev.yml down",
+    "dev:logs": "docker-compose -f docker/docker-compose.dev.yml logs -f",
+    "dev:reset": "docker-compose -f docker/docker-compose.dev.yml down -v && npm run dev:all"
   },
   "dependencies": {
     "@types/libsodium-wrappers": "^0.7.14",

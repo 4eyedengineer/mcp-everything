@@ -1,0 +1,29 @@
+# Development Dockerfile for Angular with hot-reload support
+FROM node:20-alpine
+
+# Install system dependencies
+RUN apk add --no-cache python3 make g++
+
+# Set working directory
+WORKDIR /app
+
+# Copy package files from monorepo root
+COPY package*.json ./
+COPY packages/frontend/package*.json ./packages/frontend/
+COPY packages/shared/package*.json ./packages/shared/
+
+# Install all dependencies (including dev)
+RUN npm ci
+
+# Copy source code (will be overridden by volume mounts for hot reload)
+COPY packages/shared ./packages/shared
+COPY packages/frontend ./packages/frontend
+
+# Build shared package
+RUN npm run build --workspace=@mcp-everything/shared
+
+# Expose port
+EXPOSE 4200
+
+# Run with host binding for container access
+CMD ["npm", "run", "start", "--workspace=@mcp-everything/frontend", "--", "--host", "0.0.0.0"]
