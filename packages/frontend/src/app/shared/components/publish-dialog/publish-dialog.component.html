@@ -1,0 +1,134 @@
+<div class="publish-dialog">
+  <h2 mat-dialog-title>
+    <mat-icon>publish</mat-icon>
+    Publish to Marketplace
+  </h2>
+
+  <mat-dialog-content>
+    <form [formGroup]="publishForm" class="publish-form">
+      <!-- Name Field -->
+      <mat-form-field appearance="outline" class="full-width">
+        <mat-label>Server Name</mat-label>
+        <input matInput formControlName="name" placeholder="My MCP Server" />
+        <mat-icon matPrefix>label</mat-icon>
+        <mat-error *ngIf="nameError">{{ nameError }}</mat-error>
+        <mat-hint>A unique, descriptive name for your server</mat-hint>
+      </mat-form-field>
+
+      <!-- Description Field -->
+      <mat-form-field appearance="outline" class="full-width">
+        <mat-label>Short Description</mat-label>
+        <textarea
+          matInput
+          formControlName="description"
+          placeholder="A brief description of what your MCP server does..."
+          rows="2"
+        ></textarea>
+        <mat-icon matPrefix>short_text</mat-icon>
+        <mat-error *ngIf="descriptionError">{{ descriptionError }}</mat-error>
+        <mat-hint align="end">{{ publishForm.get('description')?.value?.length || 0 }}/500</mat-hint>
+      </mat-form-field>
+
+      <!-- Long Description Field -->
+      <mat-form-field appearance="outline" class="full-width">
+        <mat-label>Long Description (Optional)</mat-label>
+        <textarea
+          matInput
+          formControlName="longDescription"
+          placeholder="A detailed description including features, use cases, examples..."
+          rows="5"
+        ></textarea>
+        <mat-icon matPrefix>notes</mat-icon>
+        <mat-hint align="end">{{ publishForm.get('longDescription')?.value?.length || 0 }}/5000</mat-hint>
+      </mat-form-field>
+
+      <!-- Category Field -->
+      <mat-form-field appearance="outline" class="full-width">
+        <mat-label>Category</mat-label>
+        <mat-select formControlName="category">
+          <mat-option *ngFor="let cat of categories" [value]="cat.value">
+            <span class="category-option">
+              <span class="category-label">{{ cat.label }}</span>
+              <span class="category-desc">{{ cat.description }}</span>
+            </span>
+          </mat-option>
+        </mat-select>
+        <mat-icon matPrefix>category</mat-icon>
+        <mat-error *ngIf="categoryError">{{ categoryError }}</mat-error>
+      </mat-form-field>
+
+      <!-- Tags Field -->
+      <div class="tags-field">
+        <label class="tags-label">Tags (Optional)</label>
+        <mat-chip-grid #chipGrid>
+          <mat-chip-row *ngFor="let tag of tags" (removed)="removeTag(tag)">
+            {{ tag }}
+            <button matChipRemove>
+              <mat-icon>cancel</mat-icon>
+            </button>
+          </mat-chip-row>
+          <input
+            placeholder="Add tags..."
+            [matChipInputFor]="chipGrid"
+            [matChipInputSeparatorKeyCodes]="separatorKeyCodes"
+            (matChipInputTokenEnd)="addTag($event)"
+          />
+        </mat-chip-grid>
+        <span class="tags-hint">Press Enter, comma, or space to add tags (max 10)</span>
+      </div>
+
+      <!-- Visibility Field -->
+      <mat-form-field appearance="outline" class="full-width">
+        <mat-label>Visibility</mat-label>
+        <mat-select formControlName="visibility">
+          <mat-option *ngFor="let vis of visibilityOptions" [value]="vis.value">
+            <span class="visibility-option">
+              <span class="visibility-label">{{ vis.label }}</span>
+              <span class="visibility-desc">{{ vis.description }}</span>
+            </span>
+          </mat-option>
+        </mat-select>
+        <mat-icon matPrefix>visibility</mat-icon>
+      </mat-form-field>
+
+      <!-- Server Preview -->
+      <div class="server-preview" *ngIf="data.tools?.length || data.resources?.length">
+        <h4>Server Contents</h4>
+        <div class="preview-section" *ngIf="data.tools?.length">
+          <span class="preview-label">
+            <mat-icon>build</mat-icon>
+            {{ data.tools.length }} Tool{{ data.tools.length > 1 ? 's' : '' }}
+          </span>
+          <div class="preview-items">
+            <span *ngFor="let tool of data.tools.slice(0, 5)" class="preview-item">{{ tool.name }}</span>
+            <span *ngIf="data.tools.length > 5" class="preview-more">+{{ data.tools.length - 5 }} more</span>
+          </div>
+        </div>
+        <div class="preview-section" *ngIf="data.resources?.length">
+          <span class="preview-label">
+            <mat-icon>folder</mat-icon>
+            {{ data.resources.length }} Resource{{ data.resources.length > 1 ? 's' : '' }}
+          </span>
+          <div class="preview-items">
+            <span *ngFor="let resource of data.resources.slice(0, 5)" class="preview-item">{{ resource.name }}</span>
+            <span *ngIf="data.resources.length > 5" class="preview-more">+{{ data.resources.length - 5 }} more</span>
+          </div>
+        </div>
+      </div>
+    </form>
+  </mat-dialog-content>
+
+  <mat-dialog-actions align="end">
+    <button mat-button (click)="onCancel()" [disabled]="isSubmitting">Cancel</button>
+    <button
+      mat-flat-button
+      color="primary"
+      (click)="onSubmit()"
+      [disabled]="isSubmitting || publishForm.invalid"
+    >
+      <mat-spinner *ngIf="isSubmitting" diameter="20"></mat-spinner>
+      <mat-icon *ngIf="!isSubmitting">publish</mat-icon>
+      <span>{{ isSubmitting ? 'Publishing...' : 'Publish' }}</span>
+    </button>
+  </mat-dialog-actions>
+</div>

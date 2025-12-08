@@ -102,6 +102,15 @@ export interface SearchParams {
   featured?: boolean;
 }
 
+export interface PublishServerRequest {
+  name: string;
+  description: string;
+  longDescription?: string;
+  category: McpServerCategory;
+  tags?: string[];
+  visibility: 'public' | 'private' | 'unlisted';
+}
+
 @Injectable({
   providedIn: 'root',
 })
@@ -166,6 +175,46 @@ export class MarketplaceService {
    */
   recordDownload(id: string): Observable<{ success: boolean }> {
     return this.http.post<{ success: boolean }>(`${this.apiUrl}/servers/${id}/download`, {});
+  }
+
+  /**
+   * Publish a generated MCP server from a conversation to the marketplace
+   */
+  publishFromConversation(
+    conversationId: string,
+    publishData: PublishServerRequest
+  ): Observable<ServerResponse> {
+    return this.http.post<ServerResponse>(
+      `${this.apiUrl}/servers/publish/${conversationId}`,
+      publishData
+    );
+  }
+
+  /**
+   * Update an existing server's metadata
+   */
+  updateServer(
+    id: string,
+    updateData: Partial<PublishServerRequest>
+  ): Observable<ServerResponse> {
+    return this.http.patch<ServerResponse>(`${this.apiUrl}/servers/${id}`, updateData);
+  }
+
+  /**
+   * Delete a server from the marketplace
+   */
+  deleteServer(id: string): Observable<{ success: boolean }> {
+    return this.http.delete<{ success: boolean }>(`${this.apiUrl}/servers/${id}`);
+  }
+
+  /**
+   * Get servers owned by the current user
+   */
+  getMyServers(params: SearchParams = {}): Observable<PaginatedResponse<ServerSummaryResponse>> {
+    const httpParams = this.buildParams(params);
+    return this.http.get<PaginatedResponse<ServerSummaryResponse>>(`${this.apiUrl}/servers/mine`, {
+      params: httpParams,
+    });
   }
 
   /**
