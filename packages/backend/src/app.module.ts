@@ -17,7 +17,8 @@ import { UserModule } from './user/user.module';
 import { SubscriptionModule } from './subscription/subscription.module';
 import { HostingModule } from './hosting/hosting.module';
 import { EmailModule } from './email/email.module';
-import { Conversation, ConversationMemory, Deployment, User, Subscription, UsageRecord, HostedServer } from './database/entities';
+import { LoggingModule } from './logging/logging.module';
+import { Conversation, ConversationMemory, Deployment, User, Subscription, UsageRecord, HostedServer, ErrorLog } from './database/entities';
 
 // Basic DTO for generate endpoint
 export class GenerateServerDto {
@@ -290,11 +291,12 @@ main().catch((error) => {
       username: process.env.DATABASE_USER || 'postgres',
       password: process.env.DATABASE_PASSWORD || 'postgres',
       database: process.env.DATABASE_NAME || 'mcp_everything',
-      entities: [Conversation, ConversationMemory, Deployment, User, Subscription, UsageRecord, HostedServer],
+      entities: [Conversation, ConversationMemory, Deployment, User, Subscription, UsageRecord, HostedServer, ErrorLog],
       synchronize: process.env.NODE_ENV !== 'production', // Auto-sync in development
       logging: process.env.NODE_ENV === 'development',
     }),
     TypeOrmModule.forFeature([Conversation, ConversationMemory, Deployment]),
+    LoggingModule, // Global error logging - must be early for filter availability
     ChatModule,
     DeploymentModule,
     ValidationModule,

@@ -5,7 +5,7 @@ import { ConfigService } from '@nestjs/config';
 import { Subscription } from '../database/entities/subscription.entity';
 import { UserService } from '../user/user.service';
 import { StripeService } from './stripe.service';
-import { UserTier, STRIPE_PRICES, getTierFromPriceId } from './tier-config';
+import { UserTier, getTierFromPriceId, getPriceIdForTier } from './tier-config';
 
 // Stripe webhook event types - using any for flexibility with Stripe API changes
 interface StripeSubscriptionData {
@@ -92,12 +92,7 @@ export class SubscriptionService {
     }
 
     // Get price ID based on tier and interval
-    let priceId: string;
-    if (tier === 'pro') {
-      priceId = interval === 'yearly' ? STRIPE_PRICES.PRO_YEARLY.priceId : STRIPE_PRICES.PRO_MONTHLY.priceId;
-    } else {
-      priceId = STRIPE_PRICES.ENTERPRISE_MONTHLY.priceId;
-    }
+    const priceId = getPriceIdForTier(tier, interval);
 
     const frontendUrl = this.configService.get<string>('FRONTEND_URL') || 'http://localhost:4200';
     const session = await this.stripeService.createCheckoutSession(
