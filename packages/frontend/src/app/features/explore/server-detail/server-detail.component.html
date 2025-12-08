@@ -1,0 +1,231 @@
+<!-- Server Detail Page -->
+<div class="server-detail-container">
+  <!-- Loading State -->
+  <div class="loading-state" *ngIf="isLoading">
+    <div class="spinner-container">
+      <mat-spinner diameter="40"></mat-spinner>
+    </div>
+    <p>Loading server details...</p>
+  </div>
+
+  <!-- Error State -->
+  <div class="error-state" *ngIf="error && !isLoading">
+    <mat-icon class="error-icon">error_outline</mat-icon>
+    <h3>Something went wrong</h3>
+    <p>{{ error }}</p>
+    <div class="error-actions">
+      <button class="secondary-button" (click)="goBack()">
+        <mat-icon>arrow_back</mat-icon>
+        <span>Back to Explore</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- Server Detail Content -->
+  <div class="server-detail-content" *ngIf="server && !isLoading && !error">
+    <!-- Back Navigation -->
+    <div class="back-nav">
+      <button class="back-button" (click)="goBack()">
+        <mat-icon>arrow_back</mat-icon>
+        <span>Back to Explore</span>
+      </button>
+    </div>
+
+    <!-- Header Section -->
+    <header class="server-header">
+      <div class="header-main">
+        <div class="server-icon">
+          <mat-icon>{{ getCategoryIcon() }}</mat-icon>
+        </div>
+        <div class="header-info">
+          <div class="title-row">
+            <h1>{{ server.name }}</h1>
+            <span *ngIf="server.featured" class="featured-badge">Featured</span>
+          </div>
+          <p class="server-description">{{ server.description }}</p>
+          <div class="header-meta">
+            <span class="meta-item">
+              <mat-icon>person</mat-icon>
+              <span>{{ getAuthorDisplay() }}</span>
+            </span>
+            <span class="meta-item">
+              <mat-icon>{{ getCategoryIcon() }}</mat-icon>
+              <span>{{ getCategoryLabel() }}</span>
+            </span>
+            <span class="meta-item">
+              <mat-icon>code</mat-icon>
+              <span>{{ getLanguageLabel() }}</span>
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <div class="header-actions">
+        <button class="primary-button" (click)="downloadServer()">
+          <mat-icon>download</mat-icon>
+          <span>Download</span>
+        </button>
+        <button *ngIf="server.repositoryUrl" class="secondary-button" (click)="openGitHub()">
+          <mat-icon>code</mat-icon>
+          <span>GitHub</span>
+        </button>
+        <button *ngIf="server.gistUrl && !server.repositoryUrl" class="secondary-button" (click)="openGist()">
+          <mat-icon>description</mat-icon>
+          <span>View Gist</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Stats Section -->
+    <section class="stats-section">
+      <div class="stat-card">
+        <mat-icon>download</mat-icon>
+        <div class="stat-info">
+          <span class="stat-value">{{ server.downloadCount | number }}</span>
+          <span class="stat-label">Downloads</span>
+        </div>
+      </div>
+      <div class="stat-card">
+        <mat-icon>visibility</mat-icon>
+        <div class="stat-info">
+          <span class="stat-value">{{ server.viewCount | number }}</span>
+          <span class="stat-label">Views</span>
+        </div>
+      </div>
+      <div class="stat-card" *ngIf="server.rating > 0">
+        <mat-icon>star</mat-icon>
+        <div class="stat-info">
+          <span class="stat-value">{{ server.rating | number:'1.1-1' }}</span>
+          <span class="stat-label">Rating ({{ server.ratingCount }} reviews)</span>
+        </div>
+      </div>
+      <div class="stat-card">
+        <mat-icon>calendar_today</mat-icon>
+        <div class="stat-info">
+          <span class="stat-value">{{ server.createdAt | date:'mediumDate' }}</span>
+          <span class="stat-label">Created</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Tags Section -->
+    <section class="tags-section" *ngIf="server.tags && server.tags.length > 0">
+      <h3>Tags</h3>
+      <mat-chip-set>
+        <mat-chip *ngFor="let tag of server.tags">{{ tag }}</mat-chip>
+      </mat-chip-set>
+    </section>
+
+    <!-- Installation Section -->
+    <section class="installation-section">
+      <h3>Installation</h3>
+      <div class="install-card">
+        <div class="install-command">
+          <code>{{ getInstallCommand() }}</code>
+          <button class="copy-button" (click)="copyInstallCommand()" matTooltip="Copy to clipboard">
+            <mat-icon>content_copy</mat-icon>
+          </button>
+        </div>
+        <p class="install-note">
+          Copy this command to install the MCP server in your Claude Desktop or other MCP-compatible client.
+        </p>
+      </div>
+    </section>
+
+    <!-- Long Description Section -->
+    <section class="description-section" *ngIf="server.longDescription">
+      <h3>About</h3>
+      <div class="long-description">
+        {{ server.longDescription }}
+      </div>
+    </section>
+
+    <!-- Tools Section -->
+    <section class="tools-section" *ngIf="server.tools && server.tools.length > 0">
+      <h3>
+        <mat-icon>build</mat-icon>
+        Tools ({{ server.tools.length }})
+      </h3>
+      <mat-accordion>
+        <mat-expansion-panel *ngFor="let tool of server.tools">
+          <mat-expansion-panel-header>
+            <mat-panel-title>
+              <mat-icon class="tool-icon">functions</mat-icon>
+              {{ tool.name }}
+            </mat-panel-title>
+            <mat-panel-description>
+              {{ tool.description }}
+            </mat-panel-description>
+          </mat-expansion-panel-header>
+          <div class="tool-details">
+            <h4>Description</h4>
+            <p>{{ tool.description }}</p>
+            <div class="schema-section" *ngIf="tool.inputSchema">
+              <h4>Input Schema</h4>
+              <pre class="schema-code">{{ formatInputSchema(tool.inputSchema) }}</pre>
+            </div>
+          </div>
+        </mat-expansion-panel>
+      </mat-accordion>
+    </section>
+
+    <!-- Resources Section -->
+    <section class="resources-section" *ngIf="server.resources && server.resources.length > 0">
+      <h3>
+        <mat-icon>folder</mat-icon>
+        Resources ({{ server.resources.length }})
+      </h3>
+      <div class="resources-list">
+        <div class="resource-card" *ngFor="let resource of server.resources">
+          <div class="resource-header">
+            <mat-icon>description</mat-icon>
+            <span class="resource-name">{{ resource.name }}</span>
+          </div>
+          <p class="resource-description">{{ resource.description }}</p>
+          <code class="resource-uri">{{ resource.uri }}</code>
+        </div>
+      </div>
+    </section>
+
+    <!-- Environment Variables Section -->
+    <section class="env-vars-section" *ngIf="server.envVars && server.envVars.length > 0">
+      <h3>
+        <mat-icon>vpn_key</mat-icon>
+        Required Environment Variables
+      </h3>
+      <div class="env-vars-list">
+        <div class="env-var-item" *ngFor="let envVar of server.envVars">
+          <code>{{ envVar }}</code>
+        </div>
+      </div>
+      <p class="env-note">
+        Set these environment variables before running the MCP server.
+      </p>
+    </section>
+
+    <!-- Links Section -->
+    <section class="links-section" *ngIf="hasLinks()">
+      <h3>
+        <mat-icon>link</mat-icon>
+        Links
+      </h3>
+      <div class="links-list">
+        <a *ngIf="server.repositoryUrl" [href]="server.repositoryUrl" target="_blank" class="link-card">
+          <mat-icon>code</mat-icon>
+          <span>GitHub Repository</span>
+          <mat-icon class="external-icon">open_in_new</mat-icon>
+        </a>
+        <a *ngIf="server.gistUrl" [href]="server.gistUrl" target="_blank" class="link-card">
+          <mat-icon>description</mat-icon>
+          <span>GitHub Gist</span>
+          <mat-icon class="external-icon">open_in_new</mat-icon>
+        </a>
+        <a *ngIf="server.downloadUrl" [href]="server.downloadUrl" target="_blank" class="link-card">
+          <mat-icon>download</mat-icon>
+          <span>Direct Download</span>
+          <mat-icon class="external-icon">open_in_new</mat-icon>
+        </a>
+      </div>
+    </section>
+  </div>
+</div>
