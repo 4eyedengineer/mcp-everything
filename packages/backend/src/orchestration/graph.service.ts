@@ -1,4 +1,4 @@
-import { Injectable, Logger, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, Logger, Inject, forwardRef, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { StateGraph, END, START, Annotation, CompiledStateGraph } from '@langchain/langgraph';
 import { ChatAnthropic } from '@langchain/anthropic';
@@ -16,6 +16,7 @@ import { ClarificationService } from './clarification.service';
 import { RefinementService } from './refinement.service';
 import { getPlatformContextPrompt } from './platform-context';
 import { safeParseJSON } from './json-utils';
+import { ErrorLoggingService } from '../logging/error-logging.service';
 
 /**
  * LangGraph Orchestration Service
@@ -41,10 +42,37 @@ export class GraphOrchestrationService {
     private ensembleService: EnsembleService,
     private clarificationService: ClarificationService,
     private refinementService: RefinementService,
+    // Error logging
+    @Optional() private errorLoggingService?: ErrorLoggingService,
   ) {
     this.generatedServersDir = join(process.cwd(), '../../generated-servers');
     this.initializeLLM();
     this.buildGraph();
+  }
+
+  /**
+   * Log an error to the database (if ErrorLoggingService is available)
+   */
+  private async logError(
+    error: Error,
+    method: string,
+    conversationId?: string,
+    context?: Record<string, any>,
+  ): Promise<void> {
+    if (this.errorLoggingService) {
+      try {
+        await this.errorLoggingService.logError({
+          error,
+          service: 'GraphOrchestrationService',
+          method,
+          conversationId,
+          context,
+        });
+      } catch (logError) {
+        // Don't let logging failures break the main flow
+        this.logger.error(`Failed to log error to database: ${logError.message}`);
+      }
+    }
   }
 
   /**
@@ -208,6 +236,10 @@ export class GraphOrchestrationService {
       return this.processGraphStream(stream, conversation.id);
     } catch (error) {
       this.logger.error(`Graph execution failed: ${error.message}`, error.stack);
+      await this.logError(error, 'executeGraph', conversationId, {
+        sessionId,
+        userInput,
+      });
       throw error;
     }
   }
@@ -543,6 +575,10 @@ What would you like to create?`,
       };
     } catch (error) {
       this.logger.error(`Research coordination failed: ${error.message}`);
+      await this.logError(error, 'researchCoordinator', state.conversationId, {
+        userInput: state.userInput,
+        intent: state.intent,
+      });
 
       return {
         error: `Research failed: ${error.message}`,
@@ -594,6 +630,9 @@ What would you like to create?`,
       };
     } catch (error) {
       this.logger.error(`Ensemble coordination failed: ${error.message}`);
+      await this.logError(error, 'ensembleCoordinator', state.conversationId, {
+        researchPhase: state.researchPhase,
+      });
 
       return {
         error: `Ensemble failed: ${error.message}`,
@@ -681,6 +720,9 @@ What would you like to create?`,
       };
     } catch (error) {
       this.logger.error(`Clarification orchestration failed: ${error.message}`);
+      await this.logError(error, 'clarificationOrchestrator', state.conversationId, {
+        ensembleResults: state.ensembleResults,
+      });
 
       // If clarification fails, proceed anyway
       return {
@@ -806,6 +848,10 @@ ${refinementResult.error || 'Some tools may need manual fixes.'}`,
       };
     } catch (error) {
       this.logger.error(`Refinement loop failed: ${error.message}`);
+      await this.logError(error, 'refinementLoop', state.conversationId, {
+        iteration,
+        generationPlan: state.generationPlan,
+      });
 
       return {
         error: `Refinement failed: ${error.message}`,
