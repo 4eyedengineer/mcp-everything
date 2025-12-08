@@ -114,7 +114,9 @@ export class AuthService {
     providerId: string;
     email: string | undefined;
     username?: string;
-    accessToken: string;
+    firstName?: string;
+    lastName?: string;
+    accessToken?: string;
   }): Promise<TokenResponseDto> {
     this.logger.log(`OAuth validation for ${data.provider} user: ${data.providerId}`);
 
@@ -140,6 +142,8 @@ export class AuthService {
       this.logger.log(`Creating new user from ${data.provider} OAuth`);
       user = await this.userService.createUser({
         email: data.email || `${data.providerId}@${data.provider}.oauth`,
+        firstName: data.firstName,
+        lastName: data.lastName,
         githubId: data.provider === 'github' ? data.providerId : undefined,
         githubUsername: data.provider === 'github' ? data.username : undefined,
         googleId: data.provider === 'google' ? data.providerId : undefined,
@@ -154,7 +158,7 @@ export class AuthService {
   /**
    * Generate access and refresh tokens for a user.
    */
-  private generateTokens(user: User): TokenResponseDto {
+  generateTokens(user: User): TokenResponseDto {
     const payload: JwtPayload = {
       sub: user.id,
       email: user.email,

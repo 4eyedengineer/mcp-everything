@@ -9,8 +9,10 @@ import { JwtStrategy } from './strategies/jwt.strategy';
 import { JwtRefreshStrategy } from './strategies/jwt-refresh.strategy';
 import { LocalStrategy } from './strategies/local.strategy';
 import { GitHubStrategy } from './strategies/github.strategy';
+import { GoogleStrategy } from './strategies/google.strategy';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { GitHubAuthGuard } from './guards/github-auth.guard';
+import { GoogleAuthGuard } from './guards/google-auth.guard';
 import { UserModule } from '../user/user.module';
 
 @Module({
@@ -46,10 +48,12 @@ import { UserModule } from '../user/user.module';
     JwtRefreshStrategy,
     LocalStrategy,
     GitHubStrategy,
+    GoogleStrategy,
     JwtAuthGuard,
     GitHubAuthGuard,
+    GoogleAuthGuard,
   ],
-  exports: [AuthService, JwtAuthGuard, GitHubAuthGuard, JwtModule],
+  exports: [AuthService, JwtAuthGuard, GitHubAuthGuard, GoogleAuthGuard, JwtModule],
 })
 export class AuthModule {}
 
