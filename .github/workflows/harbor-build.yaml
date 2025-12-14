@@ -16,27 +16,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Configure Docker for insecure registry
-        run: |
-          sudo mkdir -p /etc/docker
-          echo '{"insecure-registries": ["harbor.192.168.1.124.nip.io"]}' | sudo tee /etc/docker/daemon.json
-          sudo systemctl restart docker || true
-          # For DinD, configure the daemon differently
-          if [ -f /.dockerenv ]; then
-            mkdir -p ~/.docker
-            echo '{"insecure-registries": ["harbor.192.168.1.124.nip.io"]}' > ~/.docker/daemon.json
-          fi
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
         with:
-          driver-opts: |
-            network=host
-          buildkitd-flags: --allow-insecure-entitlement security.insecure
-          config-inline: |
-            [registry."harbor.192.168.1.124.nip.io"]
-              http = true
-              insecure = true
+          driver-opts: network=host
+          config: .github/buildkitd.toml
 
       - name: Login to Harbor
         uses: docker/login-action@v3
@@ -56,7 +40,6 @@ jobs:
             ${{ env.REGISTRY }}/${{ env.PROJECT }}/mcp-backend:latest
           target: production
           provenance: false
-          outputs: type=registry,registry.insecure=true
 
   build-frontend:
     runs-on: arc-runner-set
@@ -64,26 +47,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Configure Docker for insecure registry
-        run: |
-          sudo mkdir -p /etc/docker
-          echo '{"insecure-registries": ["harbor.192.168.1.124.nip.io"]}' | sudo tee /etc/docker/daemon.json
-          sudo systemctl restart docker || true
-          if [ -f /.dockerenv ]; then
-            mkdir -p ~/.docker
-            echo '{"insecure-registries": ["harbor.192.168.1.124.nip.io"]}' > ~/.docker/daemon.json
-          fi
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
         with:
-          driver-opts: |
-            network=host
-          buildkitd-flags: --allow-insecure-entitlement security.insecure
-          config-inline: |
-            [registry."harbor.192.168.1.124.nip.io"]
-              http = true
-              insecure = true
+          driver-opts: network=host
+          config: .github/buildkitd.toml
 
       - name: Login to Harbor
         uses: docker/login-action@v3
@@ -103,7 +71,6 @@ jobs:
             ${{ env.REGISTRY }}/${{ env.PROJECT }}/mcp-frontend:latest
           target: production
           provenance: false
-          outputs: type=registry,registry.insecure=true
 
   summary:
     runs-on: arc-runner-set
