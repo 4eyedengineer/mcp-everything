@@ -16,14 +16,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Configure Docker for insecure registry
+      - name: Verify Docker config
         run: |
-          # Configure Docker daemon to allow insecure registry
-          echo '{"insecure-registries": ["harbor.192.168.1.124.nip.io"]}' | sudo tee /etc/docker/daemon.json
-          sudo systemctl restart docker || sudo service docker restart || true
-          # Wait for Docker to be ready
-          sleep 5
-          docker info
+          echo "Docker info:"
+          docker info 2>&1 | grep -A5 "Insecure Registries" || true
+          echo "Testing connection to Harbor..."
+          curl -s http://harbor.192.168.1.124.nip.io/api/v2.0/systeminfo | head -c 200 || true
 
       - name: Login to Harbor
         run: |
@@ -44,12 +42,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Configure Docker for insecure registry
+      - name: Verify Docker config
         run: |
-          echo '{"insecure-registries": ["harbor.192.168.1.124.nip.io"]}' | sudo tee /etc/docker/daemon.json
-          sudo systemctl restart docker || sudo service docker restart || true
-          sleep 5
-          docker info
+          docker info 2>&1 | grep -A5 "Insecure Registries" || true
 
       - name: Login to Harbor
         run: |
