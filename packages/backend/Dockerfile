@@ -17,19 +17,19 @@ COPY package*.json ./
 COPY packages/backend/package*.json ./packages/backend/
 COPY packages/shared/package*.json ./packages/shared/
 
-# Install dependencies
-RUN npm ci --only=production && npm cache clean --force
+# Install dependencies (using npm install as fallback when no package-lock.json)
+RUN npm install --omit=dev && npm cache clean --force
 
 # Development stage
 FROM base AS development
-RUN npm ci
+RUN npm install
 COPY . .
 EXPOSE 3000
 CMD ["npm", "run", "start:dev", "--workspace=@mcp-everything/backend"]
 
 # Build stage
 FROM base AS build
-RUN npm ci
+RUN npm install
 COPY . .
 RUN npm run build --workspace=@mcp-everything/shared
 RUN npm run build --workspace=@mcp-everything/backend
@@ -54,7 +54,7 @@ WORKDIR /app
 COPY package*.json ./
 COPY packages/backend/package*.json ./packages/backend/
 COPY packages/shared/package*.json ./packages/shared/
-RUN npm ci --only=production && npm cache clean --force
+RUN npm install --omit=dev && npm cache clean --force
 
 # Copy built application
 COPY --from=build --chown=nestjs:nodejs /app/packages/backend/dist ./packages/backend/dist

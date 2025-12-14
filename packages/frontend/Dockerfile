@@ -12,8 +12,8 @@ COPY package*.json ./
 COPY packages/frontend/package*.json ./packages/frontend/
 COPY packages/shared/package*.json ./packages/shared/
 
-# Install dependencies
-RUN npm ci && npm cache clean --force
+# Install dependencies (using npm install as fallback when no package-lock.json)
+RUN npm install && npm cache clean --force
 
 # Development stage
 FROM base AS development
