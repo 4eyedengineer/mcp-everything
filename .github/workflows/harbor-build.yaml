@@ -16,36 +16,27 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-        with:
-          driver: docker-container
-          driver-opts: |
-            network=host
-            image=moby/buildkit:v0.12.5
-          config-inline: |
-            [registry."harbor.192.168.1.124.nip.io"]
-              http = true
-              insecure = true
+      - name: Configure Docker for insecure registry
+        run: |
+          # Configure Docker daemon to allow insecure registry
+          echo '{"insecure-registries": ["harbor.192.168.1.124.nip.io"]}' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker || sudo service docker restart || true
+          # Wait for Docker to be ready
+          sleep 5
+          docker info
 
       - name: Login to Harbor
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: robot$runner
-          password: ${{ secrets.HARBOR_TOKEN }}
+        run: |
+          echo "${{ secrets.HARBOR_TOKEN }}" | docker login harbor.192.168.1.124.nip.io -u "robot\$runner" --password-stdin
 
       - name: Build and push backend
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: ./packages/backend/Dockerfile
-          push: true
-          tags: |
-            ${{ env.REGISTRY }}/${{ env.PROJECT }}/mcp-backend:${{ github.sha }}
-            ${{ env.REGISTRY }}/${{ env.PROJECT }}/mcp-backend:latest
-          target: production
-          provenance: false
+        run: |
+          docker build -t harbor.192.168.1.124.nip.io/library/mcp-backend:${{ github.sha }} \
+                       -t harbor.192.168.1.124.nip.io/library/mcp-backend:latest \
+                       -f ./packages/backend/Dockerfile \
+                       --target production .
+          docker push harbor.192.168.1.124.nip.io/library/mcp-backend:${{ github.sha }}
+          docker push harbor.192.168.1.124.nip.io/library/mcp-backend:latest
 
   build-frontend:
     runs-on: arc-runner-set
@@ -53,36 +44,25 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-        with:
-          driver: docker-container
-          driver-opts: |
-            network=host
-            image=moby/buildkit:v0.12.5
-          config-inline: |
-            [registry."harbor.192.168.1.124.nip.io"]
-              http = true
-              insecure = true
+      - name: Configure Docker for insecure registry
+        run: |
+          echo '{"insecure-registries": ["harbor.192.168.1.124.nip.io"]}' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker || sudo service docker restart || true
+          sleep 5
+          docker info
 
       - name: Login to Harbor
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: robot$runner
-          password: ${{ secrets.HARBOR_TOKEN }}
+        run: |
+          echo "${{ secrets.HARBOR_TOKEN }}" | docker login harbor.192.168.1.124.nip.io -u "robot\$runner" --password-stdin
 
       - name: Build and push frontend
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: ./packages/frontend/Dockerfile
-          push: true
-          tags: |
-            ${{ env.REGISTRY }}/${{ env.PROJECT }}/mcp-frontend:${{ github.sha }}
-            ${{ env.REGISTRY }}/${{ env.PROJECT }}/mcp-frontend:latest
-          target: production
-          provenance: false
+        run: |
+          docker build -t harbor.192.168.1.124.nip.io/library/mcp-frontend:${{ github.sha }} \
+                       -t harbor.192.168.1.124.nip.io/library/mcp-frontend:latest \
+                       -f ./packages/frontend/Dockerfile \
+                       --target production .
+          docker push harbor.192.168.1.124.nip.io/library/mcp-frontend:${{ github.sha }}
+          docker push harbor.192.168.1.124.nip.io/library/mcp-frontend:latest
 
   summary:
     runs-on: arc-runner-set
@@ -92,5 +72,5 @@ jobs:
         run: |
           echo "## Build Complete" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Backend:** ${{ env.REGISTRY }}/${{ env.PROJECT }}/mcp-backend:${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Frontend:** ${{ env.REGISTRY }}/${{ env.PROJECT }}/mcp-frontend:${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Backend:** harbor.192.168.1.124.nip.io/library/mcp-backend:${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Frontend:** harbor.192.168.1.124.nip.io/library/mcp-frontend:${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
