@@ -1,0 +1,110 @@
+name: Build and Push to Harbor
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  REGISTRY: harbor.192.168.1.124.nip.io
+  PROJECT: library
+
+jobs:
+  build-backend:
+    runs-on: arc-runner-set
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: |
+            network=host
+
+      - name: Login to Harbor
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: robot$runner
+          password: ${{ secrets.HARBOR_TOKEN }}
+
+      - name: Extract metadata for backend
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.PROJECT }}/mcp-backend
+          tags: |
+            type=sha,prefix=
+            type=raw,value=latest
+
+      - name: Build and push backend
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./packages/backend/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          target: production
+          build-args: |
+            BUILDKIT_INLINE_CACHE=1
+          provenance: false
+
+      - name: Print backend image
+        run: echo "Backend pushed to ${{ env.REGISTRY }}/${{ env.PROJECT }}/mcp-backend"
+
+  build-frontend:
+    runs-on: arc-runner-set
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: |
+            network=host
+
+      - name: Login to Harbor
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: robot$runner
+          password: ${{ secrets.HARBOR_TOKEN }}
+
+      - name: Extract metadata for frontend
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.PROJECT }}/mcp-frontend
+          tags: |
+            type=sha,prefix=
+            type=raw,value=latest
+
+      - name: Build and push frontend
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./packages/frontend/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          target: production
+          build-args: |
+            BUILDKIT_INLINE_CACHE=1
+          provenance: false
+
+      - name: Print frontend image
+        run: echo "Frontend pushed to ${{ env.REGISTRY }}/${{ env.PROJECT }}/mcp-frontend"
+
+  summary:
+    runs-on: arc-runner-set
+    needs: [build-backend, build-frontend]
+    steps:
+      - name: Summary
+        run: |
+          echo "## Build Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Backend:** ${{ env.REGISTRY }}/${{ env.PROJECT }}/mcp-backend:${GITHUB_SHA::7}" >> $GITHUB_STEP_SUMMARY
+          echo "**Frontend:** ${{ env.REGISTRY }}/${{ env.PROJECT }}/mcp-frontend:${GITHUB_SHA::7}" >> $GITHUB_STEP_SUMMARY
