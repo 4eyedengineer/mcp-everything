@@ -105,6 +105,7 @@
                 Download ZIP
               </button>
               <button mat-raised-button
+                      *ngIf="latestDeployment?.status === 'success'"
                       (click)="openHostOnCloudModal(message)"
                       [disabled]="isDeploying(message) || isCloudDeploying()"
                       class="deploy-button cloud-button">
