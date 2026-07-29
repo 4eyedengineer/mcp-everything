@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ChatController } from './chat.controller';
 import { ConversationController } from './conversation.controller';
+import { StreamTicketService } from './stream-ticket.service';
 import { GraphOrchestrationService } from '../orchestration/graph.service';
 import { CodeExecutionService } from '../orchestration/code-execution.service';
 import { GitHubAnalysisService } from '../github-analysis.service';
@@ -17,17 +18,23 @@ import { ClarificationService } from '../orchestration/clarification.service';
 import { RefinementService } from '../orchestration/refinement.service';
 import { ResearchCacheService } from '../database/services/research-cache.service';
 import { DeploymentService } from '../database/services/deployment.service';
-import { McpTestingService } from '../testing/mcp-testing.service';
+import { TestingModule } from '../testing/testing.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([Conversation, ConversationMemory, ResearchCache, Deployment]),
+    // McpTestingService owns Docker container lifecycle/state (running
+    // containers map); it must be a single shared instance, not
+    // independently provided per module. See TestingModule.
+    TestingModule,
   ],
   controllers: [ChatController, ConversationController],
   providers: [
     // Core orchestration
     GraphOrchestrationService,
     CodeExecutionService,
+    // SSE stream authorization tickets
+    StreamTicketService,
     // GitHub and code generation services
     GitHubAnalysisService,
     ToolDiscoveryService,
@@ -42,12 +49,7 @@ import { McpTestingService } from '../testing/mcp-testing.service';
     RefinementService,
     ResearchCacheService,
     DeploymentService,
-    McpTestingService,
   ],
-  exports: [
-    GraphOrchestrationService,
-    CodeExecutionService,
-    DeploymentService,
-  ],
+  exports: [GraphOrchestrationService, CodeExecutionService, DeploymentService],
 })
 export class ChatModule {}

@@ -7,17 +7,17 @@ import {
   createResearchedState,
   createEnsembledState,
 } from './__mocks__/test-utils';
-import { mockGapDetectionResponse } from './__mocks__/anthropic.mock';
+import {
+  createMockAnthropicService,
+  mockGapDetectionResponse,
+} from './__mocks__/anthropic.mock';
+import { AnthropicService } from '../../ai/anthropic.service';
 import { RequiredEnvVar } from '../types';
 
-// Mock @langchain/anthropic module
+// Stand-in for the single AI seam (AnthropicService): every completion routes
+// through mockLlmInvoke(prompt) -> { content }.
 const mockLlmInvoke = jest.fn();
-
-jest.mock('@langchain/anthropic', () => ({
-  ChatAnthropic: jest.fn().mockImplementation(() => ({
-    invoke: mockLlmInvoke,
-  })),
-}));
+const mockAnthropicService = createMockAnthropicService(mockLlmInvoke);
 
 describe('ClarificationService', () => {
   let service: ClarificationService;
@@ -59,6 +59,10 @@ describe('ClarificationService', () => {
         {
           provide: EnvVariableService,
           useValue: mockEnvVariableService,
+        },
+        {
+          provide: AnthropicService,
+          useValue: mockAnthropicService,
         },
       ],
     }).compile();

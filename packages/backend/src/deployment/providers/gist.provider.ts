@@ -34,10 +34,7 @@ export class GistProvider {
    * Execute a function with rate limit retry logic
    * Handles GitHub API rate limits (403/429) with exponential backoff
    */
-  private async withRateLimitRetry<T>(
-    fn: () => Promise<T>,
-    maxRetries: number = 3,
-  ): Promise<T> {
+  private async withRateLimitRetry<T>(fn: () => Promise<T>, maxRetries: number = 3): Promise<T> {
     let lastError: Error = new Error('Unknown error');
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -47,7 +44,11 @@ export class GistProvider {
         lastError = error as Error;
 
         // Check if it's a rate limit error (403 or 429)
-        const err = error as { status?: number; response?: { status?: number; headers?: Record<string, string> }; headers?: Record<string, string> };
+        const err = error as {
+          status?: number;
+          response?: { status?: number; headers?: Record<string, string> };
+          headers?: Record<string, string>;
+        };
         const status = err.status || err.response?.status;
         if (status !== 403 && status !== 429) {
           throw error;
@@ -62,8 +63,7 @@ export class GistProvider {
         let delayMs = Math.pow(2, attempt + 1) * 1000; // 2s, 4s, 8s
 
         const resetHeader =
-          err.response?.headers?.['x-ratelimit-reset'] ||
-          err.headers?.['x-ratelimit-reset'];
+          err.response?.headers?.['x-ratelimit-reset'] || err.headers?.['x-ratelimit-reset'];
 
         if (resetHeader) {
           const resetTime = parseInt(resetHeader, 10) * 1000;
@@ -191,9 +191,7 @@ export class GistProvider {
    */
   private bundleServerCode(files: DeploymentFile[], options: SingleFileGistOptions): string {
     // Find the main server file (usually src/index.ts or index.ts)
-    const mainFile = files.find(
-      (f) => f.path === 'src/index.ts' || f.path === 'index.ts',
-    );
+    const mainFile = files.find((f) => f.path === 'src/index.ts' || f.path === 'index.ts');
 
     // Find package.json to extract dependencies
     const packageJsonFile = files.find((f) => f.path === 'package.json');
@@ -237,9 +235,7 @@ export class GistProvider {
       .map(([name, version]) => ` *   ${name}: ${version}`)
       .join('\n');
 
-    const toolsList = options.tools
-      .map((t) => ` *   - ${t.name}: ${t.description}`)
-      .join('\n');
+    const toolsList = options.tools.map((t) => ` *   - ${t.name}: ${t.description}`).join('\n');
 
     return `/**
  * ${options.serverName}
@@ -388,9 +384,7 @@ ${toolsList || ' *   (none defined)'}
    */
   async deleteGist(gistId: string): Promise<boolean> {
     try {
-      await this.withRateLimitRetry(() =>
-        this.octokit.rest.gists.delete({ gist_id: gistId }),
-      );
+      await this.withRateLimitRetry(() => this.octokit.rest.gists.delete({ gist_id: gistId }));
       this.logger.log(`Deleted Gist: ${gistId}`);
       return true;
     } catch (error) {

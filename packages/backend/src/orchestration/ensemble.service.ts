@@ -1,12 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ChatAnthropic } from '@langchain/anthropic';
-import {
-  GraphState,
-  AgentPerspective,
-  ToolRecommendation,
-  VotingDetails,
-  Vote,
-} from './types';
+import { GraphState, AgentPerspective, ToolRecommendation, VotingDetails, Vote } from './types';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { safeParseJSON } from './json-utils';
@@ -58,8 +52,8 @@ export class EnsembleService {
     });
 
     // Load agent prompts (async in constructor workaround - init in onModuleInit)
-    this.loadAgentPrompts().catch(err =>
-      this.logger.error(`Failed to load agent prompts: ${err.message}`)
+    this.loadAgentPrompts().catch((err) =>
+      this.logger.error(`Failed to load agent prompts: ${err.message}`),
     );
   }
 
@@ -136,7 +130,9 @@ export class EnsembleService {
 
     // Step 5: Conflict resolution if needed OR no tools found
     if (consensusScore < 0.7 || finalTools.length === 0) {
-      this.logger.warn(`Resolving: consensus=${consensusScore.toFixed(2)}, tools=${finalTools.length}`);
+      this.logger.warn(
+        `Resolving: consensus=${consensusScore.toFixed(2)}, tools=${finalTools.length}`,
+      );
       const resolved = await this.resolveConflicts(perspectives);
       finalTools = resolved.tools;
       conflictsResolved = true;
@@ -152,11 +148,13 @@ export class EnsembleService {
       }
       // Dedupe by tool name
       const seen = new Set<string>();
-      finalTools = finalTools.filter(t => {
-        if (seen.has(t.name)) return false;
-        seen.add(t.name);
-        return true;
-      }).slice(0, 10);
+      finalTools = finalTools
+        .filter((t) => {
+          if (seen.has(t.name)) return false;
+          seen.add(t.name);
+          return true;
+        })
+        .slice(0, 10);
       this.logger.log(`Fallback gathered ${finalTools.length} tools from all agents`);
     }
 
@@ -166,7 +164,7 @@ export class EnsembleService {
     // Step 6: Build generation plan
     const consensus: GraphState['generationPlan'] = {
       steps: this.generateSteps(finalTools),
-      toolsToGenerate: finalTools.map(tool => ({
+      toolsToGenerate: finalTools.map((tool) => ({
         name: tool.name,
         description: tool.description,
         parameters: tool.inputSchema, // Map inputSchema to parameters
@@ -175,7 +173,7 @@ export class EnsembleService {
     };
 
     this.logger.log(
-      `Ensemble complete: ${finalTools.length} tools, consensus=${consensusScore.toFixed(2)}`
+      `Ensemble complete: ${finalTools.length} tools, consensus=${consensusScore.toFixed(2)}`,
     );
 
     return {
@@ -196,7 +194,7 @@ export class EnsembleService {
    * @returns Agent perspective with tool recommendations
    */
   private async architectAgent(
-    state: GraphState
+    state: GraphState,
   ): Promise<Pick<AgentPerspective, 'recommendations' | 'confidence'>> {
     return this.invokeAgent('architectAgent', state);
   }
@@ -210,7 +208,7 @@ export class EnsembleService {
    * @returns Agent perspective with security-enhanced recommendations
    */
   private async securityAgent(
-    state: GraphState
+    state: GraphState,
   ): Promise<Pick<AgentPerspective, 'recommendations' | 'confidence'>> {
     return this.invokeAgent('securityAgent', state);
   }
@@ -224,7 +222,7 @@ export class EnsembleService {
    * @returns Agent perspective with performance-optimized recommendations
    */
   private async performanceAgent(
-    state: GraphState
+    state: GraphState,
   ): Promise<Pick<AgentPerspective, 'recommendations' | 'confidence'>> {
     return this.invokeAgent('performanceAgent', state);
   }
@@ -239,7 +237,7 @@ export class EnsembleService {
    * @returns Agent perspective with protocol-compliant recommendations
    */
   private async mcpSpecialistAgent(
-    state: GraphState
+    state: GraphState,
   ): Promise<Pick<AgentPerspective, 'recommendations' | 'confidence'>> {
     return this.invokeAgent('mcpSpecialistAgent', state);
   }
@@ -255,7 +253,7 @@ export class EnsembleService {
    */
   private async invokeAgent(
     agentName: string,
-    state: GraphState
+    state: GraphState,
   ): Promise<Pick<AgentPerspective, 'recommendations' | 'confidence'>> {
     const prompt = this.agentPrompts[agentName];
     if (!prompt) {
@@ -349,7 +347,9 @@ ${research?.synthesizedPlan?.keyInsights?.join('\n') || 'No insights available'}
 **API Patterns**: ${research?.githubDeepDive?.apiUsagePatterns?.length || 0} endpoints found
 
 **Dependencies**:
-${Object.keys(research?.githubDeepDive?.dependencies || {}).slice(0, 10).join(', ')}
+${Object.keys(research?.githubDeepDive?.dependencies || {})
+  .slice(0, 10)
+  .join(', ')}
 
 **Web Search Patterns**:
 ${research?.webSearchFindings?.patterns?.join('\n') || 'No patterns found'}
@@ -398,7 +398,7 @@ Provide your recommendations as JSON following the specified format.`;
     // Step 2: Calculate consensus per tool
     const consensusTools: ToolRecommendation[] = [];
 
-    for (const [toolName, votes] of toolVotes.entries()) {
+    for (const [, votes] of toolVotes.entries()) {
       // Weighted score = Σ(confidence × weight) / Σ(weight)
       const totalWeight = votes.reduce((sum, v) => sum + v.weight, 0);
       const weightedSum = votes.reduce((sum, v) => sum + v.confidence * v.weight, 0);
@@ -415,7 +415,7 @@ Provide your recommendations as JSON following the specified format.`;
     const consensusReached = consensusTools.length >= 5; // Need at least 5 tools
 
     this.logger.log(
-      `Voting complete: ${consensusTools.length}/${toolVotes.size} tools reached consensus`
+      `Voting complete: ${consensusTools.length}/${toolVotes.size} tools reached consensus`,
     );
 
     return {
@@ -437,26 +437,21 @@ Provide your recommendations as JSON following the specified format.`;
    */
   private mergeRecommendations(votes: Vote[]): ToolRecommendation {
     // Find MCP specialist recommendation (highest priority)
-    const mcpVote = votes.find(v => v.agent === 'mcpSpecialist');
+    const mcpVote = votes.find((v) => v.agent === 'mcpSpecialist');
     const base = mcpVote?.recommendation || votes[0].recommendation;
 
-    // Merge concerns from all agents
-    const allConcerns: string[] = [];
-    for (const vote of votes) {
-      const agent = votes.find(v => v.agent === vote.agent);
-      // Note: concerns are at perspective level, not tool level
-      // This is a simplification - in production you'd want tool-specific concerns
-    }
+    // Note: concerns are at perspective level, not tool level.
+    // This is a simplification - in production you'd want tool-specific concerns.
 
     // Add security constraints if security agent voted
-    const securityVote = votes.find(v => v.agent === 'security');
+    const securityVote = votes.find((v) => v.agent === 'security');
     if (securityVote) {
       // Merge security validations into input schema
       // (In production, you'd merge pattern, maxLength, enum constraints)
     }
 
     // Add performance parameters if performance agent voted
-    const perfVote = votes.find(v => v.agent === 'performance');
+    const perfVote = votes.find((v) => v.agent === 'performance');
     if (perfVote && perfVote.recommendation.inputSchema.properties) {
       // Add optional caching parameters
       if (!perfVote.recommendation.inputSchema.properties['useCache']) {
@@ -484,7 +479,6 @@ Provide your recommendations as JSON following the specified format.`;
    * @returns Consensus score 0-1
    */
   private calculateConsensusScore(votingDetails: VotingDetails): number {
-    const totalTools = votingDetails.totalVotes;
     const consensusTools = votingDetails.consensusReached ? 1.0 : 0.5;
 
     // Simple formula: (consensus tools / total tools) weighted by quorum
@@ -502,7 +496,7 @@ Provide your recommendations as JSON following the specified format.`;
   private extractConsensusTools(votingDetails: VotingDetails): ToolRecommendation[] {
     const tools: ToolRecommendation[] = [];
 
-    for (const [toolName, votes] of votingDetails.toolVotes.entries()) {
+    for (const [, votes] of votingDetails.toolVotes.entries()) {
       // Calculate score
       const totalWeight = votes.reduce((sum, v) => sum + v.weight, 0);
       const weightedSum = votes.reduce((sum, v) => sum + v.confidence * v.weight, 0);
@@ -526,19 +520,23 @@ Provide your recommendations as JSON following the specified format.`;
    * @returns Resolved tool recommendations
    */
   private async resolveConflicts(
-    perspectives: AgentPerspective[]
+    perspectives: AgentPerspective[],
   ): Promise<{ tools: ToolRecommendation[] }> {
     this.logger.log('Resolving conflicts between agent recommendations');
 
     const prompt = `You are an AI mediator resolving conflicts between 4 specialist agents.
 
 **Agent Perspectives**:
-${perspectives.map(p => `
+${perspectives
+  .map(
+    (p) => `
 ${p.agentName} (weight: ${p.weight}, confidence: ${p.confidence}):
-- Tools: ${p.recommendations.tools.map(t => t.name).join(', ')}
+- Tools: ${p.recommendations.tools.map((t) => t.name).join(', ')}
 - Reasoning: ${p.recommendations.reasoning}
 - Concerns: ${p.recommendations.concerns.join(', ')}
-`).join('\n')}
+`,
+  )
+  .join('\n')}
 
 **Task**: Synthesize a consensus by:
 1. Identifying overlapping tool recommendations
@@ -572,7 +570,9 @@ Return JSON:
     const sortedByWeight = [...perspectives].sort((a, b) => b.weight - a.weight);
     for (const agent of sortedByWeight) {
       if (agent.recommendations.tools.length > 0) {
-        this.logger.log(`Fallback: Using ${agent.agentName}'s ${agent.recommendations.tools.length} tools`);
+        this.logger.log(
+          `Fallback: Using ${agent.agentName}'s ${agent.recommendations.tools.length} tools`,
+        );
         return { tools: agent.recommendations.tools.slice(0, 10) };
       }
     }
@@ -607,10 +607,8 @@ Return JSON:
    * @param tools - Consensus tools
    * @returns Complexity estimate
    */
-  private estimateComplexity(
-    tools: ToolRecommendation[]
-  ): 'simple' | 'moderate' | 'complex' {
-    const complexCount = tools.filter(t => t.estimatedComplexity === 'complex').length;
+  private estimateComplexity(tools: ToolRecommendation[]): 'simple' | 'moderate' | 'complex' {
+    const complexCount = tools.filter((t) => t.estimatedComplexity === 'complex').length;
 
     if (complexCount > tools.length / 2) return 'complex';
     if (tools.length > 15) return 'complex';
@@ -635,7 +633,7 @@ Return JSON:
    */
   private enforceToolConstraints(
     tools: ToolRecommendation[],
-    state: GraphState
+    state: GraphState,
   ): ToolRecommendation[] {
     // No constraints? Return original tools (capped at 10 for sanity)
     if (!state.requestedToolCount && !state.requestedToolNames?.length) {
@@ -646,7 +644,7 @@ Return JSON:
     const maxCount = state.maxToolCount || state.requestedToolCount || 10;
 
     this.logger.log(
-      `Enforcing tool constraints: max=${maxCount}, requested names=[${requestedNames.join(', ')}]`
+      `Enforcing tool constraints: max=${maxCount}, requested names=[${requestedNames.join(', ')}]`,
     );
 
     let result: ToolRecommendation[] = [];
@@ -654,18 +652,17 @@ Return JSON:
     // Step 1: If user specified tool names, prioritize matching tools
     if (requestedNames.length > 0) {
       // Find tools that match requested names (case-insensitive, underscore-tolerant)
-      const normalizedRequested = requestedNames.map(n =>
-        n.toLowerCase().replace(/[-\s]/g, '_')
-      );
+      const normalizedRequested = requestedNames.map((n) => n.toLowerCase().replace(/[-\s]/g, '_'));
 
       for (const tool of tools) {
         const normalizedToolName = tool.name.toLowerCase().replace(/[-\s]/g, '_');
 
         // Check for exact match or partial match
-        const isMatch = normalizedRequested.some(reqName =>
-          normalizedToolName === reqName ||
-          normalizedToolName.includes(reqName) ||
-          reqName.includes(normalizedToolName)
+        const isMatch = normalizedRequested.some(
+          (reqName) =>
+            normalizedToolName === reqName ||
+            normalizedToolName.includes(reqName) ||
+            reqName.includes(normalizedToolName),
         );
 
         if (isMatch) {
@@ -677,7 +674,7 @@ Return JSON:
 
       // If we didn't find matches for all requested names, create placeholders
       if (result.length < requestedNames.length) {
-        const foundNames = new Set(result.map(t => t.name.toLowerCase().replace(/[-\s]/g, '_')));
+        const foundNames = new Set(result.map((t) => t.name.toLowerCase().replace(/[-\s]/g, '_')));
 
         for (const reqName of normalizedRequested) {
           if (!foundNames.has(reqName)) {
@@ -688,13 +685,13 @@ Return JSON:
               inputSchema: {
                 type: 'object',
                 properties: {
-                  input: { type: 'string', description: 'Input value' }
+                  input: { type: 'string', description: 'Input value' },
                 },
-                required: ['input']
+                required: ['input'],
               },
               outputFormat: 'JSON object with result',
               priority: 'high',
-              estimatedComplexity: 'simple'
+              estimatedComplexity: 'simple',
             });
             this.logger.log(`Created placeholder for missing requested tool: ${reqName}`);
           }
@@ -704,13 +701,12 @@ Return JSON:
 
     // Step 2: If we have fewer tools than max, add more (sorted by priority)
     if (result.length < maxCount) {
-      const remainingSlots = maxCount - result.length;
-      const usedNames = new Set(result.map(t => t.name.toLowerCase()));
+      const usedNames = new Set(result.map((t) => t.name.toLowerCase()));
 
       // Sort by priority: high > medium > low
       const priorityOrder = { high: 3, medium: 2, low: 1 };
-      const sortedTools = [...tools].sort((a, b) =>
-        (priorityOrder[b.priority] || 0) - (priorityOrder[a.priority] || 0)
+      const sortedTools = [...tools].sort(
+        (a, b) => (priorityOrder[b.priority] || 0) - (priorityOrder[a.priority] || 0),
       );
 
       for (const tool of sortedTools) {
@@ -724,14 +720,12 @@ Return JSON:
 
     // Step 3: Cap at maxCount
     if (result.length > maxCount) {
-      this.logger.warn(
-        `Capping tools from ${result.length} to ${maxCount} per user constraint`
-      );
+      this.logger.warn(`Capping tools from ${result.length} to ${maxCount} per user constraint`);
       result = result.slice(0, maxCount);
     }
 
     this.logger.log(
-      `Final tool count: ${result.length} (user requested: ${state.requestedToolCount || 'any'})`
+      `Final tool count: ${result.length} (user requested: ${state.requestedToolCount || 'any'})`,
     );
 
     return result;

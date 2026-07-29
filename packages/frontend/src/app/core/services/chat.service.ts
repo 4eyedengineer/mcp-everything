@@ -3,7 +3,7 @@ import { HttpClient } from '@angular/common/http';
 import { Observable, BehaviorSubject, of } from 'rxjs';
 import { map, catchError } from 'rxjs/operators';
 import { ConversationService, ConversationMessage } from './conversation.service';
-import { environment } from '../../../environments/environment';
+import { API_BASE } from '../config/api.config';
 
 export interface ChatMessage {
   content: string;
@@ -24,11 +24,16 @@ export interface ChatResponse {
   conversationId?: string;
 }
 
+export interface StreamTicketResponse {
+  ticket: string;
+  expiresInSeconds: number;
+}
+
 @Injectable({
   providedIn: 'root'
 })
 export class ChatService {
-  private readonly baseUrl = `${environment.apiUrl}/api`;
+  private readonly baseUrl = API_BASE;
   private messagesSubject = new BehaviorSubject<ChatMessage[]>([]);
   public messages$ = this.messagesSubject.asObservable();
 
@@ -47,6 +52,22 @@ export class ChatService {
       conversationId
     };
     return this.http.post<ChatResponse>(`${this.baseUrl}/chat/message`, request);
+  }
+
+  /**
+   * Request a short-lived, single-use ticket authorizing an SSE stream
+   * connection for the given session. EventSource cannot send Authorization
+   * headers, so the ticket is passed as a query parameter instead.
+   */
+  getStreamTicket(sessionId: string): Observable<StreamTicketResponse> {
+    return this.http.post<StreamTicketResponse>(`${this.baseUrl}/chat/stream-ticket`, { sessionId });
+  }
+
+  /**
+   * Build the EventSource URL for a session using a previously obtained ticket.
+   */
+  getStreamUrl(sessionId: string, ticket: string): string {
+    return `${this.baseUrl}/chat/stream/${sessionId}?ticket=${encodeURIComponent(ticket)}`;
   }
 
   /**

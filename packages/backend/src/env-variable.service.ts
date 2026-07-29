@@ -10,7 +10,6 @@ import {
   EnvVarDetectionResult,
   GitHubSecretRequest,
   GitHubSecretResult,
-  CollectedEnvVar,
 } from './types/env-variable.types';
 import { McpTool, ImplementationHints } from './types/tool-discovery.types';
 
@@ -92,7 +91,8 @@ export class EnvVariableService {
       envVarName: 'AWS_ACCESS_KEY_ID',
       validationPattern: /^AKIA[A-Z0-9]{16}$/,
       formatDescription: 'Starts with AKIA followed by 16 uppercase alphanumeric characters',
-      documentationUrl: 'https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_access-keys.html',
+      documentationUrl:
+        'https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_access-keys.html',
       category: 'cloud',
       examplePlaceholder: 'AKIAXXXXXXXXXXXXXXXX',
     },
@@ -101,7 +101,8 @@ export class EnvVariableService {
       envVarName: 'AWS_SECRET_ACCESS_KEY',
       validationPattern: /^[a-zA-Z0-9/+=]{40}$/,
       formatDescription: '40 character secret key',
-      documentationUrl: 'https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_access-keys.html',
+      documentationUrl:
+        'https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_access-keys.html',
       category: 'cloud',
       examplePlaceholder: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
     },
@@ -121,7 +122,8 @@ export class EnvVariableService {
       envVarName: 'DATABASE_URL',
       validationPattern: /^postgres(ql)?:\/\/.+/,
       formatDescription: 'PostgreSQL connection string starting with postgres:// or postgresql://',
-      documentationUrl: 'https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-CONNSTRING',
+      documentationUrl:
+        'https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-CONNSTRING',
       category: 'database',
       examplePlaceholder: 'postgresql://username:password@host:5432/database',
     },
@@ -160,8 +162,10 @@ export class EnvVariableService {
       service: 'GitHub',
       envVarName: 'GITHUB_TOKEN',
       validationPattern: /^(ghp|gho|ghu|ghs|ghr)_[a-zA-Z0-9]{36,}$/,
-      formatDescription: 'GitHub personal access token starting with ghp_, gho_, ghu_, ghs_, or ghr_',
-      documentationUrl: 'https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/creating-a-personal-access-token',
+      formatDescription:
+        'GitHub personal access token starting with ghp_, gho_, ghu_, ghs_, or ghr_',
+      documentationUrl:
+        'https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/creating-a-personal-access-token',
       category: 'authentication',
       examplePlaceholder: 'ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
     },
@@ -184,46 +188,46 @@ export class EnvVariableService {
   private readonly envVarKeywords: Record<string, EnvVarCategory> = {
     // Authentication keywords
     'api key': 'authentication',
-    'api_key': 'authentication',
-    'apikey': 'authentication',
+    api_key: 'authentication',
+    apikey: 'authentication',
     'secret key': 'authentication',
-    'secret_key': 'authentication',
+    secret_key: 'authentication',
     'access token': 'authentication',
-    'access_token': 'authentication',
+    access_token: 'authentication',
     'bearer token': 'authentication',
     'auth token': 'authentication',
-    'oauth': 'authentication',
+    oauth: 'authentication',
 
     // Database keywords
-    'database': 'database',
+    database: 'database',
     'connection string': 'database',
-    'mongodb': 'database',
-    'postgres': 'database',
-    'mysql': 'database',
-    'redis': 'database',
+    mongodb: 'database',
+    postgres: 'database',
+    mysql: 'database',
+    redis: 'database',
 
     // Payment keywords
-    'stripe': 'payment',
-    'payment': 'payment',
-    'billing': 'payment',
+    stripe: 'payment',
+    payment: 'payment',
+    billing: 'payment',
 
     // AI keywords
-    'openai': 'ai',
-    'anthropic': 'ai',
-    'claude': 'ai',
-    'gpt': 'ai',
+    openai: 'ai',
+    anthropic: 'ai',
+    claude: 'ai',
+    gpt: 'ai',
 
     // Cloud keywords
-    'aws': 'cloud',
-    's3': 'cloud',
-    'gcp': 'cloud',
-    'azure': 'cloud',
+    aws: 'cloud',
+    s3: 'cloud',
+    gcp: 'cloud',
+    azure: 'cloud',
 
     // Messaging keywords
-    'twilio': 'messaging',
-    'sendgrid': 'messaging',
-    'smtp': 'messaging',
-    'email': 'messaging',
+    twilio: 'messaging',
+    sendgrid: 'messaging',
+    smtp: 'messaging',
+    email: 'messaging',
   };
 
   constructor(private readonly configService: ConfigService) {
@@ -271,9 +275,10 @@ export class EnvVariableService {
       detectedVars,
       detectionMethod: 'tool_analysis',
       confidence: detectedVars.length > 0 ? 0.8 : 1.0,
-      reasoning: detectedVars.length > 0
-        ? `Detected ${detectedVars.length} environment variable(s) based on tool descriptions and implementation hints`
-        : 'No environment variables detected from tool analysis',
+      reasoning:
+        detectedVars.length > 0
+          ? `Detected ${detectedVars.length} environment variable(s) based on tool descriptions and implementation hints`
+          : 'No environment variables detected from tool analysis',
     };
 
     this.logger.log(`Detected ${detectedVars.length} environment variables`);
@@ -305,9 +310,9 @@ export class EnvVariableService {
 
     // Check for generic keywords
     for (const [keyword, category] of Object.entries(this.envVarKeywords)) {
-      if (lowerText.includes(keyword) && !envVars.some(v => v.category === category)) {
+      if (lowerText.includes(keyword) && !envVars.some((v) => v.category === category)) {
         const envVarName = this.generateEnvVarName(keyword, category);
-        if (!envVars.some(v => v.name === envVarName)) {
+        if (!envVars.some((v) => v.name === envVarName)) {
           envVars.push({
             name: envVarName,
             description: `${this.capitalizeFirst(keyword)} credential`,
@@ -340,8 +345,8 @@ export class EnvVariableService {
 
       // Check if dependency corresponds to a known service
       if (depLower.includes('stripe')) {
-        const stripePattern = this.knownPatterns.find(p => p.envVarName === 'STRIPE_API_KEY');
-        if (stripePattern && !envVars.some(v => v.name === stripePattern.envVarName)) {
+        const stripePattern = this.knownPatterns.find((p) => p.envVarName === 'STRIPE_API_KEY');
+        if (stripePattern && !envVars.some((v) => v.name === stripePattern.envVarName)) {
           envVars.push({
             name: stripePattern.envVarName,
             description: 'Stripe API key for payment processing',
@@ -355,8 +360,8 @@ export class EnvVariableService {
       }
 
       if (depLower.includes('openai')) {
-        const openaiPattern = this.knownPatterns.find(p => p.envVarName === 'OPENAI_API_KEY');
-        if (openaiPattern && !envVars.some(v => v.name === openaiPattern.envVarName)) {
+        const openaiPattern = this.knownPatterns.find((p) => p.envVarName === 'OPENAI_API_KEY');
+        if (openaiPattern && !envVars.some((v) => v.name === openaiPattern.envVarName)) {
           envVars.push({
             name: openaiPattern.envVarName,
             description: 'OpenAI API key for AI services',
@@ -378,7 +383,7 @@ export class EnvVariableService {
    */
   validateEnvVarFormat(name: string, value: string): EnvVarValidationResult {
     // Find matching pattern
-    const pattern = this.knownPatterns.find(p => p.envVarName === name);
+    const pattern = this.knownPatterns.find((p) => p.envVarName === name);
 
     if (!pattern) {
       // Unknown variable - basic validation
@@ -420,7 +425,9 @@ export class EnvVariableService {
    * Uses the GitHub Secrets API with libsodium encryption
    */
   async createGitHubSecret(request: GitHubSecretRequest): Promise<GitHubSecretResult> {
-    this.logger.log(`Creating GitHub secret ${request.secretName} in ${request.owner}/${request.repo}`);
+    this.logger.log(
+      `Creating GitHub secret ${request.secretName} in ${request.owner}/${request.repo}`,
+    );
 
     try {
       // Get the repository public key for encryption
@@ -522,9 +529,7 @@ This server does not require any environment variables by default.`;
 
     for (const envVar of envVars) {
       const required = envVar.required ? 'Yes' : 'No';
-      const docs = envVar.documentationUrl
-        ? `[Get key](${envVar.documentationUrl})`
-        : '-';
+      const docs = envVar.documentationUrl ? `[Get key](${envVar.documentationUrl})` : '-';
       sections.push(`| \`${envVar.name}\` | ${required} | ${envVar.description} | ${docs} |`);
     }
 
@@ -542,11 +547,13 @@ This server does not require any environment variables by default.`;
     sections.push('');
 
     // Add category-specific instructions
-    const hasPayment = envVars.some(v => v.category === 'payment');
+    const hasPayment = envVars.some((v) => v.category === 'payment');
     if (hasPayment) {
       sections.push('### Payment Integration');
       sections.push('');
-      sections.push('For testing, use test/sandbox API keys. Production keys should only be used in secure environments.');
+      sections.push(
+        'For testing, use test/sandbox API keys. Production keys should only be used in secure environments.',
+      );
       sections.push('');
     }
 
@@ -562,7 +569,7 @@ This server does not require any environment variables by default.`;
     options?: string[];
     envVarName: string;
   }> {
-    return envVars.map(envVar => ({
+    return envVars.map((envVar) => ({
       question: `Please provide your ${envVar.description}`,
       context: envVar.documentationUrl
         ? `You can obtain this from: ${envVar.documentationUrl}`
@@ -605,7 +612,10 @@ This server does not require any environment variables by default.`;
   }
 
   private generateEnvVarName(keyword: string, category: EnvVarCategory): string {
-    const base = keyword.toUpperCase().replace(/\s+/g, '_').replace(/[^A-Z_]/g, '');
+    const base = keyword
+      .toUpperCase()
+      .replace(/\s+/g, '_')
+      .replace(/[^A-Z_]/g, '');
     const suffix = category === 'authentication' ? '_API_KEY' : '_KEY';
     return base + suffix;
   }
@@ -615,18 +625,21 @@ This server does not require any environment variables by default.`;
   }
 
   private groupByCategory(envVars: RequiredEnvVar[]): Record<string, RequiredEnvVar[]> {
-    return envVars.reduce((acc, envVar) => {
-      if (!acc[envVar.category]) {
-        acc[envVar.category] = [];
-      }
-      acc[envVar.category].push(envVar);
-      return acc;
-    }, {} as Record<string, RequiredEnvVar[]>);
+    return envVars.reduce(
+      (acc, envVar) => {
+        if (!acc[envVar.category]) {
+          acc[envVar.category] = [];
+        }
+        acc[envVar.category].push(envVar);
+        return acc;
+      },
+      {} as Record<string, RequiredEnvVar[]>,
+    );
   }
 
   private getPlaceholder(envVar: RequiredEnvVar): string {
     // Find known pattern for placeholder
-    const pattern = this.knownPatterns.find(p => p.envVarName === envVar.name);
+    const pattern = this.knownPatterns.find((p) => p.envVarName === envVar.name);
     if (pattern) {
       return pattern.examplePlaceholder;
     }

@@ -1,15 +1,27 @@
-import { Controller, Post, Body, Sse, MessageEvent, Param, Get, OnModuleDestroy, Logger } from '@nestjs/common';
+import {
+  Controller,
+  Post,
+  Body,
+  Sse,
+  MessageEvent,
+  Param,
+  Query,
+  Get,
+  OnModuleDestroy,
+  Logger,
+  NotFoundException,
+  UnauthorizedException,
+} from '@nestjs/common';
+import { SkipThrottle } from '@nestjs/throttler';
 import { Observable, Subject } from 'rxjs';
 import { map } from 'rxjs/operators';
 import { GraphOrchestrationService } from '../orchestration/graph.service';
-import { GraphState } from '../orchestration/types';
 import { Public } from '../auth/decorators/public.decorator';
-
-interface ChatRequest {
-  message: string;
-  sessionId: string;
-  conversationId?: string;
-}
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { User } from '../database/entities/user.entity';
+import { StreamTicketService } from './stream-ticket.service';
+import { CreateStreamTicketDto, StreamTicketResponseDto } from './dto/stream-ticket.dto';
+import { SendMessageDto } from './dto/send-message.dto';
 
 interface StreamUpdate {
   type: 'progress' | 'result' | 'error' | 'complete';
@@ -30,6 +42,8 @@ interface StreamSession {
   createdAt: Date;
   lastActivityAt: Date;
   isGraphExecuting: boolean;
+  /** Owner of this session - set on first authenticated interaction */
+  userId?: string;
 }
 
 @Controller('api/chat')
@@ -44,32 +58,88 @@ export class ChatController implements OnModuleDestroy {
   private readonly SESSION_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
   private cleanupTimer: NodeJS.Timeout;
 
-  constructor(private graphService: GraphOrchestrationService) {
+  constructor(
+    private graphService: GraphOrchestrationService,
+    private streamTicketService: StreamTicketService,
+  ) {
     // Start automatic cleanup timer
     this.startCleanupTimer();
   }
 
   /**
+   * Issue a short-lived, single-use ticket that authorizes an SSE connection.
+   *
+   * Requires authentication (global JWT guard). The returned ticket must be
+   * passed to the SSE endpoint as `?ticket=...` within 60 seconds.
+   */
+  @Post('stream-ticket')
+  createStreamTicket(
+    @CurrentUser() user: User,
+    @Body() dto: CreateStreamTicketDto,
+  ): StreamTicketResponseDto {
+    const { sessionId } = dto;
+
+    // Bind the session to this user (first caller wins) so a ticket for a
+    // session owned by somebody else can never be issued.
+    this.ensureSessionExists(sessionId, user.id);
+    const session = this.streamSessions.get(sessionId);
+
+    if (session.userId && session.userId !== user.id) {
+      this.logger.warn(`Stream ticket denied: session ${sessionId} is owned by another user`);
+      throw new NotFoundException(`Session not found: ${sessionId}`);
+    }
+
+    const { ticket, expiresInSeconds } = this.streamTicketService.issueTicket(sessionId, user.id);
+
+    this.logger.log(`Issued stream ticket for session: ${sessionId}`);
+
+    return { ticket, expiresInSeconds };
+  }
+
+  /**
    * SSE endpoint for streaming conversation updates
    * Supports buffering for late-joining observers
+   *
+   * Note: @Public() is required because EventSource cannot send Authorization
+   * headers. Authorization is enforced here instead via a single-use ticket
+   * obtained from POST /api/chat/stream-ticket.
    */
+  @Public()
+  @SkipThrottle()
   @Sse('stream/:sessionId')
-  streamConversation(@Param('sessionId') sessionId: string): Observable<MessageEvent> {
-    this.logger.log(`SSE connection established for session: ${sessionId}`);
+  streamConversation(
+    @Param('sessionId') sessionId: string,
+    @Query('ticket') ticket?: string,
+  ): Observable<MessageEvent> {
+    const redeemed = this.streamTicketService.redeemTicket(ticket, sessionId);
 
-    // Ensure session exists
-    this.ensureSessionExists(sessionId);
+    if (!redeemed) {
+      this.logger.warn(`SSE connection rejected for session ${sessionId}: invalid ticket`);
+      throw new UnauthorizedException('A valid stream ticket is required');
+    }
+
+    // Ensure session exists (owned by the ticket holder)
+    this.ensureSessionExists(sessionId, redeemed.userId);
     const session = this.streamSessions.get(sessionId);
+
+    if (session.userId && session.userId !== redeemed.userId) {
+      this.logger.warn(`SSE connection rejected: session ${sessionId} is owned by another user`);
+      throw new UnauthorizedException('A valid stream ticket is required');
+    }
+
+    this.logger.log(`SSE connection established for session: ${sessionId}`);
 
     // Flush buffered updates immediately when observer connects
     if (session.buffer.length > 0) {
-      this.logger.log(`Flushing ${session.buffer.length} buffered updates for session: ${sessionId}`);
+      this.logger.log(
+        `Flushing ${session.buffer.length} buffered updates for session: ${sessionId}`,
+      );
 
       // Schedule buffer flush after Observable subscription
       setTimeout(() => {
         const currentSession = this.streamSessions.get(sessionId);
         if (currentSession) {
-          currentSession.buffer.forEach(buffered => {
+          currentSession.buffer.forEach((buffered) => {
             currentSession.subject.next(buffered.update);
           });
           currentSession.buffer = []; // Clear buffer after flush
@@ -84,7 +154,9 @@ export class ChatController implements OnModuleDestroy {
     setTimeout(() => {
       const currentSession = this.streamSessions.get(sessionId);
       if (currentSession) {
-        this.logger.log(`Session ${sessionId} observer count: ${currentSession.subject.observers.length}`);
+        this.logger.log(
+          `Session ${sessionId} observer count: ${currentSession.subject.observers.length}`,
+        );
       }
     }, 100);
 
@@ -97,40 +169,64 @@ export class ChatController implements OnModuleDestroy {
 
   /**
    * POST endpoint to send message and trigger graph execution
+   *
+   * Resolves (or creates) the conversation up front so the real conversation
+   * UUID can be returned to the caller instead of the placeholder 'new'.
    */
   @Post('message')
-  async sendMessage(@Body() request: ChatRequest): Promise<{ success: boolean; conversationId: string }> {
+  async sendMessage(
+    @CurrentUser() user: User,
+    @Body() request: SendMessageDto,
+  ): Promise<{ success: boolean; conversationId: string }> {
     const { message, sessionId, conversationId } = request;
-    this.logger.log(`Message received for session: ${sessionId}, conversationId: ${conversationId || 'new'}`);
+    this.logger.log(
+      `Message received for session: ${sessionId}, conversationId: ${conversationId || 'new'}`,
+    );
 
     // Create session immediately before graph execution
-    this.ensureSessionExists(sessionId);
+    this.ensureSessionExists(sessionId, user.id);
+
+    const session = this.streamSessions.get(sessionId);
+
+    if (session.userId && session.userId !== user.id) {
+      this.logger.warn(`Message rejected: session ${sessionId} is owned by another user`);
+      throw new NotFoundException(`Session not found: ${sessionId}`);
+    }
+
+    // Resolve the conversation now so the caller receives the real UUID.
+    // Also enforces conversation ownership for existing conversations.
+    const resolvedConversationId = await this.graphService.ensureConversation(
+      sessionId,
+      conversationId,
+      user.id,
+    );
 
     // Mark graph as executing
-    const session = this.streamSessions.get(sessionId);
     session.isGraphExecuting = true;
     session.lastActivityAt = new Date();
 
     // Execute graph in background and stream updates
-    this.executeAndStream(sessionId, message, conversationId).catch(error => {
-      this.logger.error(`Graph execution error for session ${sessionId}: ${error.message}`);
-      this.sendStreamUpdate(sessionId, {
-        type: 'error',
-        message: error.message,
-        timestamp: new Date(),
+    this.executeAndStream(sessionId, message, resolvedConversationId, user.id)
+      .catch((error) => {
+        this.logger.error(`Graph execution error for session ${sessionId}: ${error.message}`);
+        this.sendStreamUpdate(sessionId, {
+          type: 'error',
+          message: error.message,
+          timestamp: new Date(),
+        });
+      })
+      .finally(() => {
+        const currentSession = this.streamSessions.get(sessionId);
+        if (currentSession) {
+          currentSession.isGraphExecuting = false;
+          currentSession.lastActivityAt = new Date();
+          this.logger.log(`Graph execution finished for session: ${sessionId}`);
+        }
       });
-    }).finally(() => {
-      const currentSession = this.streamSessions.get(sessionId);
-      if (currentSession) {
-        currentSession.isGraphExecuting = false;
-        currentSession.lastActivityAt = new Date();
-        this.logger.log(`Graph execution finished for session: ${sessionId}`);
-      }
-    });
 
     return {
       success: true,
-      conversationId: conversationId || 'new',
+      conversationId: resolvedConversationId,
     };
   }
 
@@ -141,6 +237,7 @@ export class ChatController implements OnModuleDestroy {
     sessionId: string,
     userInput: string,
     conversationId?: string,
+    userId?: string,
   ): Promise<void> {
     this.logger.log(`Starting graph execution for session: ${sessionId}`);
 
@@ -150,6 +247,7 @@ export class ChatController implements OnModuleDestroy {
         sessionId,
         userInput,
         conversationId,
+        userId,
       );
 
       // Process each update from the graph
@@ -196,7 +294,10 @@ export class ChatController implements OnModuleDestroy {
 
       this.logger.log(`Graph execution completed successfully for session: ${sessionId}`);
     } catch (error) {
-      this.logger.error(`Graph execution failed for session ${sessionId}: ${error.message}`, error.stack);
+      this.logger.error(
+        `Graph execution failed for session ${sessionId}: ${error.message}`,
+        error.stack,
+      );
       this.sendStreamUpdate(sessionId, {
         type: 'error',
         message: `Execution failed: ${error.message}`,
@@ -219,7 +320,9 @@ export class ChatController implements OnModuleDestroy {
     }
 
     const observerCount = session.subject.observers.length;
-    this.logger.debug(`Sending ${update.type} update to session ${sessionId} (observers: ${observerCount})`);
+    this.logger.debug(
+      `Sending ${update.type} update to session ${sessionId} (observers: ${observerCount})`,
+    );
 
     if (observerCount > 0) {
       // Direct send - observers are listening
@@ -239,8 +342,10 @@ export class ChatController implements OnModuleDestroy {
 
   /**
    * Ensure session exists, create if needed
+   *
+   * @param userId owner of the session; only applied when the session is created
    */
-  private ensureSessionExists(sessionId: string): void {
+  private ensureSessionExists(sessionId: string, userId?: string): void {
     if (!this.streamSessions.has(sessionId)) {
       this.logger.log(`Creating new stream session: ${sessionId}`);
       this.streamSessions.set(sessionId, {
@@ -249,6 +354,7 @@ export class ChatController implements OnModuleDestroy {
         createdAt: new Date(),
         lastActivityAt: new Date(),
         isGraphExecuting: false,
+        userId,
       });
     }
   }
@@ -261,7 +367,9 @@ export class ChatController implements OnModuleDestroy {
       this.cleanupStaleSessions();
     }, this.CLEANUP_INTERVAL_MS);
 
-    this.logger.log(`Session cleanup timer started (runs every ${this.CLEANUP_INTERVAL_MS / 60000} minutes)`);
+    this.logger.log(
+      `Session cleanup timer started (runs every ${this.CLEANUP_INTERVAL_MS / 60000} minutes)`,
+    );
   }
 
   /**
@@ -282,7 +390,9 @@ export class ChatController implements OnModuleDestroy {
 
       // Cleanup sessions inactive for > 30 minutes
       if (inactiveMs > this.SESSION_TIMEOUT_MS) {
-        this.logger.log(`Cleaning up stale session: ${sessionId} (inactive for ${Math.round(inactiveMs / 60000)}m)`);
+        this.logger.log(
+          `Cleaning up stale session: ${sessionId} (inactive for ${Math.round(inactiveMs / 60000)}m)`,
+        );
         session.subject.complete();
         this.streamSessions.delete(sessionId);
         cleanedCount++;
@@ -290,9 +400,13 @@ export class ChatController implements OnModuleDestroy {
     }
 
     if (cleanedCount > 0) {
-      this.logger.log(`Cleaned up ${cleanedCount} stale session(s). Active sessions: ${this.streamSessions.size}`);
+      this.logger.log(
+        `Cleaned up ${cleanedCount} stale session(s). Active sessions: ${this.streamSessions.size}`,
+      );
     } else {
-      this.logger.debug(`No stale sessions to cleanup. Active sessions: ${this.streamSessions.size}`);
+      this.logger.debug(
+        `No stale sessions to cleanup. Active sessions: ${this.streamSessions.size}`,
+      );
     }
   }
 
@@ -300,9 +414,16 @@ export class ChatController implements OnModuleDestroy {
    * Cleanup endpoint (optional - for closing streams explicitly)
    */
   @Post('close/:sessionId')
-  closeStream(@Param('sessionId') sessionId: string): { success: boolean } {
+  closeStream(
+    @CurrentUser() user: User,
+    @Param('sessionId') sessionId: string,
+  ): { success: boolean } {
     const session = this.streamSessions.get(sessionId);
     if (session) {
+      if (session.userId && session.userId !== user.id) {
+        this.logger.warn(`Close denied: session ${sessionId} is owned by another user`);
+        throw new NotFoundException(`Session not found: ${sessionId}`);
+      }
       this.logger.log(`Closing stream for session: ${sessionId}`);
       session.subject.complete();
       this.streamSessions.delete(sessionId);
@@ -316,6 +437,7 @@ export class ChatController implements OnModuleDestroy {
    * Health check endpoint
    */
   @Public()
+  @SkipThrottle()
   @Get('health')
   health(): { status: string; timestamp: Date; activeSessions: number } {
     return {

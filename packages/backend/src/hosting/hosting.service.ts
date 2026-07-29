@@ -1,16 +1,8 @@
-import {
-  Injectable,
-  Logger,
-  NotFoundException,
-  BadRequestException,
-} from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { nanoid } from 'nanoid';
-import {
-  HostedServer,
-  HostedServerStatus,
-} from '../database/entities/hosted-server.entity';
+import { HostedServer, HostedServerStatus } from '../database/entities/hosted-server.entity';
 import { Deployment } from '../database/entities/deployment.entity';
 import { ContainerRegistryService } from './services/container-registry.service';
 import { ManifestGeneratorService } from './services/manifest-generator.service';
@@ -41,27 +33,26 @@ export class HostingService {
     private gitOpsService: GitOpsService,
     private configService: ConfigService,
   ) {
-    this.domain = this.configService.get(
-      'MCP_HOSTING_DOMAIN',
-      'mcp.example.com',
-    );
+    this.domain = this.configService.get('MCP_HOSTING_DOMAIN', 'mcp.example.com');
     this.namespace = this.configService.get('K8S_NAMESPACE', 'mcp-servers');
   }
 
   /**
    * Deploy a generated MCP server to the K8s cluster
+   *
+   * @param userId owner of the deployment; when supplied the underlying
+   *               deployment must belong to this user and the resulting hosted
+   *               server is recorded as owned by them
    */
-  async deployToCloud(conversationId: string): Promise<DeploymentResult> {
-    // 1. Get deployment info from conversation
+  async deployToCloud(conversationId: string, userId?: string): Promise<DeploymentResult> {
+    // 1. Get deployment info from conversation (scoped to the owner)
     const deployment = await this.deploymentRepo.findOne({
-      where: { conversationId },
+      where: userId ? { conversationId, userId } : { conversationId },
       order: { createdAt: 'DESC' },
     });
 
     if (!deployment) {
-      throw new NotFoundException(
-        `No deployment found for conversation ${conversationId}`,
-      );
+      throw new NotFoundException(`No deployment found for conversation ${conversationId}`);
     }
 
     if (!deployment.serverName) {
@@ -77,6 +68,7 @@ export class HostingService {
     // 3. Create hosted server record
     const hostedServer = this.hostedServerRepo.create({
       conversationId,
+      userId: userId ?? deployment.userId,
       serverName: deployment.serverName,
       serverId,
       description: deployment.description,
@@ -108,11 +100,7 @@ export class HostingService {
       await this.hostedServerRepo.save(hostedServer);
 
       // 5. Generate K8s manifests
-      await this.updateStatus(
-        hostedServer,
-        'deploying',
-        'Generating Kubernetes manifests...',
-      );
+      await this.updateStatus(hostedServer, 'deploying', 'Generating Kubernetes manifests...');
 
       const manifests = this.manifestGeneratorService.generateManifests({
         serverId,
@@ -123,15 +111,10 @@ export class HostingService {
         namespace: this.namespace,
       });
 
-      const kustomization =
-        this.manifestGeneratorService.generateKustomization(serverId);
+      const kustomization = this.manifestGeneratorService.generateKustomization(serverId);
 
       // 6. Commit to GitOps repo
-      await this.updateStatus(
-        hostedServer,
-        'deploying',
-        'Deploying to Kubernetes cluster...',
-      );
+      await this.updateStatus(hostedServer, 'deploying', 'Deploying to Kubernetes cluster...');
 
       const commitResult = await this.gitOpsService.deployServer(
         serverId,
@@ -158,8 +141,7 @@ export class HostingService {
         status: 'running',
       };
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : 'Unknown error';
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       await this.updateStatus(hostedServer, 'failed', errorMessage);
       this.logger.error(`Deployment failed for ${serverId}: ${errorMessage}`);
 
@@ -176,8 +158,8 @@ export class HostingService {
   /**
    * Stop a hosted server (scale to 0)
    */
-  async stopServer(serverId: string): Promise<void> {
-    const server = await this.getServerByIdOrFail(serverId);
+  async stopServer(serverId: string, userId?: string): Promise<void> {
+    const server = await this.getServerByIdOrFail(serverId, userId);
 
     // Update manifests with replicas: 0
     const manifests = this.manifestGeneratorService.generateManifests({
@@ -190,10 +172,7 @@ export class HostingService {
     });
 
     // Modify deployment to have 0 replicas
-    const stoppedDeployment = manifests.deployment.replace(
-      'replicas: 1',
-      'replicas: 0',
-    );
+    const stoppedDeployment = manifests.deployment.replace('replicas: 1', 'replicas: 0');
 
     await this.gitOpsService.updateServer(
       serverId,
@@ -209,8 +188,8 @@ export class HostingService {
   /**
    * Start a stopped server (scale to 1)
    */
-  async startServer(serverId: string): Promise<void> {
-    const server = await this.getServerByIdOrFail(serverId);
+  async startServer(serverId: string, userId?: string): Promise<void> {
+    const server = await this.getServerByIdOrFail(serverId, userId);
 
     if (server.status !== 'stopped') {
       throw new BadRequestException('Server is not stopped');
@@ -239,8 +218,8 @@ export class HostingService {
   /**
    * Delete a hosted server completely
    */
-  async deleteServer(serverId: string): Promise<void> {
-    const server = await this.getServerByIdOrFail(serverId);
+  async deleteServer(serverId: string, userId?: string): Promise<void> {
+    const server = await this.getServerByIdOrFail(serverId, userId);
 
     // Remove from GitOps repo
     await this.gitOpsService.removeServer(serverId);
@@ -249,8 +228,7 @@ export class HostingService {
     try {
       await this.containerRegistryService.deleteImage(serverId);
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : 'Unknown error';
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       this.logger.warn(`Failed to delete image for ${serverId}: ${errorMessage}`);
     }
 
@@ -278,9 +256,12 @@ export class HostingService {
 
   /**
    * Get server by ID
+   *
+   * @param userId when supplied, servers owned by other users (or legacy rows
+   *               without an owner) are reported as not found
    */
-  async getServer(serverId: string): Promise<HostedServer> {
-    return this.getServerByIdOrFail(serverId);
+  async getServer(serverId: string, userId?: string): Promise<HostedServer> {
+    return this.getServerByIdOrFail(serverId, userId);
   }
 
   /**
@@ -288,10 +269,7 @@ export class HostingService {
    */
   async trackRequest(serverId: string): Promise<void> {
     await this.hostedServerRepo.increment({ serverId }, 'requestCount', 1);
-    await this.hostedServerRepo.update(
-      { serverId },
-      { lastRequestAt: new Date() },
-    );
+    await this.hostedServerRepo.update({ serverId }, { lastRequestAt: new Date() });
   }
 
   /**
@@ -302,9 +280,10 @@ export class HostingService {
   async getServerLogs(
     serverId: string,
     options: { lines?: number; since?: string },
+    userId?: string,
   ): Promise<{ logs: string[]; message: string }> {
-    // Validate server exists
-    await this.getServerByIdOrFail(serverId);
+    // Validate server exists and belongs to the requesting user
+    await this.getServerByIdOrFail(serverId, userId);
 
     // TODO: Implement K8s log fetching via kubectl or K8s client
     // For now, return a placeholder indicating logs are not yet available
@@ -314,8 +293,7 @@ export class HostingService {
 
     return {
       logs: [],
-      message:
-        'Log streaming not yet implemented. K8s integration required for live logs.',
+      message: 'Log streaming not yet implemented. K8s integration required for live logs.',
     };
   }
 
@@ -332,12 +310,13 @@ export class HostingService {
     return `${prefix}-${suffix}`;
   }
 
-  private async getServerByIdOrFail(serverId: string): Promise<HostedServer> {
+  private async getServerByIdOrFail(serverId: string, userId?: string): Promise<HostedServer> {
     const server = await this.hostedServerRepo.findOne({
-      where: { serverId },
+      where: userId ? { serverId, userId } : { serverId },
     });
 
     if (!server) {
+      // Do not distinguish "does not exist" from "not yours"
       throw new NotFoundException(`Server not found: ${serverId}`);
     }
 

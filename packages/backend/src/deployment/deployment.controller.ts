@@ -11,12 +11,14 @@ import {
   HttpStatus,
   Logger,
   NotFoundException,
-  UseGuards,
   ForbiddenException,
 } from '@nestjs/common';
-import { ThrottlerGuard } from '@nestjs/throttler';
+import { Throttle } from '@nestjs/throttler';
 import { DeploymentOrchestratorService } from './deployment.service';
-import { DeploymentRouterService, TierRestrictedDeploymentOptions } from './services/deployment-router.service';
+import {
+  DeploymentRouterService,
+  TierRestrictedDeploymentOptions,
+} from './services/deployment-router.service';
 import {
   DeployToGitHubDto,
   DeployToGistDto,
@@ -30,18 +32,19 @@ import {
 } from './dto/deploy-request.dto';
 import { DeploymentType, DeploymentStatus } from './types/deployment.types';
 import { DeploymentRetryService } from './services/retry.service';
-import { DeploymentErrorCode } from './types/deployment-errors.types';
 import { User } from '../database/entities/user.entity';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 
 /**
  * Deployment API Controller
  *
- * Rate limited to 10 requests per minute per IP address.
- * All routes require authentication (handled by global JWT guard).
+ * Rate limited to 10 requests per minute per IP address (enforced by the
+ * global ThrottlerGuard using this class-level override).
+ * All routes require authentication (handled by global JWT guard) and every
+ * resource lookup is scoped to the authenticated user.
  */
 @Controller('api/deploy')
-@UseGuards(ThrottlerGuard)
+@Throttle({ default: { limit: 10, ttl: 60000 } })
 export class DeploymentController {
   private readonly logger = new Logger(DeploymentController.name);
 
@@ -81,13 +84,12 @@ export class DeploymentController {
         type: result.type,
         urls: result.urls,
         error: result.error,
+        errorCause: result.errorCause,
         errorCode: result.errorCode,
         retryStrategy: result.retryStrategy,
         retryAfterMs: result.retryAfterMs,
         suggestedNames: result.suggestedNames,
-        canRetry: result.errorCode
-          ? this.retryService.canRetry(result.errorCode)
-          : undefined,
+        canRetry: result.errorCode ? this.retryService.canRetry(result.errorCode) : undefined,
       };
     } catch (error) {
       // Handle ForbiddenException from router (tier/limit errors)
@@ -145,13 +147,12 @@ export class DeploymentController {
         type: result.type,
         urls: result.urls,
         error: result.error,
+        errorCause: result.errorCause,
         errorCode: result.errorCode,
         retryStrategy: result.retryStrategy,
         retryAfterMs: result.retryAfterMs,
         suggestedNames: result.suggestedNames,
-        canRetry: result.errorCode
-          ? this.retryService.canRetry(result.errorCode)
-          : undefined,
+        canRetry: result.errorCode ? this.retryService.canRetry(result.errorCode) : undefined,
       };
     } catch (error) {
       // Handle ForbiddenException from router (tier/limit errors)
@@ -184,13 +185,12 @@ export class DeploymentController {
    */
   @Get(':conversationId/status')
   async getDeploymentStatus(
+    @CurrentUser() user: User,
     @Param('conversationId') conversationId: string,
   ): Promise<{ deployments: DeploymentStatusDto[] }> {
     this.logger.log(`Getting deployment status for conversation: ${conversationId}`);
 
-    const deployments = await this.deploymentService.getDeploymentStatus(
-      conversationId,
-    );
+    const deployments = await this.deploymentService.getDeploymentStatus(conversationId, user.id);
 
     return { deployments };
   }
@@ -201,15 +201,17 @@ export class DeploymentController {
   @Post(':conversationId/retry')
   @HttpCode(HttpStatus.OK)
   async retryDeploymentByConversation(
+    @CurrentUser() user: User,
     @Param('conversationId') conversationId: string,
     @Body() dto?: RetryDeploymentDto,
   ): Promise<DeploymentResponseDto> {
     this.logger.log(`Retry deployment request for conversation: ${conversationId}`);
 
     try {
-      // Get the latest deployment for this conversation
+      // Get the latest deployment for this conversation (owned by this user)
       const latestDeployment = await this.deploymentService.getLatestDeployment(
         conversationId,
+        user.id,
       );
 
       if (!latestDeployment) {
@@ -223,6 +225,7 @@ export class DeploymentController {
         latestDeployment.id,
         dto?.newServerName,
         dto?.forceRetry,
+        user.id,
       );
 
       return {
@@ -231,12 +234,11 @@ export class DeploymentController {
         type: result.type,
         urls: result.urls,
         error: result.error,
+        errorCause: result.errorCause,
         errorCode: result.errorCode,
         retryStrategy: result.retryStrategy,
         suggestedNames: result.suggestedNames,
-        canRetry: result.errorCode
-          ? this.retryService.canRetry(result.errorCode)
-          : undefined,
+        canRetry: result.errorCode ? this.retryService.canRetry(result.errorCode) : undefined,
       };
     } catch (error) {
       const err = error as Error;
@@ -254,6 +256,7 @@ export class DeploymentController {
   @Post('retry/:deploymentId')
   @HttpCode(HttpStatus.OK)
   async retryDeploymentById(
+    @CurrentUser() user: User,
     @Param('deploymentId') deploymentId: string,
     @Body() dto?: RetryDeploymentDto,
   ): Promise<DeploymentResponseDto> {
@@ -264,6 +267,7 @@ export class DeploymentController {
         deploymentId,
         dto?.newServerName,
         dto?.forceRetry,
+        user.id,
       );
 
       return {
@@ -272,12 +276,11 @@ export class DeploymentController {
         type: result.type,
         urls: result.urls,
         error: result.error,
+        errorCause: result.errorCause,
         errorCode: result.errorCode,
         retryStrategy: result.retryStrategy,
         suggestedNames: result.suggestedNames,
-        canRetry: result.errorCode
-          ? this.retryService.canRetry(result.errorCode)
-          : undefined,
+        canRetry: result.errorCode ? this.retryService.canRetry(result.errorCode) : undefined,
       };
     } catch (error) {
       const err = error as Error;
@@ -294,6 +297,7 @@ export class DeploymentController {
    */
   @Get()
   async listDeployments(
+    @CurrentUser() user: User,
     @Query() query: ListDeploymentsQueryDto,
   ): Promise<PaginatedDeploymentsDto> {
     this.logger.log(`Listing deployments with filters: ${JSON.stringify(query)}`);
@@ -303,6 +307,8 @@ export class DeploymentController {
       status: query.status as DeploymentStatus | undefined,
       limit: query.limit,
       offset: query.offset,
+      // Never list other users' deployments
+      userId: user.id,
     });
 
     return {
@@ -327,11 +333,12 @@ export class DeploymentController {
    */
   @Get('id/:deploymentId')
   async getDeploymentById(
+    @CurrentUser() user: User,
     @Param('deploymentId') deploymentId: string,
   ): Promise<DeploymentStatusDto> {
     this.logger.log(`Getting deployment: ${deploymentId}`);
 
-    const deployment = await this.deploymentService.getDeploymentById(deploymentId);
+    const deployment = await this.deploymentService.getDeploymentById(deploymentId, user.id);
 
     if (!deployment) {
       throw new NotFoundException(`Deployment not found: ${deploymentId}`);
@@ -355,6 +362,7 @@ export class DeploymentController {
   @Patch('gist/:deploymentId')
   @HttpCode(HttpStatus.OK)
   async updateGistDeployment(
+    @CurrentUser() user: User,
     @Param('deploymentId') deploymentId: string,
     @Body() dto: UpdateGistDto,
   ): Promise<DeploymentResponseDto> {
@@ -364,6 +372,7 @@ export class DeploymentController {
       const result = await this.deploymentService.updateGistDeployment(
         deploymentId,
         dto.description,
+        user.id,
       );
 
       return {
@@ -388,12 +397,13 @@ export class DeploymentController {
   @Delete('gist/:deploymentId')
   @HttpCode(HttpStatus.OK)
   async deleteGistDeployment(
+    @CurrentUser() user: User,
     @Param('deploymentId') deploymentId: string,
   ): Promise<{ success: boolean; error?: string }> {
     this.logger.log(`Delete Gist deployment: ${deploymentId}`);
 
     try {
-      return await this.deploymentService.deleteGistDeployment(deploymentId);
+      return await this.deploymentService.deleteGistDeployment(deploymentId, user.id);
     } catch (error) {
       this.logger.error(`Delete Gist failed: ${error.message}`);
       return {
@@ -409,12 +419,13 @@ export class DeploymentController {
   @Delete('repo/:deploymentId')
   @HttpCode(HttpStatus.OK)
   async deleteRepoDeployment(
+    @CurrentUser() user: User,
     @Param('deploymentId') deploymentId: string,
   ): Promise<{ success: boolean; error?: string }> {
     this.logger.log(`Delete repository deployment: ${deploymentId}`);
 
     try {
-      return await this.deploymentService.deleteRepoDeployment(deploymentId);
+      return await this.deploymentService.deleteRepoDeployment(deploymentId, user.id);
     } catch (error) {
       this.logger.error(`Delete repository failed: ${error.message}`);
       return {
@@ -429,9 +440,7 @@ export class DeploymentController {
    */
   @Post('enterprise')
   @HttpCode(HttpStatus.OK)
-  async deployToEnterprise(
-    @Body() dto: DeployToEnterpriseDto,
-  ): Promise<DeploymentResponseDto> {
+  async deployToEnterprise(@Body() dto: DeployToEnterpriseDto): Promise<DeploymentResponseDto> {
     this.logger.log(`Enterprise deployment request for conversation: ${dto.conversationId}`);
 
     try {

@@ -139,7 +139,12 @@ export class AuthService {
       if (user) {
         // Link OAuth account to existing user
         this.logger.log(`Linking ${data.provider} account to existing user: ${user.id}`);
-        await this.userService.linkOAuthAccount(user.id, data.provider, data.providerId, data.username);
+        await this.userService.linkOAuthAccount(
+          user.id,
+          data.provider,
+          data.providerId,
+          data.username,
+        );
       }
     }
 

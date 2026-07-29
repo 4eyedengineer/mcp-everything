@@ -37,7 +37,12 @@ async function testToolDiscovery() {
     console.log(`   - Repository: ${analysis.metadata.fullName}`);
     console.log(`   - Language: ${analysis.metadata.language}`);
     console.log(`   - Frameworks: ${analysis.techStack.frameworks.join(', ')}`);
-    console.log(`   - Features: ${Object.entries(analysis.features).filter(([_, v]) => v).map(([k, _]) => k).join(', ')}`);
+    console.log(
+      `   - Features: ${Object.entries(analysis.features)
+        .filter(([_, v]) => v)
+        .map(([k, _]) => k)
+        .join(', ')}`,
+    );
 
     // Step 2: Discover tools using AI
     console.log('\n🤖 Step 2: AI Tool Discovery...');
@@ -53,7 +58,7 @@ async function testToolDiscovery() {
 
       // Display discovered tools
       console.log('\n🛠️  Discovered Tools:');
-      console.log('=' .repeat(60));
+      console.log('='.repeat(60));
 
       toolDiscoveryResult.tools.forEach((tool, index) => {
         console.log(`\n${index + 1}. ${tool.name}`);
@@ -75,15 +80,20 @@ async function testToolDiscovery() {
 
       // Show quality breakdown
       console.log('\n📊 Quality Analysis:');
-      console.log('=' .repeat(60));
+      console.log('='.repeat(60));
 
-      const avgQuality = toolDiscoveryResult.tools.reduce((sum, tool) => sum + tool.quality.overallScore, 0) / toolDiscoveryResult.tools.length;
+      const avgQuality =
+        toolDiscoveryResult.tools.reduce((sum, tool) => sum + tool.quality.overallScore, 0) /
+        toolDiscoveryResult.tools.length;
       console.log(`Average Quality Score: ${avgQuality.toFixed(2)}`);
 
-      const categories = toolDiscoveryResult.tools.reduce((acc, tool) => {
-        acc[tool.category] = (acc[tool.category] || 0) + 1;
-        return acc;
-      }, {} as Record<string, number>);
+      const categories = toolDiscoveryResult.tools.reduce(
+        (acc, tool) => {
+          acc[tool.category] = (acc[tool.category] || 0) + 1;
+          return acc;
+        },
+        {} as Record<string, number>,
+      );
 
       console.log('Tool Categories:');
       Object.entries(categories).forEach(([category, count]) => {
@@ -92,9 +102,8 @@ async function testToolDiscovery() {
 
       // Show AI reasoning
       console.log('\n🧠 AI Reasoning:');
-      console.log('=' .repeat(60));
+      console.log('='.repeat(60));
       console.log(toolDiscoveryResult.metadata.aiReasoning);
-
     } else {
       console.error(`❌ Tool discovery failed: ${toolDiscoveryResult.error}`);
     }
@@ -110,7 +119,7 @@ async function testToolDiscovery() {
         frameworks: analysis.techStack.frameworks,
         repositoryType: 'library' as const,
         complexity: 'medium' as const,
-        domain: 'web'
+        domain: 'web',
       };
 
       console.log('   Testing generateToolFromCode...');
@@ -120,7 +129,10 @@ async function testToolDiscovery() {
       // Test README analysis
       if (analysis.readme.content) {
         console.log('   Testing extractToolsFromReadme...');
-        const readmeTools = await toolDiscoveryService.extractToolsFromReadme(analysis.readme.content, context);
+        const readmeTools = await toolDiscoveryService.extractToolsFromReadme(
+          analysis.readme.content,
+          context,
+        );
         console.log(`   ✅ Extracted ${readmeTools.length} tools from README`);
       }
 
@@ -135,7 +147,6 @@ async function testToolDiscovery() {
     console.log('\n🎉 All tests completed successfully!');
 
     await app.close();
-
   } catch (error) {
     console.error('❌ Test failed:', error.message);
     console.error('Stack trace:', error.stack);

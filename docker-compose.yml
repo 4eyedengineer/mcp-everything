@@ -30,6 +30,13 @@ services:
       - "3000:3000"
     environment:
       NODE_ENV: development
+      # The backend reads DATABASE_* (it never parses DATABASE_URL)
+      DATABASE_HOST: postgres
+      DATABASE_PORT: 5432
+      DATABASE_USER: postgres
+      DATABASE_PASSWORD: postgres
+      DATABASE_NAME: mcp_everything
+      # Kept for tooling (typeorm CLI / scripts) that does use a URL
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/mcp_everything
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       GITHUB_TOKEN: ${GITHUB_TOKEN}

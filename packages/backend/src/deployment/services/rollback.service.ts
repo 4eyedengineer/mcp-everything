@@ -44,9 +44,7 @@ export class DeploymentRollbackService {
       return result;
     }
 
-    this.logger.log(
-      `Starting rollback for deployment ${deploymentId}: ${reason}`,
-    );
+    this.logger.log(`Starting rollback for deployment ${deploymentId}: ${reason}`);
 
     try {
       if (deployment.deploymentType === 'repo' && deployment.repositoryUrl) {
@@ -68,8 +66,7 @@ export class DeploymentRollbackService {
       });
     } catch (error) {
       result.success = false;
-      const errorMessage =
-        error instanceof Error ? error.message : 'Unknown error';
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       result.errors.push(`Rollback error: ${errorMessage}`);
       this.logger.error(`Rollback failed for ${deploymentId}: ${errorMessage}`);
     }
@@ -80,40 +77,23 @@ export class DeploymentRollbackService {
   /**
    * Rollback a repository deployment by deleting the repository
    */
-  private async rollbackRepository(
-    deployment: Deployment,
-    result: RollbackResult,
-  ): Promise<void> {
-    const parsed = this.gitHubRepoProvider.parseRepoUrl(
-      deployment.repositoryUrl!,
-    );
+  private async rollbackRepository(deployment: Deployment, result: RollbackResult): Promise<void> {
+    const parsed = this.gitHubRepoProvider.parseRepoUrl(deployment.repositoryUrl!);
     if (!parsed) {
-      result.errors.push(
-        `Could not parse repository URL: ${deployment.repositoryUrl}`,
-      );
+      result.errors.push(`Could not parse repository URL: ${deployment.repositoryUrl}`);
       return;
     }
 
     try {
-      const deleted = await this.gitHubRepoProvider.deleteRepository(
-        parsed.owner,
-        parsed.repo,
-      );
+      const deleted = await this.gitHubRepoProvider.deleteRepository(parsed.owner, parsed.repo);
       if (deleted) {
-        result.resourcesDeleted.push(
-          `Repository: ${parsed.owner}/${parsed.repo}`,
-        );
-        this.logger.log(
-          `Rolled back repository: ${parsed.owner}/${parsed.repo}`,
-        );
+        result.resourcesDeleted.push(`Repository: ${parsed.owner}/${parsed.repo}`);
+        this.logger.log(`Rolled back repository: ${parsed.owner}/${parsed.repo}`);
       } else {
-        result.errors.push(
-          `Failed to delete repository: ${parsed.owner}/${parsed.repo}`,
-        );
+        result.errors.push(`Failed to delete repository: ${parsed.owner}/${parsed.repo}`);
       }
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : 'Unknown error';
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       result.errors.push(`Repository deletion error: ${errorMessage}`);
     }
   }
@@ -121,10 +101,7 @@ export class DeploymentRollbackService {
   /**
    * Rollback a gist deployment by deleting the gist
    */
-  private async rollbackGist(
-    deployment: Deployment,
-    result: RollbackResult,
-  ): Promise<void> {
+  private async rollbackGist(deployment: Deployment, result: RollbackResult): Promise<void> {
     const gistId = deployment.metadata?.gistId as string | undefined;
     if (!gistId) {
       this.logger.debug('No gist ID found, nothing to rollback');
@@ -140,8 +117,7 @@ export class DeploymentRollbackService {
         result.errors.push(`Failed to delete gist: ${gistId}`);
       }
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : 'Unknown error';
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       result.errors.push(`Gist deletion error: ${errorMessage}`);
     }
   }

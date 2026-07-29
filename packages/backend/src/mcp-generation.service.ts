@@ -260,14 +260,16 @@ export class McpGenerationService {
     const implementations: Record<string, string> = {};
 
     // Filter out invalid tools (undefined, missing name, or missing description)
-    const validTools = tools.filter(t => t && t.name && t.description);
+    const validTools = tools.filter((t) => t && t.name && t.description);
     if (validTools.length === 0) {
       this.logger.warn('No valid tools found for implementation generation');
       return implementations;
     }
 
     if (validTools.length < tools.length) {
-      this.logger.warn(`Filtered ${tools.length - validTools.length} invalid tools, ${validTools.length} valid tools remaining`);
+      this.logger.warn(
+        `Filtered ${tools.length - validTools.length} invalid tools, ${validTools.length} valid tools remaining`,
+      );
     }
 
     for (const tool of validTools) {
@@ -426,7 +428,9 @@ export class McpGenerationService {
     }
 
     // Detect required environment variables from tools
-    const envVarDetection = await this.envVariableService.detectRequiredEnvVars(toolDiscovery.tools);
+    const envVarDetection = await this.envVariableService.detectRequiredEnvVars(
+      toolDiscovery.tools,
+    );
     const requiredEnvVars = envVarDetection.detectedVars;
     this.logger.log(`Detected ${requiredEnvVars.length} required environment variables`);
 
@@ -471,7 +475,13 @@ export class McpGenerationService {
     // README with env var documentation
     files.push({
       path: 'README.md',
-      content: this.generateReadmeWithEnvVars(serverName, analysis, toolDiscovery.tools, githubUrl, requiredEnvVars),
+      content: this.generateReadmeWithEnvVars(
+        serverName,
+        analysis,
+        toolDiscovery.tools,
+        githubUrl,
+        requiredEnvVars,
+      ),
     });
 
     // Write files to disk
@@ -487,7 +497,11 @@ export class McpGenerationService {
     }
 
     // Final validation
-    const finalValidation = await this.validateGeneratedServer(serverDir, toolDiscovery.tools, files);
+    const finalValidation = await this.validateGeneratedServer(
+      serverDir,
+      toolDiscovery.tools,
+      files,
+    );
 
     this.logger.log(`Generated server packaged at: ${serverDir}`);
 
@@ -521,7 +535,7 @@ export class McpGenerationService {
 
     // Check if implementations are missing and inject them
     // Filter to only valid tools with name property
-    const validTools = tools.filter(t => t && t.name);
+    const validTools = tools.filter((t) => t && t.name);
     for (const tool of validTools) {
       const functionName = `${tool.name}Implementation`;
 
@@ -569,28 +583,28 @@ export class McpGenerationService {
 
     if (this.mcpProtocolValidator) {
       try {
-        const mainFile = files.find(f => f.path === 'src/index.ts')?.content || '';
-        const packageJson = files.find(f => f.path === 'package.json')?.content || '';
-        const tsConfig = files.find(f => f.path === 'tsconfig.json')?.content;
+        const mainFile = files.find((f) => f.path === 'src/index.ts')?.content || '';
+        const packageJson = files.find((f) => f.path === 'package.json')?.content || '';
+        const tsConfig = files.find((f) => f.path === 'tsconfig.json')?.content;
 
         const validationResult = await this.mcpProtocolValidator.validateServer({
           mainFile,
           packageJson,
           tsConfig,
           metadata: {
-            tools: tools.map(t => ({
+            tools: tools.map((t) => ({
               name: t.name,
               inputSchema: t.inputSchema,
               description: t.description,
             })),
-            serverName: files.find(f => f.path === 'package.json')
+            serverName: files.find((f) => f.path === 'package.json')
               ? JSON.parse(packageJson).name || 'mcp-server'
               : 'mcp-server',
           },
         });
 
         mcpCompliant = validationResult.valid;
-        compiles = validationResult.checks.find(c => c.name === 'build')?.passed || false;
+        compiles = validationResult.checks.find((c) => c.name === 'build')?.passed || false;
 
         // Add validation errors to the list
         for (const check of validationResult.checks) {
@@ -599,9 +613,12 @@ export class McpGenerationService {
           }
         }
 
-        this.logger.log(`MCP protocol validation: ${mcpCompliant ? 'PASSED' : 'FAILED'} (${validationResult.checks.filter(c => c.passed).length}/${validationResult.checks.length} checks)`);
+        this.logger.log(
+          `MCP protocol validation: ${mcpCompliant ? 'PASSED' : 'FAILED'} (${validationResult.checks.filter((c) => c.passed).length}/${validationResult.checks.length} checks)`,
+        );
       } catch (validationError) {
-        const errorMsg = validationError instanceof Error ? validationError.message : String(validationError);
+        const errorMsg =
+          validationError instanceof Error ? validationError.message : String(validationError);
         this.logger.warn(`MCP protocol validation failed: ${errorMsg}`);
         warnings.push(`Protocol validation error: ${errorMsg}`);
         // Default to true if validation fails to not block generation
@@ -616,9 +633,9 @@ export class McpGenerationService {
     }
 
     // Verify all tools are implemented (basic check)
-    const mainFileContent = files.find(f => f.path === 'src/index.ts')?.content || '';
-    const toolsImplemented = tools.every(t =>
-      mainFileContent.includes(t.name) || mainFileContent.includes(`"${t.name}"`)
+    const mainFileContent = files.find((f) => f.path === 'src/index.ts')?.content || '';
+    const toolsImplemented = tools.every(
+      (t) => mainFileContent.includes(t.name) || mainFileContent.includes(`"${t.name}"`),
     );
 
     if (!toolsImplemented) {
@@ -678,8 +695,8 @@ export class McpGenerationService {
         },
         dependencies: {
           '@modelcontextprotocol/sdk': '^0.5.0',
-          'zod': '^3.23.0',
-          'axios': '^1.7.0',
+          zod: '^3.23.0',
+          axios: '^1.7.0',
         },
         devDependencies: {
           '@types/node': '^20.0.0',
@@ -777,8 +794,12 @@ ${analysis.metadata.description || `MCP Server for ${analysis.metadata.fullName}
    */
   private generateDescriptionSection(analysis: RepositoryAnalysis, githubUrl: string): string {
     const techStack = analysis.techStack;
-    const languages = techStack?.languages?.length ? techStack.languages.join(', ') : 'Not detected';
-    const frameworks = techStack?.frameworks?.length ? techStack.frameworks.join(', ') : 'None detected';
+    const languages = techStack?.languages?.length
+      ? techStack.languages.join(', ')
+      : 'Not detected';
+    const frameworks = techStack?.frameworks?.length
+      ? techStack.frameworks.join(', ')
+      : 'None detected';
 
     return `## Description
 
@@ -797,7 +818,7 @@ This MCP server was automatically generated from the repository **${analysis.met
    */
   private generateToolsOverview(tools: McpTool[]): string {
     // Filter to valid tools only
-    const validTools = tools.filter(t => t && t.name && t.description);
+    const validTools = tools.filter((t) => t && t.name && t.description);
     if (!validTools.length) {
       return '## Tools\n\nNo tools available.';
     }
@@ -883,7 +904,7 @@ After updating the configuration, restart Claude Desktop for the changes to take
 
     // Extract potential environment variables from tool dependencies and hints
     // Filter to only valid tools
-    const validTools = tools.filter(t => t && t.name);
+    const validTools = tools.filter((t) => t && t.name);
     for (const tool of validTools) {
       const hints = tool.implementationHints;
       if (hints?.requiredData) {
@@ -934,7 +955,9 @@ Create a \`.env\` file or configure these in your Claude Desktop config:
 
 \`\`\`bash
 # .env file
-${Array.from(envVars).map((v) => `${v}=your-value-here`).join('\n')}
+${Array.from(envVars)
+  .map((v) => `${v}=your-value-here`)
+  .join('\n')}
 \`\`\``;
   }
 
@@ -1012,8 +1035,11 @@ ${toolDocs}`;
       const isRequired = required.includes(name) ? 'Yes' : 'No';
       const type = property.type || 'any';
       const description = property.description || '-';
-      const defaultVal = property.default !== undefined ? `Default: \`${JSON.stringify(property.default)}\`` : '';
-      const enumVal = property.enum ? `Options: ${property.enum.map(e => `\`${e}\``).join(', ')}` : '';
+      const defaultVal =
+        property.default !== undefined ? `Default: \`${JSON.stringify(property.default)}\`` : '';
+      const enumVal = property.enum
+        ? `Options: ${property.enum.map((e) => `\`${e}\``).join(', ')}`
+        : '';
       const extra = [defaultVal, enumVal].filter(Boolean).join('. ');
 
       return `| \`${name}\` | ${type} | ${isRequired} | ${description}${extra ? ` ${extra}` : ''} |`;
@@ -1140,7 +1166,10 @@ MIT
 
     // Validate basic structure for main server files
     if (extractedCode.includes('import { Server }')) {
-      if (!extractedCode.includes('server.connect(transport)') && !extractedCode.includes('await server.connect(')) {
+      if (
+        !extractedCode.includes('server.connect(transport)') &&
+        !extractedCode.includes('await server.connect(')
+      ) {
         this.logger.warn('Generated server code missing server.connect(transport) call');
       }
       if (!extractedCode.includes('setRequestHandler')) {
@@ -1236,7 +1265,7 @@ main().catch(console.error);
 
   private buildServerCodePrompt(analysis: RepositoryAnalysis, tools: McpTool[]): string {
     // Filter to valid tools with name and description
-    const validTools = tools.filter(t => t && t.name && t.description);
+    const validTools = tools.filter((t) => t && t.name && t.description);
 
     if (validTools.length === 0) {
       this.logger.warn('No valid tools found in buildServerCodePrompt');
@@ -1447,10 +1476,11 @@ ISSUES: [actionable fixes needed]
     tsValidation: { compiles: boolean; errors: string[] },
   ): string {
     // Filter to valid tools only
-    const validTools = tools.filter(t => t && t.name);
+    const validTools = tools.filter((t) => t && t.name);
     const toolNames = validTools.map((t) => t.name).join(', ');
     const firstLine = code.split('\n')[0].trim();
-    const hasServerConnect = code.includes('server.connect(transport)') || code.includes('await server.connect(');
+    const hasServerConnect =
+      code.includes('server.connect(transport)') || code.includes('await server.connect(');
     const hasTodos = /TODO|FIXME|placeholder|implement/i.test(code);
 
     return `**STRICT VALIDATION REQUIRED**
@@ -1508,7 +1538,7 @@ ISSUES: [exact problems to fix]`;
     tools: McpTool[],
   ): string {
     // Filter to valid tools with name and description
-    const validTools = tools.filter(t => t && t.name && t.description);
+    const validTools = tools.filter((t) => t && t.name && t.description);
 
     if (validTools.length === 0) {
       this.logger.warn('No valid tools found in buildRegenerationPrompt');
@@ -1772,13 +1802,17 @@ coverage/
   /**
    * Generate Claude Desktop integration section with env var configuration
    */
-  private generateClaudeDesktopSectionWithEnvVars(serverName: string, envVars: RequiredEnvVar[]): string {
+  private generateClaudeDesktopSectionWithEnvVars(
+    serverName: string,
+    envVars: RequiredEnvVar[],
+  ): string {
     const configName = serverName.toLowerCase().replace(/[^a-z0-9-]/g, '-');
 
     // Build env vars config
-    const envConfig = envVars.length > 0
-      ? envVars.map(v => `        "${v.name}": "YOUR_${v.name}_HERE"`).join(',\n')
-      : '        // No environment variables required';
+    const envConfig =
+      envVars.length > 0
+        ? envVars.map((v) => `        "${v.name}": "YOUR_${v.name}_HERE"`).join(',\n')
+        : '        // No environment variables required';
 
     return `## Claude Desktop Integration
 

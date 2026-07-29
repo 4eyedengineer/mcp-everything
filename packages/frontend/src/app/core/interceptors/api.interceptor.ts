@@ -7,6 +7,9 @@ import { environment } from '../../../environments/environment';
 export class ApiInterceptor implements HttpInterceptor {
   intercept(req: HttpRequest<any>, next: HttpHandler): Observable<HttpEvent<any>> {
     // Add common headers
+    // NOTE: Authorization header is intentionally NOT added here - that is
+    // the sole responsibility of AuthInterceptor (via AuthService.getAccessToken())
+    // to avoid two interceptors racing to attach auth headers from different sources.
     let modifiedReq = req.clone({
       setHeaders: {
         'Content-Type': 'application/json',
@@ -15,16 +18,6 @@ export class ApiInterceptor implements HttpInterceptor {
         'X-App-Version': environment.version,
       }
     });
-
-    // Add authentication token if available
-    const token = this.getAuthToken();
-    if (token) {
-      modifiedReq = modifiedReq.clone({
-        setHeaders: {
-          'Authorization': `Bearer ${token}`
-        }
-      });
-    }
 
     // Add request ID for tracking
     const requestId = this.generateRequestId();
@@ -35,14 +28,6 @@ export class ApiInterceptor implements HttpInterceptor {
     });
 
     return next.handle(modifiedReq);
-  }
-
-  private getAuthToken(): string | null {
-    try {
-      return localStorage.getItem('mcp-auth-token');
-    } catch {
-      return null;
-    }
   }
 
   private generateRequestId(): string {

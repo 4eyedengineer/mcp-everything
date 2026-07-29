@@ -1,7 +1,7 @@
 import { Injectable } from '@angular/core';
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { Observable } from 'rxjs';
-import { environment } from '../../../environments/environment';
+import { API_V1_BASE } from '../config/api.config';
 
 // Types matching backend DTOs
 export type McpServerCategory =
@@ -115,7 +115,7 @@ export interface PublishServerRequest {
   providedIn: 'root',
 })
 export class MarketplaceService {
-  private readonly apiUrl = `${environment.apiUrl}/api/v1/marketplace`;
+  private readonly apiUrl = `${API_V1_BASE}/marketplace`;
 
   constructor(private http: HttpClient) {}
 
@@ -185,7 +185,7 @@ export class MarketplaceService {
     publishData: PublishServerRequest
   ): Observable<ServerResponse> {
     return this.http.post<ServerResponse>(
-      `${this.apiUrl}/servers/publish/${conversationId}`,
+      `${this.apiUrl}/servers/${conversationId}/publish`,
       publishData
     );
   }
@@ -212,7 +212,7 @@ export class MarketplaceService {
    */
   getMyServers(params: SearchParams = {}): Observable<PaginatedResponse<ServerSummaryResponse>> {
     const httpParams = this.buildParams(params);
-    return this.http.get<PaginatedResponse<ServerSummaryResponse>>(`${this.apiUrl}/servers/mine`, {
+    return this.http.get<PaginatedResponse<ServerSummaryResponse>>(`${this.apiUrl}/my-servers`, {
       params: httpParams,
     });
   }

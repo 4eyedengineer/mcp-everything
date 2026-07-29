@@ -91,7 +91,10 @@ export class DeploymentResponseDto {
     codespace?: string;
     enterprise?: string;
   };
+  /** User-facing error message (includes the underlying cause when available) */
   error?: string;
+  /** Raw underlying error message so real failures stay diagnosable */
+  errorCause?: string;
   /** Structured error code for programmatic handling */
   errorCode?: string;
   /** Recommended retry strategy: 'immediate' | 'exponential_backoff' | 'manual' | 'none' */

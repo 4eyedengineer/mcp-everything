@@ -59,14 +59,14 @@ async function testMcpGeneration() {
 
     if (result.metadata.quality.errors.length > 0) {
       console.log('❌ Errors:');
-      result.metadata.quality.errors.forEach(error => {
+      result.metadata.quality.errors.forEach((error) => {
         console.log(`  - ${error}`);
       });
     }
 
     if (result.metadata.quality.warnings.length > 0) {
       console.log('⚠️  Warnings:');
-      result.metadata.quality.warnings.forEach(warning => {
+      result.metadata.quality.warnings.forEach((warning) => {
         console.log(`  - ${warning}`);
       });
     }
@@ -74,7 +74,6 @@ async function testMcpGeneration() {
     console.log('\n🎉 Test completed successfully!');
 
     await app.close();
-
   } catch (error) {
     console.error('❌ Test failed:', error.message);
     console.error('Stack trace:', error.stack);

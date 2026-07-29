@@ -4,6 +4,8 @@ import { RefinementService } from '../refinement.service';
 import { McpTestingService } from '../../testing/mcp-testing.service';
 import { McpGenerationService } from '../../mcp-generation.service';
 import { McpProtocolValidatorService } from '../../validation/mcp-protocol-validator.service';
+import { AnthropicService } from '../../ai/anthropic.service';
+import { createMockAnthropicService } from './__mocks__/anthropic.mock';
 import {
   createEnsembledState,
   createGeneratedState,
@@ -14,14 +16,10 @@ import {
   mockFailureAnalysisResponse,
 } from './__mocks__/anthropic.mock';
 
-// Mock @langchain/anthropic module
+// Stand-in for the single AI seam (AnthropicService). Every completion, text or
+// structured, routes through mockLlmInvoke(prompt) -> { content }.
 const mockLlmInvoke = jest.fn();
-
-jest.mock('@langchain/anthropic', () => ({
-  ChatAnthropic: jest.fn().mockImplementation(() => ({
-    invoke: mockLlmInvoke,
-  })),
-}));
+const mockAnthropicService = createMockAnthropicService(mockLlmInvoke);
 
 describe('RefinementService', () => {
   let service: RefinementService;
@@ -91,6 +89,10 @@ describe('RefinementService', () => {
         {
           provide: McpProtocolValidatorService,
           useValue: mockMcpProtocolValidator,
+        },
+        {
+          provide: AnthropicService,
+          useValue: mockAnthropicService,
         },
       ],
     }).compile();
@@ -477,8 +479,13 @@ describe('RefinementService', () => {
     });
   });
 
-  describe('truncation detection and recovery', () => {
-    it('should detect truncated code missing main() call', async () => {
+  // Truncation is no longer detected/repaired locally: the API reports
+  // `stop_reason: "max_tokens"` and AnthropicService raises
+  // TruncatedResponseError, which generateCode() retries at a higher cap.
+  // These cases assert incomplete model output is passed through untouched
+  // (never brace-balanced or otherwise fabricated) and does not crash the loop.
+  describe('incomplete model output', () => {
+    it('should pass through code that is missing a main() call', async () => {
       mockLlmInvoke.mockResolvedValueOnce({
         content: `
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -497,11 +504,11 @@ async function main() {
 
       const result = await service.refineUntilWorking(state);
 
-      // Should have attempted recovery
+      // No local repair - the partial text is handed back as-is
       expect(result.generatedCode.mainFile).toBeDefined();
     });
 
-    it('should detect truncated code with unbalanced braces', async () => {
+    it('should pass through code with unbalanced braces', async () => {
       mockLlmInvoke.mockResolvedValueOnce({
         content: `
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -517,10 +524,9 @@ function test() {
       const result = await service.refineUntilWorking(state);
 
       expect(result.generatedCode.mainFile).toBeDefined();
-      // Recovery should add missing braces
     });
 
-    it('should detect code ending with trailing operators', async () => {
+    it('should pass through code ending with a trailing operator', async () => {
       mockLlmInvoke.mockResolvedValueOnce({
         content: `
 const value = 1 +`,  // Truncated - ends with operator
@@ -533,7 +539,7 @@ const value = 1 +`,  // Truncated - ends with operator
       expect(result.generatedCode.mainFile).toBeDefined();
     });
 
-    it('should add missing main() call in recovery', async () => {
+    it('should pass through complete code untouched', async () => {
       mockLlmInvoke.mockResolvedValueOnce({
         content: `
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -548,7 +554,6 @@ async function main() {
 
       const result = await service.refineUntilWorking(state);
 
-      // Recovery should add main().catch()
       expect(
         result.generatedCode.mainFile.includes('main()') ||
         result.generatedCode.mainFile.includes('main().catch'),

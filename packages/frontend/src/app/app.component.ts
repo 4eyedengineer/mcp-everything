@@ -8,7 +8,7 @@ import { ConversationSidebarComponent } from './shared/components/conversation-s
 import { TopNavComponent } from './shared/components/top-nav/top-nav.component';
 import { ConversationService, Conversation } from './core/services/conversation.service';
 import { ChatService } from './core/services/chat.service';
-import { v4 as uuidv4 } from 'uuid';
+import { SessionService } from './core/services/session.service';
 
 @Component({
   selector: 'mcp-root',
@@ -35,24 +35,15 @@ export class AppComponent implements OnInit {
   constructor(
     private router: Router,
     private conversationService: ConversationService,
-    private chatService: ChatService
+    private chatService: ChatService,
+    private sessionService: SessionService
   ) {
     // Get or create session ID
-    this.sessionId = this.getOrCreateSessionId();
+    this.sessionId = this.sessionService.getOrCreateSessionId();
   }
 
   ngOnInit(): void {
     this.loadConversations();
-  }
-
-  private getOrCreateSessionId(): string {
-    const stored = localStorage.getItem('mcp-session-id');
-    if (stored) {
-      return stored;
-    }
-    const newId = uuidv4();
-    localStorage.setItem('mcp-session-id', newId);
-    return newId;
   }
 
   /**

@@ -181,9 +181,7 @@ export class GitOpsService {
         commitUrl: newCommit.html_url,
       };
     } catch (error) {
-      this.logger.error(
-        `Failed to commit manifests for ${serverId}: ${error.message}`,
-      );
+      this.logger.error(`Failed to commit manifests for ${serverId}: ${error.message}`);
       return {
         success: false,
         error: error.message,
@@ -260,9 +258,7 @@ export class GitOpsService {
       });
 
       // Filter out files in the server directory
-      const newTreeItems = fullTree.tree.filter(
-        (item) => !item.path?.startsWith(basePath),
-      );
+      const newTreeItems = fullTree.tree.filter((item) => !item.path?.startsWith(basePath));
 
       // Create new tree without the server directory
       const { data: newTree } = await this.octokit.git.createTree({
@@ -301,9 +297,7 @@ export class GitOpsService {
         commitUrl: newCommit.html_url,
       };
     } catch (error) {
-      this.logger.error(
-        `Failed to remove manifests for ${serverId}: ${error.message}`,
-      );
+      this.logger.error(`Failed to remove manifests for ${serverId}: ${error.message}`);
       return {
         success: false,
         error: error.message,

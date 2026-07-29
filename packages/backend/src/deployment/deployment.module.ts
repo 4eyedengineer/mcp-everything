@@ -1,6 +1,5 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { ThrottlerModule } from '@nestjs/throttler';
 
 import { Deployment } from '../database/entities/deployment.entity';
 import { Conversation } from '../database/entities/conversation.entity';
@@ -23,11 +22,8 @@ import { DeploymentRouterService } from './services/deployment-router.service';
 @Module({
   imports: [
     TypeOrmModule.forFeature([Deployment, Conversation]),
-    // Rate limiting: 10 deployment requests per minute per IP
-    ThrottlerModule.forRoot([{
-      ttl: 60000,
-      limit: 10,
-    }]),
+    // Rate limiting is configured globally in AppModule (ThrottlerModule.forRoot)
+    // and tightened to 10 req/min for this controller via @Throttle().
     // Import ValidationModule for post-deployment validation
     forwardRef(() => ValidationModule),
     // Import UserModule for tier-based routing

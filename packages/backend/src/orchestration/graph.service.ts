@@ -1,13 +1,12 @@
-import { Injectable, Inject, forwardRef, Optional } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import { Injectable, Optional, NotFoundException } from '@nestjs/common';
 import { StateGraph, END, START, Annotation, CompiledStateGraph } from '@langchain/langgraph';
-import { ChatAnthropic } from '@langchain/anthropic';
+import * as z from 'zod/v4';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { mkdirSync, writeFileSync, existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { Conversation, ConversationMemory } from '../database/entities';
-import { GraphState, NodeResult } from './types';
+import { GraphState } from './types';
 import { GitHubAnalysisService } from '../github-analysis.service';
 import { CodeExecutionService } from './code-execution.service';
 import { ResearchService } from './research.service';
@@ -15,9 +14,20 @@ import { EnsembleService } from './ensemble.service';
 import { ClarificationService } from './clarification.service';
 import { RefinementService } from './refinement.service';
 import { getPlatformContextPrompt } from './platform-context';
-import { safeParseJSON } from './json-utils';
 import { ErrorLoggingService } from '../logging/error-logging.service';
 import { StructuredLoggerService } from '../logging/structured-logger.service';
+import { AnthropicService } from '../ai/anthropic.service';
+
+/**
+ * Intent analysis output contract (enforced by the API's structured outputs).
+ */
+const IntentAnalysisSchema = z.object({
+  intent: z.enum(['generate_mcp', 'clarify', 'research', 'help', 'unknown']),
+  confidence: z.number(),
+  githubUrl: z.string().nullable().optional(),
+  missingInfo: z.array(z.string()).nullable().optional(),
+  reasoning: z.string(),
+});
 
 /**
  * LangGraph Orchestration Service
@@ -28,10 +38,8 @@ export class GraphOrchestrationService {
   private readonly logger: StructuredLoggerService;
   private readonly generatedServersDir: string;
   private graph: CompiledStateGraph<any, any, any, any>;
-  private llm: ChatAnthropic;
 
   constructor(
-    private configService: ConfigService,
     @InjectRepository(Conversation)
     private conversationRepo: Repository<Conversation>,
     @InjectRepository(ConversationMemory)
@@ -43,13 +51,14 @@ export class GraphOrchestrationService {
     private ensembleService: EnsembleService,
     private clarificationService: ClarificationService,
     private refinementService: RefinementService,
+    // Single AI seam (models, retries, timeouts, telemetry)
+    private readonly anthropic: AnthropicService,
     // Logging services
     structuredLogger: StructuredLoggerService,
     @Optional() private errorLoggingService?: ErrorLoggingService,
   ) {
     this.logger = structuredLogger.setContext('GraphOrchestrationService');
     this.generatedServersDir = join(process.cwd(), '../../generated-servers');
-    this.initializeLLM();
     this.buildGraph();
   }
 
@@ -76,26 +85,6 @@ export class GraphOrchestrationService {
         this.logger.error(`Failed to log error to database: ${logError.message}`);
       }
     }
-  }
-
-  /**
-   * Initialize Anthropic LLM
-   */
-  private initializeLLM(): void {
-    const apiKey = this.configService.get<string>('ANTHROPIC_API_KEY');
-    if (!apiKey) {
-      throw new Error('ANTHROPIC_API_KEY not configured');
-    }
-
-    this.llm = new ChatAnthropic({
-      apiKey,
-      model: 'claude-haiku-4-5-20251001', // Using Haiku for cost-effective processing
-      temperature: 0.7,
-      topP: undefined, // Fix for @langchain/anthropic bug sending top_p: -1
-      streaming: true,
-    });
-
-    this.logger.log('Anthropic LLM initialized');
   }
 
   /**
@@ -203,12 +192,13 @@ export class GraphOrchestrationService {
     sessionId: string,
     userInput: string,
     conversationId?: string,
+    userId?: string,
   ): Promise<AsyncGenerator<Partial<GraphState>>> {
     const startTime = Date.now();
 
     try {
-      // Load or create conversation
-      const conversation = await this.loadOrCreateConversation(sessionId, conversationId);
+      // Load or create conversation (ownership enforced when userId is known)
+      const conversation = await this.loadOrCreateConversation(sessionId, conversationId, userId);
 
       this.logger.log('Starting graph execution', {
         conversationId: conversation.id,
@@ -339,8 +329,8 @@ export class GraphOrchestrationService {
     if (toolsColonMatch) {
       const toolList = toolsColonMatch[1]
         .split(/,|\s+and\s+/)
-        .map(t => t.trim().toLowerCase().replace(/\s+/g, '_'))
-        .filter(t => t.length > 0 && !['only', 'just'].includes(t));
+        .map((t) => t.trim().toLowerCase().replace(/\s+/g, '_'))
+        .filter((t) => t.length > 0 && !['only', 'just'].includes(t));
 
       if (toolList.length > 0) {
         result.requestedToolNames = toolList;
@@ -351,18 +341,17 @@ export class GraphOrchestrationService {
 
     // Pattern 3: "X and Y only" or "only X and Y" or "just X and Y"
     if (!result.requestedToolNames) {
-      const onlyMatch = userInput.match(/(?:only|just)\s+([^.]+?)(?:\.|$)/i) ||
-                        userInput.match(/([^.]+?)\s+only(?:\.|$)/i);
+      const onlyMatch =
+        userInput.match(/(?:only|just)\s+([^.]+?)(?:\.|$)/i) ||
+        userInput.match(/([^.]+?)\s+only(?:\.|$)/i);
       if (onlyMatch) {
         // Extract tool names from the match, split by "and" or comma
-        const toolText = onlyMatch[1]
-          .replace(/^with\s+/i, '')
-          .replace(/\s*tools?\s*/gi, '');
+        const toolText = onlyMatch[1].replace(/^with\s+/i, '').replace(/\s*tools?\s*/gi, '');
 
         const toolList = toolText
           .split(/,|\s+and\s+/)
-          .map(t => t.trim().toLowerCase().replace(/\s+/g, '_'))
-          .filter(t => t.length > 0 && !['only', 'just', 'with', 'the', 'a', 'an'].includes(t));
+          .map((t) => t.trim().toLowerCase().replace(/\s+/g, '_'))
+          .filter((t) => t.length > 0 && !['only', 'just', 'with', 'the', 'a', 'an'].includes(t));
 
         if (toolList.length > 0) {
           result.requestedToolNames = toolList;
@@ -375,12 +364,14 @@ export class GraphOrchestrationService {
     // Pattern 4: Detect inline tool names like "add and multiply tools"
     if (!result.requestedToolNames && result.requestedToolCount) {
       // Look for patterns like "add and multiply" before "tools"
-      const beforeToolsMatch = userInput.match(/(?:with\s+)?([a-z_]+(?:\s+and\s+[a-z_]+)+)\s+tools?\b/i);
+      const beforeToolsMatch = userInput.match(
+        /(?:with\s+)?([a-z_]+(?:\s+and\s+[a-z_]+)+)\s+tools?\b/i,
+      );
       if (beforeToolsMatch) {
         const toolList = beforeToolsMatch[1]
           .split(/\s+and\s+/)
-          .map(t => t.trim().toLowerCase().replace(/\s+/g, '_'))
-          .filter(t => t.length > 0);
+          .map((t) => t.trim().toLowerCase().replace(/\s+/g, '_'))
+          .filter((t) => t.length > 0);
 
         if (toolList.length > 0) {
           result.requestedToolNames = toolList;
@@ -417,7 +408,10 @@ export class GraphOrchestrationService {
 "${state.userInput}"
 
 **Conversation Context:**
-${state.messages.slice(-3).map(m => `${m.role}: ${m.content}`).join('\n')}
+${state.messages
+  .slice(-3)
+  .map((m) => `${m.role}: ${m.content}`)
+  .join('\n')}
 
 **Task**: Determine primary intent with confidence. When the user mentions "MCP server" or "MCP" in any context, they mean Model Context Protocol server - a tool for extending LLM capabilities.
 
@@ -428,25 +422,22 @@ ${state.messages.slice(-3).map(m => `${m.role}: ${m.content}`).join('\n')}
 - Default to TypeScript unless user specifies another language
 - Only flag missing info if it's CRITICAL and cannot be inferred
 
-**Response Format** (JSON):
-{
-  "intent": "generate_mcp|clarify|research|help|unknown",
-  "confidence": 0.0-1.0,
-  "githubUrl": "URL or null",
-  "missingInfo": ["ONLY critical blockers"] or null,
-  "reasoning": "brief explanation - mention understanding MCP means Model Context Protocol if relevant"
-}`;
+**Response Format**:
+- intent: generate_mcp | clarify | research | help | unknown
+- confidence: 0.0-1.0
+- githubUrl: URL or null
+- missingInfo: ONLY critical blockers, or null
+- reasoning: brief explanation - mention understanding MCP means Model Context Protocol if relevant`;
 
-    const response = await this.llm.invoke(prompt);
-
-    // Extract JSON from response using safe bracket-balanced parsing
-    const analysis = safeParseJSON<{
-      intent: 'generate_mcp' | 'clarify' | 'research' | 'help' | 'unknown';
-      confidence: number;
-      githubUrl: string | null;
-      missingInfo: string[] | null;
-      reasoning: string;
-    }>(response.content as string, this.logger);
+    // Cheap classification -> small model, schema-enforced output.
+    const analysis = await this.anthropic.completeStructured({
+      prompt,
+      schema: IntentAnalysisSchema,
+      schemaName: 'IntentAnalysis',
+      model: 'small',
+      maxTokens: 2048,
+      caller: 'graph.analyzeIntent',
+    });
 
     // Calculate maxToolCount with small buffer (Issue #137)
     // If user explicitly requested N tools, allow up to N+2
@@ -476,10 +467,13 @@ ${state.messages.slice(-3).map(m => `${m.role}: ${m.content}`).join('\n')}
       requestedToolCount: toolConstraints.requestedToolCount,
       requestedToolNames: toolConstraints.requestedToolNames,
       maxToolCount,
-      clarificationNeeded: analysis.missingInfo?.length > 0 ? {
-        question: `I need more information: ${analysis.missingInfo.join(', ')}`,
-        context: 'intent_analysis',
-      } : undefined,
+      clarificationNeeded:
+        analysis.missingInfo?.length > 0
+          ? {
+              question: `I need more information: ${analysis.missingInfo.join(', ')}`,
+              context: 'intent_analysis',
+            }
+          : undefined,
       currentNode: 'analyzeIntent',
       executedNodes: [...(state.executedNodes || []), 'analyzeIntent'],
       streamingUpdates: [
@@ -989,22 +983,51 @@ ${refinementResult.error || 'Some tools may need manual fixes.'}`,
   }
 
   /**
+   * Resolve (loading or creating) the conversation for a session and return its id.
+   *
+   * Exposed so callers (e.g. ChatController) can return the real conversation
+   * UUID to the client before the graph finishes executing.
+   */
+  async ensureConversation(
+    sessionId: string,
+    conversationId?: string,
+    userId?: string,
+  ): Promise<string> {
+    const conversation = await this.loadOrCreateConversation(sessionId, conversationId, userId);
+    return conversation.id;
+  }
+
+  /**
    * Load or create conversation from database
+   *
+   * Ownership: when a userId is supplied, an existing conversation is only
+   * returned if it belongs to that user. Conversations belonging to another
+   * user (or legacy rows without an owner) are reported as not found so
+   * existence is not leaked.
    */
   private async loadOrCreateConversation(
     sessionId: string,
     conversationId?: string,
+    userId?: string,
   ): Promise<Conversation> {
     if (conversationId) {
       const existing = await this.conversationRepo.findOne({
         where: { id: conversationId, sessionId },
       });
-      if (existing) return existing;
+
+      if (existing) {
+        if (userId && existing.userId !== userId) {
+          this.logger.warn(`Conversation ${conversationId} access denied for user ${userId}`);
+          throw new NotFoundException(`Conversation not found: ${conversationId}`);
+        }
+        return existing;
+      }
     }
 
-    // Create new conversation
+    // Create new conversation - owned by the authenticated user when known
     const conversation = this.conversationRepo.create({
       sessionId,
+      userId,
       messages: [],
       state: {},
       isActive: true,
@@ -1016,10 +1039,7 @@ ${refinementResult.error || 'Some tools may need manual fixes.'}`,
   /**
    * Save checkpoint to database
    */
-  private async saveCheckpoint(
-    conversationId: string,
-    state: Partial<GraphState>,
-  ): Promise<void> {
+  private async saveCheckpoint(conversationId: string, state: Partial<GraphState>): Promise<void> {
     const checkpoint = this.memoryRepo.create({
       conversationId,
       checkpointId: `checkpoint-${Date.now()}`,
@@ -1058,7 +1078,7 @@ ${refinementResult.error || 'Some tools may need manual fixes.'}`,
     conversation.updatedAt = new Date();
 
     // If this is the first user message, update the title
-    if (message.role === 'user' && messages.filter(m => m.role === 'user').length === 1) {
+    if (message.role === 'user' && messages.filter((m) => m.role === 'user').length === 1) {
       const title = message.content.substring(0, 50) + (message.content.length > 50 ? '...' : '');
       conversation.state = {
         ...conversation.state,
@@ -1073,7 +1093,9 @@ ${refinementResult.error || 'Some tools may need manual fixes.'}`,
     // Use save() for reliable JSONB column persistence
     await this.conversationRepo.save(conversation);
 
-    this.logger.log(`Saved ${message.role} message to conversation ${conversationId} (total: ${messages.length})`);
+    this.logger.log(
+      `Saved ${message.role} message to conversation ${conversationId} (total: ${messages.length})`,
+    );
   }
 
   /**
@@ -1185,13 +1207,9 @@ ${refinementResult.error || 'Some tools may need manual fixes.'}`,
       const readmeContent = this.generateReadme(generatedCode);
       writeFileSync(join(serverDir, 'README.md'), readmeContent);
 
-      this.logger.log(
-        `Successfully wrote generated files to ${serverDir}`,
-      );
+      this.logger.log(`Successfully wrote generated files to ${serverDir}`);
     } catch (error) {
-      this.logger.error(
-        `Failed to write generated files for ${conversationId}: ${error.message}`,
-      );
+      this.logger.error(`Failed to write generated files for ${conversationId}: ${error.message}`);
       throw error;
     }
   }

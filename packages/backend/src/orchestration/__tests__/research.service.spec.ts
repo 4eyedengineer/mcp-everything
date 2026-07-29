@@ -14,10 +14,12 @@ import {
   mockApiUsagePatterns,
 } from './__mocks__/github.mock';
 import {
+  createMockAnthropicService,
   mockInputClassificationResponse,
   mockResearchSynthesisResponse,
   mockServiceIdentificationResponse,
 } from './__mocks__/anthropic.mock';
+import { AnthropicService } from '../../ai/anthropic.service';
 
 // Mock axios for Tavily API calls
 jest.mock('axios', () => ({
@@ -50,16 +52,12 @@ jest.mock('axios', () => ({
   }),
 }));
 
-// Mock @langchain/anthropic module
+// Stand-in for the single AI seam (AnthropicService): every completion routes
+// through mockLlmInvoke(prompt) -> { content }.
 const mockLlmInvoke = jest.fn().mockResolvedValue({
   content: mockResearchSynthesisResponse(),
 });
-
-jest.mock('@langchain/anthropic', () => ({
-  ChatAnthropic: jest.fn().mockImplementation(() => ({
-    invoke: mockLlmInvoke,
-  })),
-}));
+const mockAnthropicService = createMockAnthropicService(mockLlmInvoke);
 
 // Mock @octokit/rest
 jest.mock('@octokit/rest', () => ({
@@ -111,6 +109,10 @@ describe('ResearchService', () => {
         {
           provide: GitHubAnalysisService,
           useValue: mockGitHubAnalysisService,
+        },
+        {
+          provide: AnthropicService,
+          useValue: mockAnthropicService,
         },
       ],
     }).compile();

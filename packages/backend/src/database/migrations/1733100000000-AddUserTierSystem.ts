@@ -61,11 +61,15 @@ export class AddUserTierSystem1733100000000 implements MigrationInterface {
     `);
 
     // Add userId and userTier columns to deployments table
-    await queryRunner.query(`ALTER TABLE "deployments" ADD COLUMN "userId" uuid REFERENCES "users"("id") ON DELETE SET NULL`);
+    await queryRunner.query(
+      `ALTER TABLE "deployments" ADD COLUMN "userId" uuid REFERENCES "users"("id") ON DELETE SET NULL`,
+    );
     await queryRunner.query(`ALTER TABLE "deployments" ADD COLUMN "userTier" varchar(20)`);
 
     // Add userId column to conversations table
-    await queryRunner.query(`ALTER TABLE "conversations" ADD COLUMN "userId" uuid REFERENCES "users"("id") ON DELETE SET NULL`);
+    await queryRunner.query(
+      `ALTER TABLE "conversations" ADD COLUMN "userId" uuid REFERENCES "users"("id") ON DELETE SET NULL`,
+    );
 
     // Create indexes for users table
     await queryRunner.query(`CREATE INDEX "IDX_users_email" ON "users"("email")`);
@@ -76,12 +80,18 @@ export class AddUserTierSystem1733100000000 implements MigrationInterface {
     // Create indexes for subscriptions table
     await queryRunner.query(`CREATE INDEX "IDX_subscriptions_userId" ON "subscriptions"("userId")`);
     await queryRunner.query(`CREATE INDEX "IDX_subscriptions_status" ON "subscriptions"("status")`);
-    await queryRunner.query(`CREATE INDEX "IDX_subscriptions_stripeCustomerId" ON "subscriptions"("stripeCustomerId")`);
-    await queryRunner.query(`CREATE INDEX "IDX_subscriptions_stripeSubscriptionId" ON "subscriptions"("stripeSubscriptionId")`);
+    await queryRunner.query(
+      `CREATE INDEX "IDX_subscriptions_stripeCustomerId" ON "subscriptions"("stripeCustomerId")`,
+    );
+    await queryRunner.query(
+      `CREATE INDEX "IDX_subscriptions_stripeSubscriptionId" ON "subscriptions"("stripeSubscriptionId")`,
+    );
 
     // Create indexes for usage_records table
     await queryRunner.query(`CREATE INDEX "IDX_usage_userId" ON "usage_records"("userId")`);
-    await queryRunner.query(`CREATE INDEX "IDX_usage_periodStart" ON "usage_records"("periodStart")`);
+    await queryRunner.query(
+      `CREATE INDEX "IDX_usage_periodStart" ON "usage_records"("periodStart")`,
+    );
     await queryRunner.query(`CREATE INDEX "IDX_usage_periodEnd" ON "usage_records"("periodEnd")`);
 
     // Create indexes for new columns on existing tables

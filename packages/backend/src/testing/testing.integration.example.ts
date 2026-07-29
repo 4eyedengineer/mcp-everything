@@ -168,9 +168,7 @@ export class TestDrivenRefinementService {
   /**
    * Analyze test failures and categorize by severity
    */
-  private analyzeTestFailures(
-    testResult: McpServerTestResult,
-  ): Array<{
+  private analyzeTestFailures(testResult: McpServerTestResult): Array<{
     toolName: string;
     error: string;
     priority: 'HIGH' | 'MEDIUM' | 'LOW';
@@ -221,10 +219,7 @@ export class TestDrivenRefinementService {
   /**
    * Build detailed feedback for regeneration
    */
-  private buildRegenerationFeedback(
-    testResult: McpServerTestResult,
-    failures: any[],
-  ): string {
+  private buildRegenerationFeedback(testResult: McpServerTestResult, failures: any[]): string {
     let feedback = '';
 
     if (!testResult.buildSuccess) {
@@ -271,7 +266,7 @@ export class TestDrivenRefinementService {
   private async regenerateFailedTools(
     currentCode: GeneratedCode,
     failures: any[],
-    feedback: string,
+    _feedback: string,
   ): Promise<GeneratedCode> {
     // This is a simplified example
     // In production, you'd use McpGenerationService.regenerateToolImplementations()
@@ -286,9 +281,7 @@ export class TestDrivenRefinementService {
     //   feedback
     // );
 
-    throw new Error(
-      'Regeneration not yet implemented - integrate with McpGenerationService',
-    );
+    throw new Error('Regeneration not yet implemented - integrate with McpGenerationService');
   }
 }
 
@@ -310,19 +303,16 @@ export class RefinementLoopNodeExample {
     const generatedCode = graphState.generatedCode;
 
     // Test with streaming progress
-    const testResult = await refinementService.testWithStreaming(
-      generatedCode,
-      (update) => {
-        // Stream update to frontend via SSE
-        graphState.streamingUpdates.push({
-          node: 'refinement_testing',
-          message: update.message,
-          timestamp: new Date(),
-        });
+    const testResult = await refinementService.testWithStreaming(generatedCode, (update) => {
+      // Stream update to frontend via SSE
+      graphState.streamingUpdates.push({
+        node: 'refinement_testing',
+        message: update.message,
+        timestamp: new Date(),
+      });
 
-        console.log(`[Refinement Testing] ${update.message}`);
-      },
-    );
+      console.log(`[Refinement Testing] ${update.message}`);
+    });
 
     // Store test results
     graphState.refinementHistory = graphState.refinementHistory || [];

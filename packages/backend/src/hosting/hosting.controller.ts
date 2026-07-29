@@ -26,13 +26,14 @@ export class HostingController {
    */
   @Post('deploy/:conversationId')
   async deployServer(
+    @CurrentUser() user: User,
     @Param('conversationId') conversationId: string,
-    @Body() dto: DeployServerDto,
+    @Body() _dto: DeployServerDto,
   ) {
     try {
       this.logger.log(`Deploying server for conversation: ${conversationId}`);
 
-      const result = await this.hostingService.deployToCloud(conversationId);
+      const result = await this.hostingService.deployToCloud(conversationId, user.id);
 
       return {
         success: result.success,
@@ -42,6 +43,10 @@ export class HostingController {
         error: result.error,
       };
     } catch (error) {
+      // Preserve 404/403 semantics (e.g. ownership checks) instead of masking as 500
+      if (error instanceof HttpException) {
+        throw error;
+      }
       const message = error instanceof Error ? error.message : 'Unknown error';
       this.logger.error(`Deploy failed: ${message}`);
       throw new HttpException(message, HttpStatus.INTERNAL_SERVER_ERROR);
@@ -58,8 +63,8 @@ export class HostingController {
     @Query('page') page: number = 1,
     @Query('limit') limit: number = 20,
   ) {
-    // User is authenticated via global JWT guard
-    const servers = await this.hostingService.getServers();
+    // Only ever list servers owned by the authenticated user
+    const servers = await this.hostingService.getServers(user.id);
 
     // Filter by status if provided
     let filteredServers = servers;
@@ -101,8 +106,8 @@ export class HostingController {
    * Get details of a specific hosted server
    */
   @Get('servers/:serverId')
-  async getServer(@Param('serverId') serverId: string) {
-    const server = await this.hostingService.getServer(serverId);
+  async getServer(@CurrentUser() user: User, @Param('serverId') serverId: string) {
+    const server = await this.hostingService.getServer(serverId, user.id);
 
     return {
       id: server.id,
@@ -131,13 +136,12 @@ export class HostingController {
    * Get real-time deployment status
    */
   @Get('servers/:serverId/status')
-  async getServerStatus(@Param('serverId') serverId: string) {
-    const server = await this.hostingService.getServer(serverId);
+  async getServerStatus(@CurrentUser() user: User, @Param('serverId') serverId: string) {
+    const server = await this.hostingService.getServer(serverId, user.id);
 
     // Derive replica counts based on status
     const replicas = server.status === 'stopped' ? 0 : 1;
-    const readyReplicas =
-      server.status === 'running' ? 1 : server.status === 'stopped' ? 0 : 0;
+    const readyReplicas = server.status === 'running' ? 1 : server.status === 'stopped' ? 0 : 0;
 
     return {
       serverId: server.serverId,
@@ -154,14 +158,12 @@ export class HostingController {
    */
   @Get('servers/:serverId/logs')
   async getServerLogs(
+    @CurrentUser() user: User,
     @Param('serverId') serverId: string,
     @Query('lines') lines: number = 100,
     @Query('since') since?: string,
   ) {
-    const logs = await this.hostingService.getServerLogs(serverId, {
-      lines,
-      since,
-    });
+    const logs = await this.hostingService.getServerLogs(serverId, { lines, since }, user.id);
 
     return {
       serverId,
@@ -174,15 +176,19 @@ export class HostingController {
    * Stop a hosted server (scale to 0)
    */
   @Post('servers/:serverId/stop')
-  async stopServer(@Param('serverId') serverId: string) {
+  async stopServer(@CurrentUser() user: User, @Param('serverId') serverId: string) {
     try {
-      await this.hostingService.stopServer(serverId);
+      await this.hostingService.stopServer(serverId, user.id);
 
       return {
         success: true,
         message: 'Server stopped successfully',
       };
     } catch (error) {
+      // Preserve 404/403 semantics (e.g. ownership checks) instead of masking as 500
+      if (error instanceof HttpException) {
+        throw error;
+      }
       const message = error instanceof Error ? error.message : 'Unknown error';
       throw new HttpException(message, HttpStatus.INTERNAL_SERVER_ERROR);
     }
@@ -192,15 +198,19 @@ export class HostingController {
    * Start a stopped server (scale to 1)
    */
   @Post('servers/:serverId/start')
-  async startServer(@Param('serverId') serverId: string) {
+  async startServer(@CurrentUser() user: User, @Param('serverId') serverId: string) {
     try {
-      await this.hostingService.startServer(serverId);
+      await this.hostingService.startServer(serverId, user.id);
 
       return {
         success: true,
         message: 'Server started successfully',
       };
     } catch (error) {
+      // Preserve 404/403 semantics (e.g. ownership checks) instead of masking as 500
+      if (error instanceof HttpException) {
+        throw error;
+      }
       const message = error instanceof Error ? error.message : 'Unknown error';
       throw new HttpException(message, HttpStatus.INTERNAL_SERVER_ERROR);
     }
@@ -210,15 +220,19 @@ export class HostingController {
    * Delete a hosted server permanently
    */
   @Delete('servers/:serverId')
-  async deleteServer(@Param('serverId') serverId: string) {
+  async deleteServer(@CurrentUser() user: User, @Param('serverId') serverId: string) {
     try {
-      await this.hostingService.deleteServer(serverId);
+      await this.hostingService.deleteServer(serverId, user.id);
 
       return {
         success: true,
         message: 'Server deleted successfully',
       };
     } catch (error) {
+      // Preserve 404/403 semantics (e.g. ownership checks) instead of masking as 500
+      if (error instanceof HttpException) {
+        throw error;
+      }
       const message = error instanceof Error ? error.message : 'Unknown error';
       throw new HttpException(message, HttpStatus.INTERNAL_SERVER_ERROR);
     }

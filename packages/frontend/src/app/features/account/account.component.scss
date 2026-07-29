@@ -94,6 +94,20 @@
       color: #1f1f1f;
       margin: 0 0 4px 0;
       line-height: 1.3;
+
+      .coming-soon-badge {
+        display: inline-block;
+        margin-left: 8px;
+        padding: 2px 8px;
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+        color: #6b6b6b;
+        background-color: #f0f0f0;
+        border-radius: 10px;
+        vertical-align: middle;
+      }
     }
 
     p {
@@ -108,6 +122,13 @@
 // Section Content
 .section-content {
   padding: 24px;
+
+  .coming-soon-note {
+    font-size: 14px;
+    color: #6b6b6b;
+    margin: 0;
+    line-height: 1.5;
+  }
 }
 
 // Profile Layout
@@ -137,6 +158,13 @@
         width: 64px;
         height: 64px;
         color: #d1d1d1;
+      }
+
+      .avatar-image {
+        width: 100%;
+        height: 100%;
+        border-radius: 50%;
+        object-fit: cover;
       }
     }
 

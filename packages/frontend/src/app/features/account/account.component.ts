@@ -7,14 +7,7 @@ import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { Observable, Subscription } from 'rxjs';
 import { SubscriptionService, TierInfo, SubscriptionInfo, UsageInfo } from '../../core/services/subscription.service';
-
-interface UserProfile {
-  email: string;
-  name: string;
-  apiKey: string;
-  serversGenerated: number;
-  storageUsed: string;
-}
+import { AuthService, User } from '../../core/services/auth.service';
 
 interface Settings {
   emailNotifications: boolean;
@@ -36,14 +29,14 @@ interface Settings {
   styleUrls: ['./account.component.scss']
 })
 export class AccountComponent implements OnInit, OnDestroy {
-  // Placeholder data - will be replaced with actual user data
-  profile: UserProfile = {
-    email: 'user@example.com',
-    name: 'John Doe',
-    apiKey: 'mcp_sk_xxxxxxxxxxxxxxxxxxxxxxxx',
-    serversGenerated: 12,
-    storageUsed: '245 MB'
-  };
+  // Real user profile, sourced from AuthService.currentUser$
+  user$: Observable<User | null>;
+
+  // Local editable copies of the name/email fields, synced from `user$`
+  // whenever not actively editing. Note: there is no backend endpoint yet to
+  // persist profile edits - see saveProfile().
+  editableName = '';
+  editableEmail = '';
 
   settings: Settings = {
     emailNotifications: true,
@@ -61,13 +54,16 @@ export class AccountComponent implements OnInit, OnDestroy {
   checkoutMessage: string | null = null;
   checkoutSuccess = false;
   private queryParamsSub: Subscription | null = null;
+  private userSub: Subscription | null = null;
 
   constructor(
+    private authService: AuthService,
     private subscriptionService: SubscriptionService,
     private route: ActivatedRoute,
     private router: Router,
     private snackBar: MatSnackBar
   ) {
+    this.user$ = this.authService.currentUser$;
     this.tierInfo$ = this.subscriptionService.tierInfo$;
     this.subscription$ = this.subscriptionService.subscription$;
     this.usage$ = this.subscriptionService.usage$;
@@ -76,10 +72,18 @@ export class AccountComponent implements OnInit, OnDestroy {
   ngOnInit(): void {
     this.loadSubscriptionData();
     this.handleCheckoutResult();
+
+    this.userSub = this.user$.subscribe(user => {
+      if (user && !this.isEditingProfile) {
+        this.editableName = user.name;
+        this.editableEmail = user.email;
+      }
+    });
   }
 
   ngOnDestroy(): void {
     this.queryParamsSub?.unsubscribe();
+    this.userSub?.unsubscribe();
   }
 
   private loadSubscriptionData(): void {
@@ -128,24 +132,18 @@ export class AccountComponent implements OnInit, OnDestroy {
 
   saveProfile(): void {
     this.isEditingProfile = false;
-    console.log('Saving profile:', this.profile);
-    // TODO: Implement actual profile save logic
+    // TODO: No backend endpoint exists yet to persist profile edits.
+    console.log('Profile editing is not yet backed by an API - changes are not saved.');
   }
 
   cancelEdit(): void {
     this.isEditingProfile = false;
-    // TODO: Reset profile to original values
-  }
-
-  copyApiKey(): void {
-    navigator.clipboard.writeText(this.profile.apiKey);
-    console.log('API key copied to clipboard');
-    // TODO: Show snackbar notification
-  }
-
-  regenerateApiKey(): void {
-    console.log('Regenerating API key');
-    // TODO: Implement API key regeneration
+    // Reset editable fields back to the last known user values
+    const user = this.authService.currentUser;
+    if (user) {
+      this.editableName = user.name;
+      this.editableEmail = user.email;
+    }
   }
 
   saveSettings(): void {

@@ -1,10 +1,9 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { spawn, exec } from 'child_process';
 import { promisify } from 'util';
 import { mkdirSync, writeFileSync, rmSync, existsSync } from 'fs';
 import { join, dirname } from 'path';
 import * as os from 'os';
-import * as fs from 'fs/promises';
 import { v4 as uuidv4 } from 'uuid';
 
 /**
@@ -108,11 +107,44 @@ interface McpResponse {
 const execAsync = promisify(exec);
 
 /**
- * MCP server testing service using direct Node.js execution
- * Fast iteration for development/testing with optional Docker for production validation
+ * Env var that re-enables the legacy, UNSANDBOXED host-execution path when
+ * Docker is unavailable. Intended only for ephemeral CI runners without
+ * Docker-in-Docker; never set this in a shared, dev, or production
+ * environment, since it runs LLM-generated code directly as this process's
+ * user with full access to this process's environment variables (API keys,
+ * DB credentials, etc.) and filesystem.
+ */
+const ALLOW_UNSANDBOXED_ENV_VAR = 'MCP_TESTING_ALLOW_UNSANDBOXED';
+
+/**
+ * MCP server testing service.
+ *
+ * SECURITY MODEL: LLM-generated code is untrusted. Every step that executes
+ * it — `npm install`, `tsc` compilation, and running the built MCP server —
+ * happens inside a disposable, resource-limited Docker container:
+ *   - No host environment variables are ever passed into the containers, so
+ *     generated code cannot read ANTHROPIC_API_KEY / GITHUB_TOKEN / DB
+ *     credentials / etc. even if it tries to exfiltrate `process.env`.
+ *   - `npm install` runs with `--ignore-scripts` to block malicious
+ *     pre/postinstall payloads, and with CPU/memory/pids limits.
+ *   - `tsc` compilation runs with `--network=none` (no network needed).
+ *   - The server-under-test runs with `--network=<config.networkMode>`
+ *     (defaults to 'bridge' so tools can call real external APIs, but callers
+ *     such as the refinement loop can force `'none'`), `--read-only` root
+ *     filesystem with a `tmpfs` scratch dir, and the same CPU/memory/pids
+ *     limits, communicating over stdio exactly like the previous in-process
+ *     child, just tunneled through `docker run -i`.
+ *
+ * Docker is a hard dependency for this service. If the Docker daemon is not
+ * reachable, `testMcpServer` fails loudly instead of silently falling back to
+ * running untrusted code on the host. Set
+ * `MCP_TESTING_ALLOW_UNSANDBOXED=true` to explicitly opt back into the old
+ * unsandboxed host-execution path (logs a prominent warning every time it is
+ * used) — intended only for CI environments that genuinely cannot run
+ * Docker-in-Docker.
  */
 @Injectable()
-export class McpTestingService {
+export class McpTestingService implements OnModuleDestroy {
   private readonly logger = new Logger(McpTestingService.name);
   private readonly tempBaseDir = join(os.tmpdir(), 'mcp-testing');
   private readonly defaultConfig: McpTestConfig = {
@@ -124,8 +156,27 @@ export class McpTestingService {
     cleanup: true,
   };
 
+  /** Base image used to run untrusted install/compile/execute steps. */
+  private readonly dockerImage = process.env.MCP_TESTING_DOCKER_IMAGE || 'node:20-alpine';
+
+  /** Escape hatch for Docker-less CI environments. See module doc comment. */
+  private readonly allowUnsandboxed = process.env[ALLOW_UNSANDBOXED_ENV_VAR] === 'true';
+
+  /** Cached result of the one-time Docker availability probe. */
+  private dockerAvailable: boolean | null = null;
+
   private progressCallbacks: Map<string, (update: TestProgressUpdate) => void> = new Map();
-  private runningProcesses: Map<string, any> = new Map(); // Track spawned MCP server processes
+  private runningProcesses: Map<string, any> = new Map(); // Track spawned MCP server processes (host child or `docker run -i` client)
+
+  /**
+   * Names of currently-live Docker containers spawned by this service,
+   * tracked independently of `runningProcesses` so that install/build-step
+   * containers (which are awaited synchronously and never touch
+   * `runningProcesses`) are also cleaned up on timeout or process shutdown.
+   * `--rm` is passed to every `docker run`, so killing/stopping the
+   * container by name is sufficient to guarantee no orphans are left behind.
+   */
+  private readonly activeContainerNames: Set<string> = new Set();
 
   constructor() {
     // Ensure temp directory exists
@@ -135,12 +186,76 @@ export class McpTestingService {
   }
 
   /**
+   * Best-effort cleanup of any containers still tracked when the Nest
+   * application shuts down (e.g. process restart mid-test). Every container
+   * is started with `--rm`, so a successful `docker kill`/`docker stop`
+   * removes it immediately.
+   */
+  async onModuleDestroy(): Promise<void> {
+    const names = Array.from(this.activeContainerNames);
+    if (names.length === 0) return;
+
+    this.logger.warn(
+      `Shutting down with ${names.length} tracked test container(s) still active; force-stopping: ${names.join(', ')}`,
+    );
+
+    await Promise.all(names.map((name) => this.stopContainer(name)));
+  }
+
+  /**
+   * Verify the Docker daemon is reachable. The result is cached for the
+   * lifetime of this service instance (checked once, per the security
+   * requirement that we never silently fall back to host execution on a
+   * per-call basis).
+   *
+   * @throws if Docker is unavailable and MCP_TESTING_ALLOW_UNSANDBOXED is not 'true'
+   */
+  private async ensureDockerAvailable(): Promise<void> {
+    if (this.dockerAvailable !== null) {
+      if (!this.dockerAvailable && !this.allowUnsandboxed) {
+        throw new Error(this.dockerUnavailableMessage());
+      }
+      return;
+    }
+
+    try {
+      await execAsync('docker version --format "{{.Server.Version}}"', { timeout: 10000 });
+      this.dockerAvailable = true;
+      this.logger.log(
+        'Docker sandbox verified (docker daemon reachable). MCP server testing will run in isolated containers.',
+      );
+    } catch (error) {
+      this.dockerAvailable = false;
+      const errMsg = error instanceof Error ? error.message : String(error);
+
+      if (this.allowUnsandboxed) {
+        this.logger.warn(
+          `!!! SECURITY WARNING !!! Docker is unavailable (${errMsg}) and ${ALLOW_UNSANDBOXED_ENV_VAR}=true is set. ` +
+            'Falling back to UNSANDBOXED host execution of LLM-generated code. Generated code will run as this ' +
+            "process's user with full access to this process's environment variables (ANTHROPIC_API_KEY, " +
+            'GITHUB_TOKEN, database credentials, etc.) and filesystem. This escape hatch must ONLY be used in ' +
+            'ephemeral CI runners, never in shared, dev, or production environments.',
+        );
+        return;
+      }
+
+      throw new Error(this.dockerUnavailableMessage(errMsg));
+    }
+  }
+
+  private dockerUnavailableMessage(errMsg?: string): string {
+    return (
+      `Docker is required to sandbox MCP server testing but is unavailable${errMsg ? ` (${errMsg})` : ''}. ` +
+      'Refusing to execute untrusted LLM-generated code directly on the host. Install/start Docker, or set ' +
+      `${ALLOW_UNSANDBOXED_ENV_VAR}=true to explicitly opt into unsandboxed host execution (not recommended ` +
+      'outside of ephemeral CI environments without Docker-in-Docker support).'
+    );
+  }
+
+  /**
    * Register progress callback for real-time streaming
    */
-  registerProgressCallback(
-    testId: string,
-    callback: (update: TestProgressUpdate) => void,
-  ): void {
+  registerProgressCallback(testId: string, callback: (update: TestProgressUpdate) => void): void {
     this.progressCallbacks.set(testId, callback);
   }
 
@@ -162,7 +277,9 @@ export class McpTestingService {
   }
 
   /**
-   * Main test orchestration method - uses direct Node.js execution for fast iteration
+   * Main test orchestration method. Runs `npm install`, `tsc`, and the
+   * generated MCP server itself inside isolated, resource-limited Docker
+   * containers (see class doc comment for the full security model).
    */
   async testMcpServer(
     generatedCode: GeneratedCode,
@@ -175,8 +292,16 @@ export class McpTestingService {
     let buildSuccess = false;
     const cleanupErrors: string[] = [];
 
+    // Fail fast (and loudly) if Docker isn't available, rather than silently
+    // dropping down to unsandboxed host execution of untrusted, LLM-generated
+    // code. See ensureDockerAvailable() / MCP_TESTING_ALLOW_UNSANDBOXED.
+    await this.ensureDockerAvailable();
+    const imageTag = this.dockerAvailable ? this.dockerImage : 'unsandboxed-host-node';
+
     try {
-      this.logger.log(`[${testId}] Starting MCP server test (direct Node.js execution)`);
+      this.logger.log(
+        `[${testId}] Starting MCP server test (${this.dockerAvailable ? `Docker-sandboxed, image=${this.dockerImage}` : 'UNSANDBOXED host execution'})`,
+      );
 
       // Step 1: Create temporary directory with generated code
       tempDir = await this.createTempServerDir(generatedCode);
@@ -192,7 +317,7 @@ export class McpTestingService {
       const buildStartTime = Date.now();
 
       try {
-        await this.buildNodeProject(tempDir);
+        await this.buildNodeProject(testId, tempDir, mergedConfig);
         const buildDuration = Date.now() - buildStartTime;
         buildSuccess = true;
 
@@ -217,7 +342,7 @@ export class McpTestingService {
 
         return {
           containerId: '',
-          imageTag: 'direct-node',
+          imageTag,
           buildSuccess: false,
           buildError: buildErrorMsg,
           buildDuration,
@@ -240,7 +365,7 @@ export class McpTestingService {
         timestamp: new Date(),
       });
 
-      const serverProcess = await this.startMcpServerProcess(testId, tempDir);
+      await this.startMcpServerProcess(testId, tempDir, mergedConfig);
       this.logger.log(`[${testId}] MCP server process started`);
 
       // Step 4: Test each tool
@@ -305,7 +430,7 @@ export class McpTestingService {
         }
       }
 
-      const toolsPassedCount = results.filter(r => r.success).length;
+      const toolsPassedCount = results.filter((r) => r.success).length;
       const overallSuccess = toolsPassedCount === results.length && results.length > 0;
 
       // Step 5: Cleanup - stop the server process
@@ -325,7 +450,7 @@ export class McpTestingService {
 
       return {
         containerId: testId,
-        imageTag: 'direct-node',
+        imageTag,
         buildSuccess,
         buildDuration: Date.now() - buildStartTime,
         toolsFound: generatedCode.metadata.tools.length,
@@ -372,9 +497,162 @@ export class McpTestingService {
   }
 
   /**
-   * Build the Node.js project (npm install + tsc)
+   * Build the Node.js project (npm install + tsc), sandboxed inside Docker
+   * containers. Falls back to unsandboxed host execution only when Docker is
+   * unavailable AND MCP_TESTING_ALLOW_UNSANDBOXED=true.
    */
-  private async buildNodeProject(serverDir: string): Promise<void> {
+  private async buildNodeProject(
+    testId: string,
+    serverDir: string,
+    config: McpTestConfig,
+  ): Promise<void> {
+    if (!this.dockerAvailable) {
+      return this.buildNodeProjectUnsandboxed(serverDir);
+    }
+
+    const memoryLimit = config.memoryLimit || this.defaultConfig.memoryLimit!;
+    const cpuLimit = config.cpuLimit || this.defaultConfig.cpuLimit!;
+
+    // Step 1: npm install, isolated container with network access (needed to
+    // reach the npm registry). `--ignore-scripts` blocks malicious
+    // pre/postinstall scripts from LLM-generated package.json, and the
+    // container receives NO host environment variables, so there is nothing
+    // to exfiltrate even if a script did run.
+    this.logger.debug(`[${testId}] Installing dependencies in sandboxed container (${serverDir})`);
+    await this.runInDockerContainer({
+      testId,
+      containerName: `mcp-install-${testId}`,
+      stepName: 'npm install',
+      timeoutMs: 120000, // 2 minute timeout for npm install
+      dockerArgs: [
+        '-v',
+        `${serverDir}:/work`,
+        '-w',
+        '/work',
+        `--memory=${memoryLimit}`,
+        `--cpus=${cpuLimit}`,
+        '--pids-limit=256',
+        '--network=bridge', // network required to fetch npm packages; no host env is passed regardless
+        this.dockerImage,
+        'npm',
+        'install',
+        '--ignore-scripts',
+        '--no-audit',
+        '--no-fund',
+      ],
+    });
+
+    // Step 2: compile TypeScript with NO network access at all — dependencies
+    // are already on disk from step 1, so tsc needs nothing but the volume.
+    this.logger.debug(`[${testId}] Compiling TypeScript in sandboxed container`);
+    await this.runInDockerContainer({
+      testId,
+      containerName: `mcp-build-${testId}`,
+      stepName: 'tsc',
+      timeoutMs: 60000, // 1 minute timeout for compilation
+      dockerArgs: [
+        '-v',
+        `${serverDir}:/work`,
+        '-w',
+        '/work',
+        `--memory=${memoryLimit}`,
+        `--cpus=${cpuLimit}`,
+        '--pids-limit=256',
+        '--network=none',
+        this.dockerImage,
+        'npx',
+        'tsc',
+      ],
+    });
+
+    // Verify dist/index.js exists
+    const distIndexPath = join(serverDir, 'dist', 'index.js');
+    if (!existsSync(distIndexPath)) {
+      throw new Error(`Build succeeded but dist/index.js not found at ${distIndexPath}`);
+    }
+
+    this.logger.debug(`Build complete, dist/index.js exists`);
+  }
+
+  /**
+   * Run a single build step (`npm install` / `tsc`) inside a named,
+   * `--rm`-flagged Docker container, enforcing a hard timeout that kills the
+   * container (not just the local `docker` CLI process — killing the CLI
+   * client does NOT reliably stop the container) if it's exceeded.
+   *
+   * `dockerArgs` should contain everything AFTER `docker run --rm --name
+   * <containerName>` (volume mounts, resource limits, image, command).
+   */
+  private async runInDockerContainer(opts: {
+    testId: string;
+    containerName: string;
+    stepName: string;
+    timeoutMs: number;
+    dockerArgs: string[];
+  }): Promise<void> {
+    const { testId, containerName, stepName, timeoutMs, dockerArgs } = opts;
+    const args = ['run', '--rm', '--name', containerName, ...dockerArgs];
+
+    this.activeContainerNames.add(containerName);
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        let stderr = '';
+        let stdout = '';
+        let timedOut = false;
+
+        const child = spawn('docker', args, {
+          stdio: ['ignore', 'pipe', 'pipe'],
+        });
+
+        const timeoutHandle = setTimeout(() => {
+          timedOut = true;
+          this.logger.warn(
+            `[${testId}] ${stepName} exceeded ${timeoutMs}ms, killing container ${containerName}`,
+          );
+          void this.stopContainer(containerName);
+          child.kill('SIGKILL');
+        }, timeoutMs);
+
+        child.stdout?.on('data', (data) => {
+          stdout += data.toString();
+          this.logger.debug(`[${testId}] ${stepName} stdout: ${data.toString().trim()}`);
+        });
+
+        child.stderr?.on('data', (data) => {
+          stderr += data.toString();
+          this.logger.debug(`[${testId}] ${stepName} stderr: ${data.toString().trim()}`);
+        });
+
+        child.on('error', (error) => {
+          clearTimeout(timeoutHandle);
+          reject(new Error(`${stepName} (docker run) failed to start: ${error.message}`));
+        });
+
+        child.on('close', (code) => {
+          clearTimeout(timeoutHandle);
+          if (timedOut) {
+            reject(new Error(`${stepName} timed out after ${timeoutMs}ms and was killed`));
+          } else if (code === 0) {
+            resolve();
+          } else {
+            reject(new Error(`${stepName} failed with code ${code}: ${stderr || stdout}`));
+          }
+        });
+      });
+    } finally {
+      this.activeContainerNames.delete(containerName);
+    }
+  }
+
+  /**
+   * UNSANDBOXED fallback for `npm install` + `tsc`, only reachable when
+   * Docker is unavailable and MCP_TESTING_ALLOW_UNSANDBOXED=true. Runs
+   * LLM-generated build steps directly on the host with the full host
+   * environment (see ensureDockerAvailable for the warning that is logged
+   * once per test run before this path is ever taken).
+   */
+  private async buildNodeProjectUnsandboxed(serverDir: string): Promise<void> {
     // First, install dependencies
     this.logger.debug(`Installing dependencies in ${serverDir}`);
 
@@ -457,28 +735,69 @@ export class McpTestingService {
   }
 
   /**
-   * Start the MCP server as a child process for testing
+   * Start the MCP server for testing, sandboxed inside a Docker container
+   * (`docker run -i`) so that the child process's stdin/stdout are the
+   * container's stdio — the rest of this service's MCP handshake/testing
+   * logic (sendMcpMessageDirect, waitForServerReady, etc.) is unchanged and
+   * treats it exactly like the previous in-process child.
    */
-  private async startMcpServerProcess(testId: string, serverDir: string): Promise<any> {
-    const distIndexPath = join(serverDir, 'dist', 'index.js');
+  private async startMcpServerProcess(
+    testId: string,
+    serverDir: string,
+    config: McpTestConfig,
+  ): Promise<any> {
+    if (!this.dockerAvailable) {
+      return this.startMcpServerProcessUnsandboxed(testId, serverDir);
+    }
 
-    const serverProcess = spawn('node', [distIndexPath], {
-      cwd: serverDir,
+    const memoryLimit = config.memoryLimit || this.defaultConfig.memoryLimit!;
+    const cpuLimit = config.cpuLimit || this.defaultConfig.cpuLimit!;
+    const networkMode = config.networkMode || this.defaultConfig.networkMode!;
+    const containerName = `mcp-run-${testId}`;
+
+    const args = [
+      'run',
+      '--rm',
+      '-i',
+      '--name',
+      containerName,
+      '-v',
+      `${serverDir}:/app:ro`,
+      '--tmpfs',
+      '/tmp',
+      '-w',
+      '/app',
+      `--memory=${memoryLimit}`,
+      `--cpus=${cpuLimit}`,
+      '--pids-limit=256',
+      `--network=${networkMode}`,
+      '--read-only',
+      '-e',
+      'NODE_ENV=test',
+      this.dockerImage,
+      'node',
+      'dist/index.js',
+    ];
+
+    this.logger.debug(`[${testId}] Starting sandboxed MCP server: docker ${args.join(' ')}`);
+    this.activeContainerNames.add(containerName);
+
+    const serverProcess = spawn('docker', args, {
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: {
-        ...process.env,
-        NODE_ENV: 'test',
-      },
     });
 
     // Store reference for later communication
     this.runningProcesses.set(testId, {
       process: serverProcess,
       serverDir,
-      pendingResponses: new Map<string | number, { resolve: Function; reject: Function }>(),
+      containerName,
+      pendingResponses: new Map<
+        string | number,
+        { resolve: (response: McpResponse) => void; reject: (error: Error) => void }
+      >(),
       buffer: '',
-      stderrBuffer: '',  // Capture stderr for debugging
-      ready: false,      // Track readiness state
+      stderrBuffer: '', // Capture stderr for debugging
+      ready: false, // Track readiness state
     });
 
     // Set up stdout handler to parse JSON-RPC responses
@@ -497,7 +816,94 @@ export class McpTestingService {
 
         try {
           const response = JSON.parse(line);
-          this.logger.debug(`[${testId}] MCP response: ${JSON.stringify(response).substring(0, 200)}`);
+          this.logger.debug(
+            `[${testId}] MCP response: ${JSON.stringify(response).substring(0, 200)}`,
+          );
+
+          // Resolve pending promise for this message ID
+          const pending = processInfo.pendingResponses.get(response.id);
+          if (pending) {
+            pending.resolve(response);
+            processInfo.pendingResponses.delete(response.id);
+          }
+        } catch (parseError) {
+          this.logger.debug(`[${testId}] Non-JSON output: ${line}`);
+        }
+      }
+    });
+
+    serverProcess.stderr?.on('data', (data) => {
+      const processInfo = this.runningProcesses.get(testId);
+      if (processInfo) {
+        processInfo.stderrBuffer += data.toString();
+      }
+      this.logger.debug(`[${testId}] MCP server stderr: ${data.toString().trim()}`);
+    });
+
+    serverProcess.on('error', (error) => {
+      this.logger.error(`[${testId}] MCP server process error: ${error.message}`);
+    });
+
+    serverProcess.on('close', (code) => {
+      this.logger.log(`[${testId}] MCP server process exited with code ${code}`);
+      this.activeContainerNames.delete(containerName);
+      this.runningProcesses.delete(testId);
+    });
+
+    // Wait for server to be ready to accept messages
+    await this.waitForServerReady(testId, 10000); // 10 second max wait
+
+    return serverProcess;
+  }
+
+  /**
+   * UNSANDBOXED fallback for starting the MCP server, only reachable when
+   * Docker is unavailable and MCP_TESTING_ALLOW_UNSANDBOXED=true.
+   */
+  private async startMcpServerProcessUnsandboxed(testId: string, serverDir: string): Promise<any> {
+    const distIndexPath = join(serverDir, 'dist', 'index.js');
+
+    const serverProcess = spawn('node', [distIndexPath], {
+      cwd: serverDir,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: {
+        ...process.env,
+        NODE_ENV: 'test',
+      },
+    });
+
+    // Store reference for later communication
+    this.runningProcesses.set(testId, {
+      process: serverProcess,
+      serverDir,
+      pendingResponses: new Map<
+        string | number,
+        { resolve: (response: McpResponse) => void; reject: (error: Error) => void }
+      >(),
+      buffer: '',
+      stderrBuffer: '', // Capture stderr for debugging
+      ready: false, // Track readiness state
+    });
+
+    // Set up stdout handler to parse JSON-RPC responses
+    serverProcess.stdout?.on('data', (data) => {
+      const processInfo = this.runningProcesses.get(testId);
+      if (!processInfo) return;
+
+      processInfo.buffer += data.toString();
+
+      // Try to parse complete JSON-RPC messages (newline-delimited)
+      const lines = processInfo.buffer.split('\n');
+      processInfo.buffer = lines.pop() || ''; // Keep incomplete line in buffer
+
+      for (const line of lines) {
+        if (!line.trim()) continue;
+
+        try {
+          const response = JSON.parse(line);
+          this.logger.debug(
+            `[${testId}] MCP response: ${JSON.stringify(response).substring(0, 200)}`,
+          );
 
           // Resolve pending promise for this message ID
           const pending = processInfo.pendingResponses.get(response.id);
@@ -555,7 +961,9 @@ export class McpTestingService {
       // Check if process exited
       if (processInfo.process.exitCode !== null) {
         const stderr = processInfo.stderrBuffer || 'No stderr output';
-        throw new Error(`MCP server exited with code ${processInfo.process.exitCode}. Stderr: ${stderr}`);
+        throw new Error(
+          `MCP server exited with code ${processInfo.process.exitCode}. Stderr: ${stderr}`,
+        );
       }
 
       // Check if stdin is writable
@@ -568,12 +976,16 @@ export class McpTestingService {
       try {
         const initResult = await this.sendInitializeMessage(testId, 3000);
         if (initResult.success) {
-          this.logger.log(`[${testId}] MCP server ready after ${attempt} attempts (${Date.now() - startTime}ms)`);
+          this.logger.log(
+            `[${testId}] MCP server ready after ${attempt} attempts (${Date.now() - startTime}ms)`,
+          );
           processInfo.ready = true;
           return;
         }
       } catch (error) {
-        this.logger.debug(`[${testId}] Initialize attempt ${attempt} failed: ${(error as Error).message}`);
+        this.logger.debug(
+          `[${testId}] Initialize attempt ${attempt} failed: ${(error as Error).message}`,
+        );
       }
 
       // Exponential backoff
@@ -582,11 +994,13 @@ export class McpTestingService {
     }
 
     const stderr = processInfo.stderrBuffer || 'No stderr output';
-    throw new Error(`MCP server failed to become ready within ${maxWaitMs}ms. Stderr: ${stderr.substring(0, 500)}`);
+    throw new Error(
+      `MCP server failed to become ready within ${maxWaitMs}ms. Stderr: ${stderr.substring(0, 500)}`,
+    );
   }
 
   private delay(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   /**
@@ -595,7 +1009,7 @@ export class McpTestingService {
    */
   private async sendInitializeMessage(
     testId: string,
-    timeout: number
+    timeout: number,
   ): Promise<{ success: boolean; error?: string }> {
     try {
       const initMessage: McpMessage = {
@@ -638,19 +1052,34 @@ export class McpTestingService {
   }
 
   /**
-   * Stop the MCP server process
+   * Stop the MCP server process. When sandboxed, the process being tracked
+   * is the local `docker run -i` CLI client — killing that client process
+   * does NOT reliably stop the container it's attached to (verified: the
+   * container can keep running after the client is killed), so the container
+   * is explicitly stopped/killed by name. `--rm` guarantees it's removed
+   * immediately afterward, leaving no orphans.
    */
   private async stopMcpServerProcess(testId: string): Promise<void> {
     const processInfo = this.runningProcesses.get(testId);
     if (!processInfo) return;
 
-    try {
-      processInfo.process.kill('SIGTERM');
+    const containerName: string | undefined = processInfo.containerName;
 
-      // Wait for graceful shutdown, then force kill
+    try {
+      if (containerName) {
+        await this.stopContainer(containerName);
+      } else {
+        processInfo.process.kill('SIGTERM');
+      }
+
+      // Wait for the local client/process to close, then force kill it too.
       await new Promise<void>((resolve) => {
         const timeout = setTimeout(() => {
-          processInfo.process.kill('SIGKILL');
+          try {
+            processInfo.process.kill('SIGKILL');
+          } catch {
+            // Process may already be gone.
+          }
           resolve();
         }, 3000);
 
@@ -663,7 +1092,31 @@ export class McpTestingService {
       this.logger.warn(`[${testId}] Error stopping MCP server: ${error}`);
     }
 
+    if (containerName) {
+      this.activeContainerNames.delete(containerName);
+    }
     this.runningProcesses.delete(testId);
+  }
+
+  /**
+   * Authoritatively stop (and, thanks to `--rm`, remove) a Docker container
+   * by name. Tries a graceful `docker stop` first, falls back to `docker
+   * kill`. Both are best-effort/idempotent — if the container is already
+   * gone, the errors are swallowed.
+   */
+  private async stopContainer(containerName: string): Promise<void> {
+    try {
+      await execAsync(`docker stop -t 3 ${containerName}`, { timeout: 8000 });
+      return;
+    } catch {
+      // Fall through to a hard kill below.
+    }
+
+    try {
+      await execAsync(`docker kill ${containerName}`, { timeout: 5000 });
+    } catch {
+      // Container was likely already stopped/removed (e.g. exited on its own) — fine.
+    }
   }
 
   /**
@@ -924,7 +1377,10 @@ export class McpTestingService {
    * Create temporary directory with generated server code
    */
   private async createTempServerDir(generatedCode: GeneratedCode): Promise<string> {
-    const tempDir = join(this.tempBaseDir, `server-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`);
+    const tempDir = join(
+      this.tempBaseDir,
+      `server-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+    );
 
     // Create directory structure
     mkdirSync(tempDir, { recursive: true });

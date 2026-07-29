@@ -1,9 +1,36 @@
 /**
  * Mock for Anthropic/Claude API
  *
- * Provides mock implementations of ChatAnthropic for testing
- * LangGraph orchestration services without making real API calls.
+ * Provides mock implementations of the AnthropicService seam (and the legacy
+ * ChatAnthropic shape still used by EnsembleService) so orchestration services
+ * can be tested without making real API calls.
  */
+
+/**
+ * Build a stand-in for `AnthropicService` backed by a single jest mock that
+ * receives the prompt and resolves `{ content }` (the shape the old
+ * `ChatAnthropic.invoke` mocks already use).
+ *
+ * - `completeText` resolves the raw content string.
+ * - `completeStructured` parses the content as JSON and validates it against the
+ *   caller's zod schema, mirroring what the real service does with the API's
+ *   structured-output response.
+ */
+export const createMockAnthropicService = (invoke: jest.Mock) => ({
+  resolveModel: (tier?: 'default' | 'small') =>
+    tier === 'small' ? 'claude-haiku-4-5' : 'claude-sonnet-5',
+
+  completeText: async (opts: any): Promise<string> => {
+    const response = await invoke(opts.prompt);
+    return typeof response === 'string' ? response : String(response?.content ?? '');
+  },
+
+  completeStructured: async (opts: any): Promise<any> => {
+    const response = await invoke(opts.prompt);
+    const raw = typeof response === 'string' ? response : String(response?.content ?? '');
+    return opts.schema.parse(JSON.parse(raw));
+  },
+});
 
 export const createMockChatAnthropic = (responseContent?: string) => ({
   invoke: jest.fn().mockResolvedValue({
@@ -168,8 +195,12 @@ async function main() {
 main().catch(console.error);
 `;
 
+// Structured outputs require an object root, so services are returned under a
+// `services` key rather than as a bare JSON array.
 export const mockServiceIdentificationResponse = () =>
-  JSON.stringify([
-    { name: 'Stripe', confidence: 0.95, reasoning: 'Payment processing keywords detected' },
-    { name: 'PayPal', confidence: 0.7, reasoning: 'Alternative payment service' },
-  ]);
+  JSON.stringify({
+    services: [
+      { name: 'Stripe', confidence: 0.95, reasoning: 'Payment processing keywords detected' },
+      { name: 'PayPal', confidence: 0.7, reasoning: 'Alternative payment service' },
+    ],
+  });

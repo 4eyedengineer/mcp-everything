@@ -37,19 +37,17 @@ import {
   createMockTestResults,
 } from './__mocks__/test-utils';
 import {
+  createMockAnthropicService,
   mockIntentAnalysisResponse,
   mockResearchSynthesisResponse,
   mockCodeGenerationResponse,
 } from './__mocks__/anthropic.mock';
+import { AnthropicService } from '../../ai/anthropic.service';
 
-// Mock @langchain/anthropic module
-jest.mock('@langchain/anthropic', () => ({
-  ChatAnthropic: jest.fn().mockImplementation(() => ({
-    invoke: jest.fn().mockResolvedValue({
-      content: mockIntentAnalysisResponse('generate_mcp'),
-    }),
-  })),
-}));
+// Stand-in for the single AI seam (AnthropicService): every completion routes
+// through mockLlmInvoke(prompt) -> { content }.
+const mockLlmInvoke = jest.fn();
+const mockAnthropicService = createMockAnthropicService(mockLlmInvoke);
 
 // Mock @langchain/langgraph module
 jest.mock('@langchain/langgraph', () => ({
@@ -93,6 +91,9 @@ describe('GraphOrchestrationService', () => {
   beforeEach(async () => {
     // Reset mocks
     jest.clearAllMocks();
+    mockLlmInvoke.mockResolvedValue({
+      content: mockIntentAnalysisResponse('generate_mcp'),
+    });
 
     mockConversationRepo = createMockRepository(mockConversation);
     mockMemoryRepo = createMockRepository(null);
@@ -208,6 +209,10 @@ describe('GraphOrchestrationService', () => {
           useValue: mockLogger,
         },
         {
+          provide: AnthropicService,
+          useValue: mockAnthropicService,
+        },
+        {
           provide: ErrorLoggingService,
           useValue: { logError: jest.fn() },
         },
@@ -226,28 +231,16 @@ describe('GraphOrchestrationService', () => {
       expect(service).toBeDefined();
     });
 
+    // API-key validation now lives in the single AI seam (AnthropicService),
+    // which throws at boot so no service constructs a client without a key.
     it('should throw error if ANTHROPIC_API_KEY is not configured', async () => {
       const mockConfigWithoutKey = {
         get: jest.fn().mockReturnValue(undefined),
-      };
+      } as any;
 
-      await expect(
-        Test.createTestingModule({
-          providers: [
-            GraphOrchestrationService,
-            { provide: ConfigService, useValue: mockConfigWithoutKey },
-            { provide: getRepositoryToken(Conversation), useValue: mockConversationRepo },
-            { provide: getRepositoryToken(ConversationMemory), useValue: mockMemoryRepo },
-            { provide: GitHubAnalysisService, useValue: mockGitHubAnalysisService },
-            { provide: CodeExecutionService, useValue: mockCodeExecutionService },
-            { provide: ResearchService, useValue: mockResearchService },
-            { provide: EnsembleService, useValue: mockEnsembleService },
-            { provide: ClarificationService, useValue: mockClarificationService },
-            { provide: RefinementService, useValue: mockRefinementService },
-            { provide: StructuredLoggerService, useValue: mockLogger },
-          ],
-        }).compile(),
-      ).rejects.toThrow('ANTHROPIC_API_KEY not configured');
+      expect(() => new AnthropicService(mockConfigWithoutKey)).toThrow(
+        'ANTHROPIC_API_KEY not configured',
+      );
     });
   });
 
@@ -320,34 +313,12 @@ describe('GraphOrchestrationService', () => {
     });
 
     it('should detect help intent', async () => {
-      // Mock LLM to return help intent
-      const { ChatAnthropic } = require('@langchain/anthropic');
-      ChatAnthropic.mockImplementation(() => ({
-        invoke: jest.fn().mockResolvedValue({
-          content: mockIntentAnalysisResponse('help'),
-        }),
-      }));
+      mockLlmInvoke.mockResolvedValueOnce({
+        content: mockIntentAnalysisResponse('help'),
+      });
 
-      // Need to recreate service with new mock
-      const module = await Test.createTestingModule({
-        providers: [
-          GraphOrchestrationService,
-          { provide: ConfigService, useValue: createMockConfigService() },
-          { provide: getRepositoryToken(Conversation), useValue: mockConversationRepo },
-          { provide: getRepositoryToken(ConversationMemory), useValue: mockMemoryRepo },
-          { provide: GitHubAnalysisService, useValue: mockGitHubAnalysisService },
-          { provide: CodeExecutionService, useValue: mockCodeExecutionService },
-          { provide: ResearchService, useValue: mockResearchService },
-          { provide: EnsembleService, useValue: mockEnsembleService },
-          { provide: ClarificationService, useValue: mockClarificationService },
-          { provide: RefinementService, useValue: mockRefinementService },
-          { provide: StructuredLoggerService, useValue: mockLogger },
-        ],
-      }).compile();
-
-      const newService = module.get<GraphOrchestrationService>(GraphOrchestrationService);
       const state = createTestState({ userInput: 'How do I use this platform?' });
-      const result = await (newService as any).analyzeIntent(state);
+      const result = await (service as any).analyzeIntent(state);
 
       expect(result.intent.type).toBe('help');
     });

@@ -2,6 +2,7 @@ import { Injectable } from '@angular/core';
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { Observable, throwError } from 'rxjs';
 import { catchError, map } from 'rxjs/operators';
+import { API_BASE } from '../config/api.config';
 
 /**
  * Options for deployment requests
@@ -113,8 +114,8 @@ interface DeployRequest {
   providedIn: 'root'
 })
 export class DeploymentService {
-  private readonly baseUrl = 'http://localhost:3000/api/deploy';
-  private readonly validationUrl = 'http://localhost:3000/api/validation';
+  private readonly baseUrl = `${API_BASE}/deploy`;
+  private readonly validationUrl = `${API_BASE}/validation`;
 
   constructor(private http: HttpClient) {}
 

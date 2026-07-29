@@ -73,7 +73,7 @@ export class ContainerRegistryService {
     try {
       // Use stdin for password to avoid shell escaping issues
       await execAsync(
-        `echo "${token}" | docker login ${this.registry} -u ${this.owner} --password-stdin`
+        `echo "${token}" | docker login ${this.registry} -u ${this.owner} --password-stdin`,
       );
       this.logger.log(`Logged in to GHCR (${this.registry}) as ${this.owner}`);
     } catch (error) {
@@ -85,11 +85,7 @@ export class ContainerRegistryService {
   /**
    * Build and push Docker image to registry (GHCR or local)
    */
-  async buildAndPush(
-    serverDir: string,
-    serverId: string,
-    tag: string = 'latest'
-  ): Promise<string> {
+  async buildAndPush(serverDir: string, serverId: string, tag: string = 'latest'): Promise<string> {
     const imageName = this.getImageName(serverId, tag);
     const targetRegistry = this.isLocalDev() ? 'local registry (localhost:5000)' : 'GHCR';
 
@@ -98,7 +94,7 @@ export class ContainerRegistryService {
     try {
       const { stdout: buildOutput } = await execAsync(
         `docker build -t ${imageName} ${serverDir}`,
-        { maxBuffer: 10 * 1024 * 1024 } // 10MB buffer for build output
+        { maxBuffer: 10 * 1024 * 1024 }, // 10MB buffer for build output
       );
       this.logger.debug(`Build output: ${buildOutput}`);
     } catch (error) {
@@ -198,9 +194,7 @@ export class ContainerRegistryService {
 
       // Check if the specific tag exists
       const versions = response.data as Array<{ metadata?: { container?: { tags?: string[] } } }>;
-      return versions.some(
-        (v) => v.metadata?.container?.tags?.includes(tag)
-      );
+      return versions.some((v) => v.metadata?.container?.tags?.includes(tag));
     } catch (error) {
       if (axios.isAxiosError(error) && error.response?.status === 404) {
         return false;

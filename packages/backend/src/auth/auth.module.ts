@@ -2,7 +2,6 @@ import { Module } from '@nestjs/common';
 import { PassportModule } from '@nestjs/passport';
 import { JwtModule, JwtModuleOptions } from '@nestjs/jwt';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { ThrottlerModule } from '@nestjs/throttler';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtStrategy } from './strategies/jwt.strategy';
@@ -36,12 +35,9 @@ import { EmailModule } from '../email/email.module';
       },
       inject: [ConfigService],
     }),
-    ThrottlerModule.forRoot([
-      {
-        ttl: 60000, // 1 minute
-        limit: 100, // 100 requests per minute default
-      },
-    ]),
+    // Rate limiting is configured globally in AppModule (ThrottlerModule.forRoot)
+    // and enforced by the global ThrottlerGuard; the @Throttle() decorators on
+    // AuthController tighten the limits for sensitive auth routes.
   ],
   controllers: [AuthController],
   providers: [

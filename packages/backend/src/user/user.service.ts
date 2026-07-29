@@ -139,7 +139,8 @@ export class UserService {
     // Update usage limits based on tier
     const usage = await this.getCurrentUsage(userId);
     const tierConfig = TIER_CONFIG[tier];
-    usage.monthlyLimit = tierConfig.monthlyServerLimit === Infinity ? 999999 : tierConfig.monthlyServerLimit;
+    usage.monthlyLimit =
+      tierConfig.monthlyServerLimit === Infinity ? 999999 : tierConfig.monthlyServerLimit;
     await this.usageRepository.save(usage);
 
     this.logger.log(`Updated user ${userId} tier: ${previousTier} -> ${tier}`);
@@ -165,11 +166,15 @@ export class UserService {
     const usage = await this.getCurrentUsage(userId);
     usage.serversDeployedThisMonth += 1;
     const saved = await this.usageRepository.save(usage);
-    this.logger.log(`Incremented usage for user ${userId}: ${saved.serversDeployedThisMonth}/${saved.monthlyLimit}`);
+    this.logger.log(
+      `Incremented usage for user ${userId}: ${saved.serversDeployedThisMonth}/${saved.monthlyLimit}`,
+    );
     return saved;
   }
 
-  async checkCanDeploy(userId: string): Promise<{ allowed: boolean; reason?: string; usage?: UsageRecord }> {
+  async checkCanDeploy(
+    userId: string,
+  ): Promise<{ allowed: boolean; reason?: string; usage?: UsageRecord }> {
     const user = await this.findById(userId);
     if (!user) {
       return { allowed: false, reason: 'User not found' };
@@ -208,12 +213,14 @@ export class UserService {
     remainingDeployments: number;
   }> {
     const usage = await this.getCurrentUsage(userId);
-    const percentUsed = usage.monthlyLimit === 999999
-      ? 0
-      : Math.round((usage.serversDeployedThisMonth / usage.monthlyLimit) * 100);
-    const remainingDeployments = usage.monthlyLimit === 999999
-      ? 999999
-      : Math.max(0, usage.monthlyLimit - usage.serversDeployedThisMonth);
+    const percentUsed =
+      usage.monthlyLimit === 999999
+        ? 0
+        : Math.round((usage.serversDeployedThisMonth / usage.monthlyLimit) * 100);
+    const remainingDeployments =
+      usage.monthlyLimit === 999999
+        ? 999999
+        : Math.max(0, usage.monthlyLimit - usage.serversDeployedThisMonth);
 
     return {
       serversDeployedThisMonth: usage.serversDeployedThisMonth,
@@ -236,7 +243,8 @@ export class UserService {
     const usage = this.usageRepository.create({
       userId,
       serversDeployedThisMonth: 0,
-      monthlyLimit: tierConfig.monthlyServerLimit === Infinity ? 999999 : tierConfig.monthlyServerLimit,
+      monthlyLimit:
+        tierConfig.monthlyServerLimit === Infinity ? 999999 : tierConfig.monthlyServerLimit,
       periodStart,
       periodEnd,
     });

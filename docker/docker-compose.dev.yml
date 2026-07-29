@@ -38,6 +38,13 @@ services:
     container_name: mcp-dev-backend
     environment:
       NODE_ENV: development
+      # The backend reads DATABASE_* (app.module.ts); POSTGRES_*/DATABASE_URL
+      # are NOT parsed by the app and are kept only for tooling/scripts.
+      DATABASE_HOST: postgres
+      DATABASE_PORT: 5432
+      DATABASE_USER: mcp
+      DATABASE_PASSWORD: mcp_secret
+      DATABASE_NAME: mcp_everything
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
       POSTGRES_USER: mcp

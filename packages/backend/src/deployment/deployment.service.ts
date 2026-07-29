@@ -1,4 +1,11 @@
-import { Injectable, Logger, NotFoundException, NotImplementedException, Inject, forwardRef } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  NotFoundException,
+  NotImplementedException,
+  Inject,
+  forwardRef,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { existsSync, readdirSync, readFileSync } from 'fs';
@@ -22,8 +29,6 @@ import {
   DeploymentFilters,
   PaginatedDeployments,
   DeleteDeploymentResult,
-  DeploymentType,
-  DeploymentStatus,
   EnterpriseDeploymentOptions,
 } from './types/deployment.types';
 import {
@@ -68,21 +73,46 @@ export class DeploymentOrchestratorService {
         await this.validationService.validateDeployment(deploymentId);
         this.logger.log(`Post-deployment validation completed for: ${deploymentId}`);
       } catch (error) {
-        this.logger.error(`Post-deployment validation failed for ${deploymentId}: ${error.message}`);
+        this.logger.error(
+          `Post-deployment validation failed for ${deploymentId}: ${error.message}`,
+        );
       }
     });
   }
 
   /**
-   * Deploy to a GitHub repository
+   * Combine the friendly, user-facing message with the underlying error so the
+   * real cause is never laundered away (it is persisted and returned).
    */
-  async deployToGitHub(
-    conversationId: string,
-    options: DeploymentOptions = {},
-  ): Promise<DeploymentResult> {
-    this.logger.log(`Starting GitHub deployment for conversation: ${conversationId}`);
+  private buildErrorMessage(userMessage: string, causeMessage?: string): string {
+    const cause = (causeMessage || '').trim();
+    if (!cause || cause === userMessage) {
+      return userMessage;
+    }
+    return `${userMessage} [cause: ${cause}]`;
+  }
 
-    // Validate conversation exists
+  /**
+   * Throw a 404 when a deployment is not owned by the requesting user.
+   * Legacy rows without an owner are treated as inaccessible.
+   */
+  private assertDeploymentOwnership(deployment: Deployment, userId?: string): void {
+    if (!userId) {
+      return;
+    }
+    if (deployment.userId !== userId) {
+      this.logger.warn(`Deployment ${deployment.id} access denied for user ${userId}`);
+      throw new NotFoundException(`Deployment not found: ${deployment.id}`);
+    }
+  }
+
+  /**
+   * Load a conversation, enforcing ownership when a userId is supplied.
+   */
+  private async getConversationOrFail(
+    conversationId: string,
+    userId?: string,
+  ): Promise<Conversation> {
     const conversation = await this.conversationRepository.findOneBy({
       id: conversationId,
     });
@@ -91,9 +121,32 @@ export class DeploymentOrchestratorService {
       throw new NotFoundException(`Conversation not found: ${conversationId}`);
     }
 
+    if (userId && conversation.userId !== userId) {
+      this.logger.warn(`Conversation ${conversationId} access denied for user ${userId}`);
+      throw new NotFoundException(`Conversation not found: ${conversationId}`);
+    }
+
+    return conversation;
+  }
+
+  /**
+   * Deploy to a GitHub repository
+   */
+  async deployToGitHub(
+    conversationId: string,
+    options: DeploymentOptions = {},
+    owner?: { userId?: string; userTier?: 'free' | 'pro' | 'enterprise' },
+  ): Promise<DeploymentResult> {
+    this.logger.log(`Starting GitHub deployment for conversation: ${conversationId}`);
+
+    // Validate conversation exists (and belongs to the requesting user)
+    const conversation = await this.getConversationOrFail(conversationId, owner?.userId);
+
     // Create pending deployment record
     const deployment = this.deploymentRepository.create({
       conversationId,
+      userId: owner?.userId,
+      userTier: owner?.userTier,
       deploymentType: 'repo',
       status: 'pending',
       metadata: { options },
@@ -184,10 +237,17 @@ export class DeploymentOrchestratorService {
       // Generate suggested names for naming conflicts
       const suggestedNames =
         deploymentError.code === DeploymentErrorCode.REPOSITORY_NAME_CONFLICT
-          ? this.retryService.generateAlternativeNames(
-              options.serverName || 'mcp-server',
-            )
+          ? this.retryService.generateAlternativeNames(options.serverName || 'mcp-server')
           : undefined;
+
+      // Keep BOTH the friendly message and the real underlying cause so
+      // failures remain diagnosable (issue: errors were laundered away)
+      const fullErrorMessage = this.buildErrorMessage(deploymentError.userMessage, err.message);
+
+      this.logger.error(
+        `GitHub deployment ${savedDeployment.id} failed (${deploymentError.code}): ${err.message}`,
+        err.stack,
+      );
 
       // Update deployment record with failure and error details
       const updatedMetadata = {
@@ -195,10 +255,12 @@ export class DeploymentOrchestratorService {
         errorCode: deploymentError.code,
         retryStrategy: deploymentError.retryStrategy,
         suggestedNames,
+        userMessage: deploymentError.userMessage,
+        causeMessage: err.message,
       };
       await this.deploymentRepository.update(savedDeployment.id, {
         status: 'failed',
-        errorMessage: deploymentError.userMessage,
+        errorMessage: fullErrorMessage,
         deployedAt: new Date(),
         metadata: updatedMetadata as Record<string, any>,
       });
@@ -208,7 +270,8 @@ export class DeploymentOrchestratorService {
         deploymentId: savedDeployment.id,
         type: 'repo',
         urls: {},
-        error: deploymentError.userMessage,
+        error: fullErrorMessage,
+        errorCause: err.message,
         errorCode: deploymentError.code,
         retryStrategy: deploymentError.retryStrategy,
         retryAfterMs: deploymentError.retryAfterMs,
@@ -223,21 +286,18 @@ export class DeploymentOrchestratorService {
   async deployToGist(
     conversationId: string,
     options: DeploymentOptions = {},
+    owner?: { userId?: string; userTier?: 'free' | 'pro' | 'enterprise' },
   ): Promise<DeploymentResult> {
     this.logger.log(`Starting Gist deployment for conversation: ${conversationId}`);
 
-    // Validate conversation exists
-    const conversation = await this.conversationRepository.findOneBy({
-      id: conversationId,
-    });
-
-    if (!conversation) {
-      throw new NotFoundException(`Conversation not found: ${conversationId}`);
-    }
+    // Validate conversation exists (and belongs to the requesting user)
+    const conversation = await this.getConversationOrFail(conversationId, owner?.userId);
 
     // Create pending deployment record
     const deployment = this.deploymentRepository.create({
       conversationId,
+      userId: owner?.userId,
+      userTier: owner?.userTier,
       deploymentType: 'gist',
       status: 'pending',
       metadata: { options },
@@ -319,15 +379,25 @@ export class DeploymentOrchestratorService {
       const err = error as Error;
       const deploymentError = this.retryService.parseGitHubError(error);
 
+      // Keep BOTH the friendly message and the real underlying cause
+      const fullErrorMessage = this.buildErrorMessage(deploymentError.userMessage, err.message);
+
+      this.logger.error(
+        `Gist deployment ${savedDeployment.id} failed (${deploymentError.code}): ${err.message}`,
+        err.stack,
+      );
+
       // Update deployment record with failure and error details
       const updatedMetadata = {
         ...(savedDeployment.metadata || {}),
         errorCode: deploymentError.code,
         retryStrategy: deploymentError.retryStrategy,
+        userMessage: deploymentError.userMessage,
+        causeMessage: err.message,
       };
       await this.deploymentRepository.update(savedDeployment.id, {
         status: 'failed',
-        errorMessage: deploymentError.userMessage,
+        errorMessage: fullErrorMessage,
         deployedAt: new Date(),
         metadata: updatedMetadata as Record<string, any>,
       });
@@ -337,7 +407,8 @@ export class DeploymentOrchestratorService {
         deploymentId: savedDeployment.id,
         type: 'gist',
         urls: {},
-        error: deploymentError.userMessage,
+        error: fullErrorMessage,
+        errorCause: err.message,
         errorCode: deploymentError.code,
         retryStrategy: deploymentError.retryStrategy,
         retryAfterMs: deploymentError.retryAfterMs,
@@ -347,10 +418,15 @@ export class DeploymentOrchestratorService {
 
   /**
    * Get deployment status for a conversation
+   *
+   * @param userId when supplied, only deployments owned by this user are returned
    */
-  async getDeploymentStatus(conversationId: string): Promise<DeploymentStatusResponse[]> {
+  async getDeploymentStatus(
+    conversationId: string,
+    userId?: string,
+  ): Promise<DeploymentStatusResponse[]> {
     const deployments = await this.deploymentRepository.find({
-      where: { conversationId },
+      where: userId ? { conversationId, userId } : { conversationId },
       order: { createdAt: 'DESC' },
     });
 
@@ -381,12 +457,15 @@ export class DeploymentOrchestratorService {
     deploymentId: string,
     newServerName?: string,
     forceRetry?: boolean,
+    userId?: string,
   ): Promise<DeploymentResult> {
     const deployment = await this.deploymentRepository.findOneBy({ id: deploymentId });
 
     if (!deployment) {
       throw new NotFoundException(`Deployment not found: ${deploymentId}`);
     }
+
+    this.assertDeploymentOwnership(deployment, userId);
 
     if (deployment.status !== 'failed') {
       throw new Error('Can only retry failed deployments');
@@ -427,10 +506,16 @@ export class DeploymentOrchestratorService {
       metadata: retryMetadata as Record<string, any>,
     });
 
+    // Preserve ownership of the original deployment on the retry
+    const owner = {
+      userId: deployment.userId,
+      userTier: deployment.userTier,
+    };
+
     if (deployment.deploymentType === 'repo') {
-      return this.deployToGitHub(deployment.conversationId, options);
+      return this.deployToGitHub(deployment.conversationId, options, owner);
     } else if (deployment.deploymentType === 'gist') {
-      return this.deployToGist(deployment.conversationId, options);
+      return this.deployToGist(deployment.conversationId, options, owner);
     } else {
       throw new Error(`Unknown deployment type: ${deployment.deploymentType}`);
     }
@@ -438,19 +523,29 @@ export class DeploymentOrchestratorService {
 
   /**
    * Get the latest deployment for a conversation
+   *
+   * @param userId when supplied, only deployments owned by this user are considered
    */
-  async getLatestDeployment(conversationId: string): Promise<Deployment | null> {
+  async getLatestDeployment(conversationId: string, userId?: string): Promise<Deployment | null> {
     return this.deploymentRepository.findOne({
-      where: { conversationId },
+      where: userId ? { conversationId, userId } : { conversationId },
       order: { createdAt: 'DESC' },
     });
   }
 
   /**
    * Get a single deployment by ID
+   *
+   * @param userId when supplied, deployments owned by other users are reported
+   *               as missing (returns null) instead of leaking their existence
    */
-  async getDeploymentById(deploymentId: string): Promise<DeploymentStatusResponse | null> {
-    const deployment = await this.deploymentRepository.findOneBy({ id: deploymentId });
+  async getDeploymentById(
+    deploymentId: string,
+    userId?: string,
+  ): Promise<DeploymentStatusResponse | null> {
+    const deployment = await this.deploymentRepository.findOneBy(
+      userId ? { id: deploymentId, userId } : { id: deploymentId },
+    );
 
     if (!deployment) {
       return null;
@@ -477,7 +572,7 @@ export class DeploymentOrchestratorService {
    * List all deployments with filtering and pagination
    */
   async listDeployments(filters: DeploymentFilters = {}): Promise<PaginatedDeployments> {
-    const { type, status, limit = 20, offset = 0 } = filters;
+    const { type, status, limit = 20, offset = 0, userId } = filters;
 
     // Build query conditions
     const where: Record<string, unknown> = {};
@@ -486,6 +581,10 @@ export class DeploymentOrchestratorService {
     }
     if (status) {
       where.status = status;
+    }
+    // Scope the list to the requesting user (never list other users' deployments)
+    if (userId) {
+      where.userId = userId;
     }
 
     // Get total count
@@ -527,12 +626,15 @@ export class DeploymentOrchestratorService {
   async updateGistDeployment(
     deploymentId: string,
     description?: string,
+    userId?: string,
   ): Promise<DeploymentResult> {
     const deployment = await this.deploymentRepository.findOneBy({ id: deploymentId });
 
     if (!deployment) {
       throw new NotFoundException(`Deployment not found: ${deploymentId}`);
     }
+
+    this.assertDeploymentOwnership(deployment, userId);
 
     if (deployment.deploymentType !== 'gist') {
       throw new Error('Can only update Gist deployments');
@@ -594,12 +696,17 @@ export class DeploymentOrchestratorService {
   /**
    * Delete a Gist deployment
    */
-  async deleteGistDeployment(deploymentId: string): Promise<DeleteDeploymentResult> {
+  async deleteGistDeployment(
+    deploymentId: string,
+    userId?: string,
+  ): Promise<DeleteDeploymentResult> {
     const deployment = await this.deploymentRepository.findOneBy({ id: deploymentId });
 
     if (!deployment) {
       throw new NotFoundException(`Deployment not found: ${deploymentId}`);
     }
+
+    this.assertDeploymentOwnership(deployment, userId);
 
     if (deployment.deploymentType !== 'gist') {
       throw new Error('Can only delete Gist deployments with this method');
@@ -629,12 +736,17 @@ export class DeploymentOrchestratorService {
   /**
    * Delete a repository deployment
    */
-  async deleteRepoDeployment(deploymentId: string): Promise<DeleteDeploymentResult> {
+  async deleteRepoDeployment(
+    deploymentId: string,
+    userId?: string,
+  ): Promise<DeleteDeploymentResult> {
     const deployment = await this.deploymentRepository.findOneBy({ id: deploymentId });
 
     if (!deployment) {
       throw new NotFoundException(`Deployment not found: ${deploymentId}`);
     }
+
+    this.assertDeploymentOwnership(deployment, userId);
 
     if (deployment.deploymentType !== 'repo') {
       throw new Error('Can only delete repository deployments with this method');
@@ -678,8 +790,8 @@ export class DeploymentOrchestratorService {
 
     throw new NotImplementedException(
       'Enterprise deployment is not yet available. ' +
-      'This feature will include custom domains, CDN support, and regional deployments. ' +
-      'Please use GitHub repository or Gist deployment for now.',
+        'This feature will include custom domains, CDN support, and regional deployments. ' +
+        'Please use GitHub repository or Gist deployment for now.',
     );
   }
 

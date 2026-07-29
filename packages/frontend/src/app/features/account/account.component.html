@@ -19,11 +19,12 @@
         </div>
       </div>
 
-      <div class="section-content">
+      <div class="section-content" *ngIf="user$ | async as user; else noProfile">
         <div class="profile-layout">
           <div class="profile-avatar-section">
             <div class="avatar-circle">
-              <mat-icon>account_circle</mat-icon>
+              <img *ngIf="user.avatarUrl" [src]="user.avatarUrl" [alt]="user.name" class="avatar-image">
+              <mat-icon *ngIf="!user.avatarUrl">account_circle</mat-icon>
             </div>
             <button class="text-button" disabled>
               <span>Change Photo</span>
@@ -36,7 +37,7 @@
               <input
                 type="text"
                 class="form-input"
-                [(ngModel)]="profile.name"
+                [(ngModel)]="editableName"
                 [disabled]="!isEditingProfile"
                 placeholder="Enter your full name">
             </div>
@@ -46,7 +47,7 @@
               <input
                 type="email"
                 class="form-input"
-                [(ngModel)]="profile.email"
+                [(ngModel)]="editableEmail"
                 [disabled]="!isEditingProfile"
                 placeholder="Enter your email">
             </div>
@@ -76,90 +77,48 @@
           </div>
         </div>
       </div>
+      <ng-template #noProfile>
+        <div class="section-content">
+          <p>Unable to load profile - please sign in again.</p>
+        </div>
+      </ng-template>
     </div>
 
-    <!-- API Key Section -->
+    <!-- API Key Section (coming soon - not yet backed by an API) -->
     <div class="settings-section">
       <div class="section-header">
         <div class="section-icon">
           <mat-icon>vpn_key</mat-icon>
         </div>
         <div class="section-title">
-          <h2>API Key</h2>
-          <p>Use this key for programmatic access to your account</p>
+          <h2>API Key <span class="coming-soon-badge">Coming soon</span></h2>
+          <p>Programmatic access to your account is not available yet</p>
         </div>
       </div>
 
       <div class="section-content">
-        <div class="api-key-container">
-          <div class="form-group">
-            <label class="form-label">Your API Key</label>
-            <div class="input-with-button">
-              <input
-                type="text"
-                class="form-input"
-                [value]="profile.apiKey"
-                readonly>
-              <button
-                class="icon-button"
-                (click)="copyApiKey()"
-                matTooltip="Copy to clipboard">
-                <mat-icon>content_copy</mat-icon>
-              </button>
-            </div>
-          </div>
-
-          <div class="warning-banner">
-            <mat-icon>warning</mat-icon>
-            <span>Keep your API key secure. Never share it publicly or commit it to version control.</span>
-          </div>
-
-          <div class="form-actions">
-            <button
-              class="action-button danger"
-              (click)="regenerateApiKey()">
-              <mat-icon>refresh</mat-icon>
-              <span>Regenerate Key</span>
-            </button>
-          </div>
-        </div>
+        <p class="coming-soon-note">
+          API keys for programmatic access are not available yet. Check back in a future release.
+        </p>
       </div>
     </div>
 
-    <!-- Usage Statistics -->
+    <!-- Usage Statistics (coming soon - not yet backed by an API; see Subscription section below for real usage data) -->
     <div class="settings-section">
       <div class="section-header">
         <div class="section-icon">
           <mat-icon>bar_chart</mat-icon>
         </div>
         <div class="section-title">
-          <h2>Usage Statistics</h2>
-          <p>Track your account activity and resource usage</p>
+          <h2>Usage Statistics <span class="coming-soon-badge">Coming soon</span></h2>
+          <p>Detailed account activity and storage usage are not available yet</p>
         </div>
       </div>
 
       <div class="section-content">
-        <div class="stats-grid">
-          <div class="stat-card">
-            <div class="stat-icon">
-              <mat-icon>memory</mat-icon>
-            </div>
-            <div class="stat-details">
-              <div class="stat-value">{{ profile.serversGenerated }}</div>
-              <div class="stat-label">Servers Generated</div>
-            </div>
-          </div>
-
-          <div class="stat-card">
-            <div class="stat-icon">
-              <mat-icon>storage</mat-icon>
-            </div>
-            <div class="stat-details">
-              <div class="stat-value">{{ profile.storageUsed }}</div>
-              <div class="stat-label">Storage Used</div>
-            </div>
-          </div>
-        </div>
+        <p class="coming-soon-note">
+          Detailed usage statistics are not available yet. See the Subscription section below for your current monthly server usage.
+        </p>
       </div>
     </div>
 

@@ -52,3 +52,10 @@ test-outputs/run-*/
 
 # Generated MCP servers (local builds)
 generated-servers/
+
+# Playwright MCP debug artifacts
+.playwright-mcp/
+
+# Environment files (all variants)
+.env.production
+.env.staging

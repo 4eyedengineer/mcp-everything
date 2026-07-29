@@ -54,14 +54,6 @@ const routes: Routes = [
     }
   },
   {
-    path: 'auth',
-    loadChildren: () => import('./features/auth/auth.module').then(m => m.AuthModule),
-    data: {
-      title: 'Authentication',
-      description: 'Authentication pages'
-    }
-  },
-  {
     path: 'reset-password',
     redirectTo: '/auth/reset-password',
     pathMatch: 'full'

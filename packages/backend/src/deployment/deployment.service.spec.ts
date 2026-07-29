@@ -10,6 +10,9 @@ import { GistProvider } from './providers/gist.provider';
 import { DevContainerProvider } from './providers/devcontainer.provider';
 import { GitignoreProvider } from './providers/gitignore.provider';
 import { CIWorkflowProvider } from './providers/ci-workflow.provider';
+import { DeploymentRetryService } from './services/retry.service';
+import { DeploymentRollbackService } from './services/rollback.service';
+import { ValidationService } from '../validation/validation.service';
 
 describe('DeploymentOrchestratorService', () => {
   let service: DeploymentOrchestratorService;
@@ -100,9 +103,21 @@ describe('DeploymentOrchestratorService', () => {
       ]),
     };
 
+    const mockRollbackService = {
+      rollback: jest.fn().mockResolvedValue({ success: true }),
+    };
+
+    const mockValidationService = {
+      validateDeployment: jest.fn().mockResolvedValue(undefined),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         DeploymentOrchestratorService,
+        // Real retry service: it has no injected dependencies of its own and
+        // deployment.service.ts relies on its actual error-classification
+        // logic (parseGitHubError/generateAlternativeNames/canRetry).
+        DeploymentRetryService,
         {
           provide: getRepositoryToken(Deployment),
           useValue: mockDeploymentRepository,
@@ -130,6 +145,14 @@ describe('DeploymentOrchestratorService', () => {
         {
           provide: CIWorkflowProvider,
           useValue: mockCIWorkflowProvider,
+        },
+        {
+          provide: DeploymentRollbackService,
+          useValue: mockRollbackService,
+        },
+        {
+          provide: ValidationService,
+          useValue: mockValidationService,
         },
       ],
     }).compile();
@@ -170,7 +193,9 @@ describe('DeploymentOrchestratorService', () => {
       const result = await service.deployToGitHub('conv-123', {});
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain('No generated files');
+      // Message comes from ERROR_USER_MESSAGES[NO_FILES_TO_DEPLOY]
+      expect(result.error).toContain('No files to deploy');
+      expect(result.errorCode).toBe('NO_FILES_TO_DEPLOY');
     });
 
     it('should add .gitignore files automatically', async () => {
@@ -187,16 +212,21 @@ describe('DeploymentOrchestratorService', () => {
       );
     });
 
-    it('should add devcontainer files when requested', async () => {
+    it('should always add devcontainer files (enables Codespace/Codespaces testing)', async () => {
+      // Devcontainer files are now unconditionally included for GitHub repo
+      // deployments, regardless of the includeDevContainer option.
+      await service.deployToGitHub('conv-123', {});
+
+      expect(mockDevContainerProvider.generateDevContainerFiles).toHaveBeenCalledWith(
+        'test-mcp-server',
+        'typescript',
+      );
+    });
+
+    it('should still add devcontainer files when includeDevContainer is explicitly set', async () => {
       await service.deployToGitHub('conv-123', { includeDevContainer: true });
 
       expect(mockDevContainerProvider.generateDevContainerFiles).toHaveBeenCalled();
-    });
-
-    it('should not add devcontainer files by default', async () => {
-      await service.deployToGitHub('conv-123', {});
-
-      expect(mockDevContainerProvider.generateDevContainerFiles).not.toHaveBeenCalled();
     });
 
     it('should default to private repositories', async () => {
@@ -207,6 +237,7 @@ describe('DeploymentOrchestratorService', () => {
         expect.any(Array),
         expect.any(String),
         true, // isPrivate should be true by default
+        undefined, // no envVars supplied
       );
     });
 
@@ -218,6 +249,7 @@ describe('DeploymentOrchestratorService', () => {
         expect.any(Array),
         expect.any(String),
         false,
+        undefined,
       );
     });
 
@@ -229,6 +261,7 @@ describe('DeploymentOrchestratorService', () => {
         expect.any(Array),
         'Custom description',
         expect.any(Boolean),
+        undefined,
       );
     });
 
@@ -252,11 +285,13 @@ describe('DeploymentOrchestratorService', () => {
 
       await service.deployToGitHub('conv-123', {});
 
+      // The persisted message combines the friendly, classified message with
+      // the raw underlying cause (never laundered away) — see buildErrorMessage.
       expect(mockDeploymentRepository.update).toHaveBeenCalledWith(
         'deploy-123',
         expect.objectContaining({
           status: 'failed',
-          errorMessage: 'Deployment failed',
+          errorMessage: expect.stringContaining('[cause: Deployment failed]'),
         }),
       );
     });

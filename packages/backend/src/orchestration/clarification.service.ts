@@ -1,15 +1,24 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { ChatAnthropic } from '@langchain/anthropic';
-import {
-  GraphState,
-  KnowledgeGap,
-  ClarificationQuestion,
-  RequiredEnvVar,
-} from './types';
+import * as z from 'zod/v4';
+import { GraphState, KnowledgeGap, ClarificationQuestion, RequiredEnvVar } from './types';
 import { getPlatformContextPrompt, getClarificationThresholdPrompt } from './platform-context';
 import { EnvVariableService } from '../env-variable.service';
 import { CollectedEnvVar } from '../types/env-variable.types';
-import { safeParseJSON } from './json-utils';
+import { AnthropicService } from '../ai/anthropic.service';
+
+/**
+ * Gap detection output contract (enforced by the API's structured outputs).
+ */
+const GapDetectionSchema = z.object({
+  gaps: z.array(
+    z.object({
+      issue: z.string(),
+      priority: z.enum(['HIGH', 'MEDIUM', 'LOW']),
+      suggestedQuestion: z.string(),
+      context: z.string(),
+    }),
+  ),
+});
 
 /**
  * Clarification Service
@@ -41,20 +50,11 @@ import { safeParseJSON } from './json-utils';
 @Injectable()
 export class ClarificationService {
   private readonly logger = new Logger(ClarificationService.name);
-  private readonly llm: ChatAnthropic;
 
-  constructor(private readonly envVariableService: EnvVariableService) {
-    // Initialize Claude Haiku for gap detection and question formulation
-    // streaming: true is required by the Anthropic API configuration (Issue #142)
-    this.llm = new ChatAnthropic({
-      modelName: 'claude-haiku-4-5-20251001',
-      temperature: 0.7,
-      topP: undefined, // Fix for @langchain/anthropic bug sending top_p: -1
-      maxTokens: 8000, // Generous limit for clarification questions
-      anthropicApiKey: process.env.ANTHROPIC_API_KEY,
-      streaming: true,
-    });
-  }
+  constructor(
+    private readonly envVariableService: EnvVariableService,
+    private readonly anthropic: AnthropicService,
+  ) {}
 
   /**
    * Orchestrate Clarification
@@ -122,21 +122,17 @@ export class ClarificationService {
     const prompt = this.buildGapDetectionPrompt(state);
 
     try {
-      const response = await this.llm.invoke(prompt);
-      const content = response.content.toString();
-
-      // Extract JSON from response using safe bracket-balanced parsing
-      const parsed = safeParseJSON<{ gaps: KnowledgeGap[] }>(content, this.logger);
-
-      // Validate response structure
-      if (!parsed.gaps || !Array.isArray(parsed.gaps)) {
-        this.logger.warn('Invalid gap detection response structure');
-        return [];
-      }
+      const parsed = await this.anthropic.completeStructured({
+        prompt,
+        schema: GapDetectionSchema,
+        schemaName: 'GapDetection',
+        maxTokens: 8000,
+        caller: 'clarification.detectGaps',
+      });
 
       // Filter to HIGH and MEDIUM priority gaps only
       const criticalGaps = parsed.gaps.filter(
-        (gap: KnowledgeGap) => gap.priority === 'HIGH' || gap.priority === 'MEDIUM'
+        (gap: KnowledgeGap) => gap.priority === 'HIGH' || gap.priority === 'MEDIUM',
       );
 
       this.logger.log(`Found ${criticalGaps.length} critical gaps (${parsed.gaps.length} total)`);
@@ -188,7 +184,7 @@ ${research?.webSearchFindings?.bestPractices?.join('\n- ') || 'None'}
 **Ensemble Results**:
 - Consensus Score: ${consensusScore.toFixed(2)}
 - Tools Recommended: ${ensemble?.agentPerspectives?.[0]?.recommendations?.tools?.length || 0}
-- Agent Concerns: ${ensemble?.agentPerspectives?.flatMap(a => a.recommendations.concerns).join(', ') || 'None'}
+- Agent Concerns: ${ensemble?.agentPerspectives?.flatMap((a) => a.recommendations.concerns).join(', ') || 'None'}
 
 **Previous Clarifications**: ${state.clarificationHistory?.length || 0} rounds completed
 
@@ -208,7 +204,12 @@ ${research?.webSearchFindings?.bestPractices?.join('\n- ') || 'None'}
 **Research Already Provided** (from above):
 - Base URL: ${research?.webSearchFindings?.bestPractices?.find((p: string) => p.includes('Base URL'))?.split(': ')[1] || 'Found in research'}
 - Authentication: ${research?.webSearchFindings?.bestPractices?.find((p: string) => p.includes('Authentication'))?.split(': ')[1] || 'Found in research'}
-- Endpoints: ${research?.webSearchFindings?.results?.filter((r: any) => r.url.includes('/v1/')).map((r: any) => r.title).join(', ') || 'Found in research'}
+- Endpoints: ${
+      research?.webSearchFindings?.results
+        ?.filter((r: any) => r.url.includes('/v1/'))
+        .map((r: any) => r.title)
+        .join(', ') || 'Found in research'
+    }
 
 **If ANY of the above are present in research → DO NOT raise a gap for them.**
 
@@ -354,7 +355,7 @@ Return ONLY valid JSON with detected gaps.`;
    */
   private async validateResponse(
     gap: KnowledgeGap,
-    response: string
+    response: string,
   ): Promise<{ valid: boolean; reason?: string }> {
     // Basic validation: non-empty response
     if (!response || response.trim().length < 5) {
@@ -390,10 +391,7 @@ Return ONLY valid JSON with detected gaps.`;
    * @param after - State after clarification
    * @returns Confidence improvement score 0-1
    */
-  private calculateConfidenceImprovement(
-    before: GraphState,
-    after: GraphState
-  ): number {
+  private calculateConfidenceImprovement(before: GraphState, after: GraphState): number {
     // Simple heuristic: if gaps reduced, confidence improved
     const gapsBefore = before.clarificationHistory?.length || 0;
     const gapsAfter = after.clarificationHistory?.length || 0;
@@ -421,10 +419,10 @@ Return ONLY valid JSON with detected gaps.`;
     const collectedVars = state.collectedEnvVars || [];
 
     // Check if there are required env vars that haven't been collected
-    const requiredVars = detectedVars.filter(v => v.required);
-    const collectedNames = new Set(collectedVars.map(v => v.name));
+    const requiredVars = detectedVars.filter((v) => v.required);
+    const collectedNames = new Set(collectedVars.map((v) => v.name));
 
-    const uncollected = requiredVars.filter(v => !collectedNames.has(v.name));
+    const uncollected = requiredVars.filter((v) => !collectedNames.has(v.name));
 
     return uncollected.length > 0;
   }
@@ -446,10 +444,10 @@ Return ONLY valid JSON with detected gaps.`;
   }> {
     const detectedVars = state.detectedEnvVars || [];
     const collectedVars = state.collectedEnvVars || [];
-    const collectedNames = new Set(collectedVars.map(v => v.name));
+    const collectedNames = new Set(collectedVars.map((v) => v.name));
 
     // Find vars that still need to be collected
-    const uncollectedVars = detectedVars.filter(v => !collectedNames.has(v.name));
+    const uncollectedVars = detectedVars.filter((v) => !collectedNames.has(v.name));
 
     if (uncollectedVars.length === 0) {
       this.logger.log('All environment variables have been collected');
@@ -462,14 +460,14 @@ Return ONLY valid JSON with detected gaps.`;
     const envVarQuestions = this.envVariableService.generateClarificationQuestions(uncollectedVars);
 
     // Convert to ClarificationQuestion format (max 2 at a time)
-    const questions: ClarificationQuestion[] = envVarQuestions.slice(0, 2).map(q => ({
+    const questions: ClarificationQuestion[] = envVarQuestions.slice(0, 2).map((q) => ({
       question: q.question,
       context: q.context,
       options: q.options,
-      required: uncollectedVars.find(v => v.name === q.envVarName)?.required ?? true,
+      required: uncollectedVars.find((v) => v.name === q.envVarName)?.required ?? true,
     }));
 
-    const envVarNames = envVarQuestions.slice(0, 2).map(q => q.envVarName);
+    const envVarNames = envVarQuestions.slice(0, 2).map((q) => q.envVarName);
 
     return {
       complete: false,
@@ -531,11 +529,13 @@ Return ONLY valid JSON with detected gaps.`;
    * @returns Knowledge gaps for env vars
    */
   createEnvVarGaps(envVars: RequiredEnvVar[]): KnowledgeGap[] {
-    return envVars.filter(v => v.required).map(envVar => ({
-      issue: `Missing ${envVar.description}`,
-      priority: 'HIGH' as const,
-      suggestedQuestion: `Please provide your ${envVar.description}${envVar.documentationUrl ? `. You can get it from: ${envVar.documentationUrl}` : ''}`,
-      context: `Required for the MCP server to function properly. ${envVar.sensitive ? 'This value will be securely stored.' : ''}`,
-    }));
+    return envVars
+      .filter((v) => v.required)
+      .map((envVar) => ({
+        issue: `Missing ${envVar.description}`,
+        priority: 'HIGH' as const,
+        suggestedQuestion: `Please provide your ${envVar.description}${envVar.documentationUrl ? `. You can get it from: ${envVar.documentationUrl}` : ''}`,
+        context: `Required for the MCP server to function properly. ${envVar.sensitive ? 'This value will be securely stored.' : ''}`,
+      }));
   }
 }

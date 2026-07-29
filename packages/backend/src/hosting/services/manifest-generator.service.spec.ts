@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { ConfigService } from '@nestjs/config';
 import * as yaml from 'js-yaml';
 import {
   ManifestGeneratorService,
@@ -19,7 +20,19 @@ describe('ManifestGeneratorService', () => {
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
-      providers: [ManifestGeneratorService],
+      providers: [
+        ManifestGeneratorService,
+        {
+          provide: ConfigService,
+          useValue: {
+            get: jest.fn((key: string, defaultValue?: unknown) => {
+              if (key === 'LOCAL_DEV') return undefined;
+              if (key === 'MCP_HOSTING_DOMAIN') return defaultValue;
+              return defaultValue;
+            }),
+          },
+        },
+      ],
     }).compile();
 
     service = module.get<ManifestGeneratorService>(ManifestGeneratorService);

@@ -2,6 +2,7 @@ import { Injectable } from '@angular/core';
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { Observable, throwError, interval } from 'rxjs';
 import { catchError, map, switchMap, takeWhile, startWith } from 'rxjs/operators';
+import { API_BASE } from '../config/api.config';
 
 /**
  * Status values for hosted servers
@@ -93,7 +94,7 @@ export interface ServerListResponse {
   providedIn: 'root'
 })
 export class HostingApiService {
-  private readonly baseUrl = 'http://localhost:3000/api/hosting';
+  private readonly baseUrl = `${API_BASE}/hosting`;
 
   constructor(private http: HttpClient) {}
 

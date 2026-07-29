@@ -75,10 +75,29 @@ kubectl exec -n mcp-everything deployment/mcp-backend -- \
 ### Immediate Actions
 
 1. **Test generation manually**:
+
+   The standalone `POST /generate-mcp` debug endpoint has been removed. All
+   generations now go through the authenticated chat message flow, which
+   requires a valid JWT (obtained via `POST /api/v1/auth/login` or
+   `/api/v1/auth/register`) and an existing session:
+
    ```bash
-   curl -X POST http://localhost:3000/generate-mcp \
+   # 1. Log in to get a JWT
+   TOKEN=$(curl -s -X POST http://localhost:3000/api/v1/auth/login \
      -H "Content-Type: application/json" \
-     -d '{"githubUrl": "https://github.com/example/test-repo"}'
+     -d '{"email": "you@example.com", "password": "..."}' | jq -r '.accessToken')
+
+   # 2. Send a chat message describing what to generate — this triggers the
+   #    same LangGraph state machine that manual generation used to hit
+   #    directly.
+   curl -X POST http://localhost:3000/api/chat/message \
+     -H "Content-Type: application/json" \
+     -H "Authorization: Bearer $TOKEN" \
+     -d '{"sessionId": "debug-session-1", "message": "Generate an MCP server from https://github.com/example/test-repo"}'
+
+   # 3. Watch progress via the SSE stream (requires a stream ticket; see
+   #    POST /api/chat/stream-ticket and GET /api/chat/stream/:sessionId
+   #    in packages/backend/src/chat/chat.controller.ts).
    ```
 
 2. **Restart if stuck**:

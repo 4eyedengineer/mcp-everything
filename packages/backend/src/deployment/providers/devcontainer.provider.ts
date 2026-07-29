@@ -96,11 +96,7 @@ export class DevContainerProvider {
           'dbaeumer.vscode-eslint',
         ];
       case 'javascript':
-        return [
-          ...baseExtensions,
-          'esbenp.prettier-vscode',
-          'dbaeumer.vscode-eslint',
-        ];
+        return [...baseExtensions, 'esbenp.prettier-vscode', 'dbaeumer.vscode-eslint'];
       case 'python':
         return [
           ...baseExtensions,

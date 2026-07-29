@@ -23,12 +23,7 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
     return super.canActivate(context);
   }
 
-  handleRequest<TUser = any>(
-    err: any,
-    user: TUser,
-    info: any,
-    context: ExecutionContext,
-  ): TUser {
+  handleRequest<TUser = any>(err: any, user: TUser, info: any, context: ExecutionContext): TUser {
     // Check if the route is marked as public - allow anonymous access
     const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
       context.getHandler(),

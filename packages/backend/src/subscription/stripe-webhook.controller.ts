@@ -11,7 +11,10 @@ import {
 import { Request } from 'express';
 import { StripeService } from './stripe.service';
 import { SubscriptionService } from './subscription.service';
+import { Public } from '../auth/decorators/public.decorator';
 
+// Authenticated by Stripe signature verification, not JWT
+@Public()
 @Controller('api/webhooks/stripe')
 export class StripeWebhookController {
   private readonly logger = new Logger(StripeWebhookController.name);
@@ -41,7 +44,9 @@ export class StripeWebhookController {
       event = this.stripeService.constructWebhookEvent(req.rawBody, signature);
     } catch (err) {
       this.logger.error(`Webhook signature verification failed: ${(err as Error).message}`);
-      throw new BadRequestException(`Webhook signature verification failed: ${(err as Error).message}`);
+      throw new BadRequestException(
+        `Webhook signature verification failed: ${(err as Error).message}`,
+      );
     }
 
     this.logger.log(`Processing webhook event: ${event.type} (${event.id})`);
@@ -77,7 +82,10 @@ export class StripeWebhookController {
           this.logger.log(`Unhandled event type: ${event.type}`);
       }
     } catch (error) {
-      this.logger.error(`Error processing webhook ${event.type}: ${(error as Error).message}`, (error as Error).stack);
+      this.logger.error(
+        `Error processing webhook ${event.type}: ${(error as Error).message}`,
+        (error as Error).stack,
+      );
       // Don't throw - return 200 to acknowledge receipt
       // Stripe will retry on errors, so we want to prevent infinite retries for processing errors
     }

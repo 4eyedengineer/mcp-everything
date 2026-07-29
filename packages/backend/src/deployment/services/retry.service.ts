@@ -112,8 +112,7 @@ export class DeploymentRetryService {
     headers?: Record<string, string>;
   }): number | undefined {
     const resetHeader =
-      error.response?.headers?.['x-ratelimit-reset'] ||
-      error.headers?.['x-ratelimit-reset'];
+      error.response?.headers?.['x-ratelimit-reset'] || error.headers?.['x-ratelimit-reset'];
 
     if (resetHeader) {
       const resetTime = parseInt(resetHeader, 10) * 1000;
@@ -166,10 +165,7 @@ export class DeploymentRetryService {
         );
 
         // Check if we should retry
-        if (
-          config.strategy === RetryStrategy.NONE ||
-          config.strategy === RetryStrategy.MANUAL
-        ) {
+        if (config.strategy === RetryStrategy.NONE || config.strategy === RetryStrategy.MANUAL) {
           break;
         }
 
@@ -189,9 +185,7 @@ export class DeploymentRetryService {
 
         retryAttempt.waitedMs = actualDelay;
 
-        this.logger.log(
-          `Waiting ${actualDelay}ms before retry ${attempt + 2}`,
-        );
+        this.logger.log(`Waiting ${actualDelay}ms before retry ${attempt + 2}`);
 
         if (onRetry) {
           await onRetry(retryAttempt);

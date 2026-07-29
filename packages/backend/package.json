@@ -11,6 +11,7 @@
     "start:debug": "nest start --debug --watch",
     "start:prod": "node dist/main",
     "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
+    "typecheck": "tsc --noEmit",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
@@ -36,7 +37,7 @@
     "seed": "node dist/database/seeds/run-seeds.js"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.17.1",
+    "@anthropic-ai/sdk": "^0.115.0",
     "@langchain/anthropic": "^0.3.30",
     "@langchain/core": "^0.3.78",
     "@langchain/langgraph": "^0.4.9",

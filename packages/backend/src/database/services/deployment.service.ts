@@ -25,9 +25,12 @@ export class DeploymentService {
     conversationId: string,
     deploymentType: 'gist' | 'repo' | 'none',
     metadata?: Record<string, any>,
+    userId?: string,
   ): Promise<Deployment> {
     const deployment = this.deploymentRepository.create({
       conversationId,
+      // Ownership must be recorded at creation so reads can be scoped by user
+      userId,
       deploymentType,
       status: 'pending',
       metadata,
@@ -72,10 +75,16 @@ export class DeploymentService {
 
   /**
    * Get all deployments for a conversation
+   *
+   * @param userId optional owner filter; callers that expose this over HTTP must
+   *               either pass it or verify conversation ownership first
    */
-  async getDeploymentsByConversation(conversationId: string): Promise<Deployment[]> {
+  async getDeploymentsByConversation(
+    conversationId: string,
+    userId?: string,
+  ): Promise<Deployment[]> {
     return this.deploymentRepository.find({
-      where: { conversationId },
+      where: userId ? { conversationId, userId } : { conversationId },
       order: { createdAt: 'DESC' },
     });
   }
@@ -83,9 +92,9 @@ export class DeploymentService {
   /**
    * Get the latest deployment for a conversation
    */
-  async getLatestDeployment(conversationId: string): Promise<Deployment | null> {
+  async getLatestDeployment(conversationId: string, userId?: string): Promise<Deployment | null> {
     return this.deploymentRepository.findOne({
-      where: { conversationId },
+      where: userId ? { conversationId, userId } : { conversationId },
       order: { createdAt: 'DESC' },
     });
   }
@@ -93,8 +102,8 @@ export class DeploymentService {
   /**
    * Get a deployment by ID
    */
-  async getDeploymentById(id: string): Promise<Deployment | null> {
-    return this.deploymentRepository.findOneBy({ id });
+  async getDeploymentById(id: string, userId?: string): Promise<Deployment | null> {
+    return this.deploymentRepository.findOneBy(userId ? { id, userId } : { id });
   }
 
   /**

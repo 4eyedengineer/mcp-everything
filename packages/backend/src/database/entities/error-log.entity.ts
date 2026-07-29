@@ -27,10 +27,10 @@ export class ErrorLog {
 
   @Column({ type: 'varchar', length: 255, nullable: true })
   @Index('IDX_error_logs_service')
-  service?: string;  // e.g., 'GraphService', 'ResearchService'
+  service?: string; // e.g., 'GraphService', 'ResearchService'
 
   @Column({ type: 'varchar', length: 255, nullable: true })
-  method?: string;   // e.g., 'analyzeIntent', 'runResearch'
+  method?: string; // e.g., 'analyzeIntent', 'runResearch'
 
   @Column({ type: 'uuid', nullable: true })
   @Index('IDX_error_logs_conversationId')
@@ -41,18 +41,18 @@ export class ErrorLog {
   userId?: string;
 
   @Column({ type: 'jsonb', nullable: true })
-  context?: Record<string, any>;  // Additional context (request body, state, etc.)
+  context?: Record<string, any>; // Additional context (request body, state, etc.)
 
   @Column({ type: 'varchar', length: 100, nullable: true })
   @Index('IDX_error_logs_errorCode')
-  errorCode?: string;  // Custom error codes for categorization
+  errorCode?: string; // Custom error codes for categorization
 
   @Column({ type: 'boolean', default: false })
   @Index('IDX_error_logs_resolved')
   resolved: boolean;
 
   @Column({ type: 'text', nullable: true })
-  resolution?: string;  // How was this fixed?
+  resolution?: string; // How was this fixed?
 
   @CreateDateColumn()
   createdAt: Date;

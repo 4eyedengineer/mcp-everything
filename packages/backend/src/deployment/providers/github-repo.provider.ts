@@ -283,7 +283,7 @@ export class GitHubRepoProvider {
       return {
         success: false,
         created,
-        failed: envVars.map(v => v.name),
+        failed: envVars.map((v) => v.name),
       };
     }
   }
@@ -353,14 +353,8 @@ export class GitHubRepoProvider {
   /**
    * Inject CI status badge into README.md if present
    */
-  private injectCIBadge(
-    files: DeploymentFile[],
-    owner: string,
-    repo: string,
-  ): DeploymentFile[] {
-    const readmeIndex = files.findIndex(
-      (f) => f.path.toLowerCase() === 'readme.md',
-    );
+  private injectCIBadge(files: DeploymentFile[], owner: string, repo: string): DeploymentFile[] {
+    const readmeIndex = files.findIndex((f) => f.path.toLowerCase() === 'readme.md');
     if (readmeIndex === -1) return files;
 
     const badge = `![Build Status](https://github.com/${owner}/${repo}/actions/workflows/test.yml/badge.svg)\n\n`;
@@ -387,10 +381,7 @@ export class GitHubRepoProvider {
   /**
    * Execute a function with rate limit retry logic
    */
-  private async withRateLimitRetry<T>(
-    fn: () => Promise<T>,
-    maxRetries: number = 3,
-  ): Promise<T> {
+  private async withRateLimitRetry<T>(fn: () => Promise<T>, maxRetries: number = 3): Promise<T> {
     let lastError: Error;
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -414,8 +405,7 @@ export class GitHubRepoProvider {
         let delayMs = Math.pow(2, attempt + 1) * 1000; // 2s, 4s, 8s
 
         const resetHeader =
-          error.response?.headers?.['x-ratelimit-reset'] ||
-          error.headers?.['x-ratelimit-reset'];
+          error.response?.headers?.['x-ratelimit-reset'] || error.headers?.['x-ratelimit-reset'];
 
         if (resetHeader) {
           const resetTime = parseInt(resetHeader, 10) * 1000;

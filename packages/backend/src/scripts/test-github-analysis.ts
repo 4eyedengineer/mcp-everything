@@ -34,7 +34,7 @@ async function testGitHubAnalysis() {
     'https://github.com/microsoft/vscode',
     'https://github.com/nestjs/nest',
     'https://github.com/facebook/react',
-    'https://github.com/4eyedengineer/mcp-everything' // Our own repo
+    'https://github.com/4eyedengineer/mcp-everything', // Our own repo
   ];
 
   for (const repoUrl of testRepos) {
@@ -66,7 +66,7 @@ async function testGitHubAnalysis() {
 
       console.log('\n🌐 API Patterns:');
       if (analysis.apiPatterns.length > 0) {
-        analysis.apiPatterns.forEach(pattern => {
+        analysis.apiPatterns.forEach((pattern) => {
           console.log(`  ${pattern.type}: ${pattern.endpoints.length} endpoints`);
           console.log(`    Methods: ${pattern.methods.join(', ')}`);
           console.log(`    Confidence: ${Math.round(pattern.confidence * 100)}%`);
@@ -93,19 +93,18 @@ async function testGitHubAnalysis() {
       console.log(`  Has CI/CD: ${analysis.features.hasCi ? 'Yes' : 'No'}`);
 
       console.log('\n📄 Key Source Files:');
-      analysis.sourceFiles.slice(0, 5).forEach(file => {
+      analysis.sourceFiles.slice(0, 5).forEach((file) => {
         console.log(`  ${file.path} (${file.type}, ${file.size} bytes)`);
       });
 
       console.log('\n' + '═'.repeat(60));
-
     } catch (error) {
       console.error(`❌ Failed to analyze ${repoUrl}:`);
       console.error(`   Error: ${error.message}\n`);
     }
 
     // Add a small delay to respect rate limits
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    await new Promise((resolve) => setTimeout(resolve, 1000));
   }
 
   console.log('\n🎉 GitHub Analysis testing completed!');

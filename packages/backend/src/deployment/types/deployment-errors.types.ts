@@ -206,22 +206,16 @@ export const ERROR_RETRY_CONFIG: Record<DeploymentErrorCode, RetryConfig> = {
  * User-friendly error messages for each error code
  */
 export const ERROR_USER_MESSAGES: Record<DeploymentErrorCode, string> = {
-  [DeploymentErrorCode.NETWORK_TIMEOUT]:
-    'Network timeout. Retrying automatically...',
-  [DeploymentErrorCode.CONNECTION_RESET]:
-    'Connection was reset. Retrying...',
-  [DeploymentErrorCode.SERVICE_UNAVAILABLE]:
-    'GitHub service temporarily unavailable. Retrying...',
-  [DeploymentErrorCode.RATE_LIMIT_EXCEEDED]:
-    'GitHub rate limit reached. Waiting before retry...',
+  [DeploymentErrorCode.NETWORK_TIMEOUT]: 'Network timeout. Retrying automatically...',
+  [DeploymentErrorCode.CONNECTION_RESET]: 'Connection was reset. Retrying...',
+  [DeploymentErrorCode.SERVICE_UNAVAILABLE]: 'GitHub service temporarily unavailable. Retrying...',
+  [DeploymentErrorCode.RATE_LIMIT_EXCEEDED]: 'GitHub rate limit reached. Waiting before retry...',
   [DeploymentErrorCode.SECONDARY_RATE_LIMIT]:
     'GitHub secondary rate limit hit. Please wait a moment.',
-  [DeploymentErrorCode.INVALID_CODE]:
-    'Generated code has errors. Please regenerate the server.',
+  [DeploymentErrorCode.INVALID_CODE]: 'Generated code has errors. Please regenerate the server.',
   [DeploymentErrorCode.COMPILATION_ERROR]:
     'Code compilation failed. Please check the generated code.',
-  [DeploymentErrorCode.MISSING_DEPENDENCIES]:
-    'Missing dependencies detected. Please regenerate.',
+  [DeploymentErrorCode.MISSING_DEPENDENCIES]: 'Missing dependencies detected. Please regenerate.',
   [DeploymentErrorCode.INVALID_SERVER_NAME]:
     'Invalid server name. Please use alphanumeric characters and hyphens.',
   [DeploymentErrorCode.AUTHENTICATION_FAILED]:
@@ -230,14 +224,9 @@ export const ERROR_USER_MESSAGES: Record<DeploymentErrorCode, string> = {
     'Insufficient GitHub permissions for this operation.',
   [DeploymentErrorCode.REPOSITORY_NAME_CONFLICT]:
     'Repository name already exists. Try a different name.',
-  [DeploymentErrorCode.GIST_NOT_FOUND]:
-    'Gist not found. It may have been deleted.',
-  [DeploymentErrorCode.REPOSITORY_NOT_FOUND]:
-    'Repository not found. It may have been deleted.',
-  [DeploymentErrorCode.UNKNOWN_ERROR]:
-    'An unexpected error occurred. Please try again.',
-  [DeploymentErrorCode.NO_FILES_TO_DEPLOY]:
-    'No files to deploy. Please generate the server first.',
-  [DeploymentErrorCode.CONVERSATION_NOT_FOUND]:
-    'Conversation not found.',
+  [DeploymentErrorCode.GIST_NOT_FOUND]: 'Gist not found. It may have been deleted.',
+  [DeploymentErrorCode.REPOSITORY_NOT_FOUND]: 'Repository not found. It may have been deleted.',
+  [DeploymentErrorCode.UNKNOWN_ERROR]: 'An unexpected error occurred. Please try again.',
+  [DeploymentErrorCode.NO_FILES_TO_DEPLOY]: 'No files to deploy. Please generate the server first.',
+  [DeploymentErrorCode.CONVERSATION_NOT_FOUND]: 'Conversation not found.',
 };

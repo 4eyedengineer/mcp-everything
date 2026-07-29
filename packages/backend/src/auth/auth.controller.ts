@@ -1,13 +1,4 @@
-import {
-  Controller,
-  Post,
-  Get,
-  Body,
-  Res,
-  UseGuards,
-  HttpCode,
-  HttpStatus,
-} from '@nestjs/common';
+import { Controller, Post, Get, Body, Res, UseGuards, HttpCode, HttpStatus } from '@nestjs/common';
 import {
   ApiTags,
   ApiOperation,
@@ -75,10 +66,7 @@ export class AuthController {
   })
   @ApiResponse({ status: 401, description: 'Invalid credentials' })
   @ApiResponse({ status: 429, description: 'Too many requests' })
-  async login(
-    @CurrentUser() user: User,
-    @Body() _dto: LoginDto,
-  ): Promise<TokenResponseDto> {
+  async login(@CurrentUser() user: User, @Body() _dto: LoginDto): Promise<TokenResponseDto> {
     // LocalAuthGuard already validated the user
     return this.authService.validateUser(user);
   }
@@ -209,10 +197,7 @@ export class AuthController {
   @Public()
   @UseGuards(GitHubAuthGuard)
   @ApiExcludeEndpoint()
-  async githubAuthCallback(
-    @CurrentUser() profile: GitHubProfile,
-    @Res() res: Response,
-  ) {
+  async githubAuthCallback(@CurrentUser() profile: GitHubProfile, @Res() res: Response) {
     const tokens = await this.authService.validateOAuthUser({
       provider: 'github',
       providerId: profile.id,
@@ -243,10 +228,7 @@ export class AuthController {
   @Public()
   @UseGuards(GoogleAuthGuard)
   @ApiExcludeEndpoint()
-  async googleAuthCallback(
-    @CurrentUser() profile: GoogleProfile,
-    @Res() res: Response,
-  ) {
+  async googleAuthCallback(@CurrentUser() profile: GoogleProfile, @Res() res: Response) {
     const tokens = await this.authService.validateOAuthUser({
       provider: 'google',
       providerId: profile.id,

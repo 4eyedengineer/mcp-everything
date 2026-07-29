@@ -1,7 +1,11 @@
 import { Injectable, Logger, ForbiddenException, Inject, forwardRef } from '@nestjs/common';
 import { UserService } from '../../user/user.service';
 import { DeploymentOrchestratorService } from '../deployment.service';
-import { DeploymentResult, DeploymentOptions, EnterpriseDeploymentOptions } from '../types/deployment.types';
+import {
+  DeploymentResult,
+  DeploymentOptions,
+  EnterpriseDeploymentOptions,
+} from '../types/deployment.types';
 import { UserTier, TIER_CONFIG, TIER_DISPLAY_NAMES } from '../../subscription/tier-config';
 
 export interface TierRestrictedDeploymentOptions extends DeploymentOptions {
@@ -64,7 +68,8 @@ export class DeploymentRouterService {
     }
 
     // 3. Determine deployment type
-    const requestedType = options.deploymentType || this.getDefaultDeploymentType(user.tier as UserTier);
+    const requestedType =
+      options.deploymentType || this.getDefaultDeploymentType(user.tier as UserTier);
 
     // 4. Validate deployment type for tier
     if (!tierConfig.deploymentTypes.includes(requestedType)) {
@@ -86,14 +91,20 @@ export class DeploymentRouterService {
     };
 
     // 6. Execute deployment based on type
+    // Ownership is recorded on the deployment row so later reads can be scoped
+    const owner = { userId, userTier: user.tier as 'free' | 'pro' | 'enterprise' };
     let result: DeploymentResult;
     try {
       switch (requestedType) {
         case 'gist':
-          result = await this.deploymentService.deployToGist(conversationId, deployOptions);
+          result = await this.deploymentService.deployToGist(conversationId, deployOptions, owner);
           break;
         case 'repo':
-          result = await this.deploymentService.deployToGitHub(conversationId, deployOptions);
+          result = await this.deploymentService.deployToGitHub(
+            conversationId,
+            deployOptions,
+            owner,
+          );
           break;
         case 'enterprise':
           const enterpriseOptions: EnterpriseDeploymentOptions = {
@@ -101,10 +112,13 @@ export class DeploymentRouterService {
             region: options.region,
             enableCdn: options.enableCdn,
           };
-          result = await this.deploymentService.deployToEnterprise(conversationId, enterpriseOptions);
+          result = await this.deploymentService.deployToEnterprise(
+            conversationId,
+            enterpriseOptions,
+          );
           break;
         default:
-          result = await this.deploymentService.deployToGist(conversationId, deployOptions);
+          result = await this.deploymentService.deployToGist(conversationId, deployOptions, owner);
       }
     } catch (error) {
       this.logger.error(`Deployment failed for user ${userId}: ${error.message}`);

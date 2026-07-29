@@ -7,15 +7,11 @@ import {
   RepositoryContext,
   DiscoveryConfig,
   DiscoveryMetadata,
-  ToolCategory,
   AiToolSuggestion,
   AiQualityJudgment,
   ToolQuality,
   ImplementationHints,
   JsonSchema,
-  ToolDiscoveryError,
-  DiscoveryMethod,
-  COMMON_TOOL_TEMPLATES
 } from './types/tool-discovery.types';
 import { RepositoryAnalysis, ApiPattern } from './types/github-analysis.types';
 
@@ -28,7 +24,7 @@ export class ToolDiscoveryService implements IToolDiscoveryService {
     qualityThreshold: 0.7,
     maxToolsPerCategory: 5,
     preferredCategories: ['data', 'api', 'analysis', 'utility'],
-    complexityBias: 'balanced'
+    complexityBias: 'balanced',
   };
 
   constructor(private conversationService: ConversationService) {}
@@ -38,7 +34,7 @@ export class ToolDiscoveryService implements IToolDiscoveryService {
    */
   async discoverTools(
     analysis: RepositoryAnalysis,
-    config: DiscoveryConfig = this.defaultConfig
+    config: DiscoveryConfig = this.defaultConfig,
   ): Promise<ToolDiscoveryResult> {
     const startTime = Date.now();
     this.logger.log(`Starting tool discovery for ${analysis.metadata.fullName}`);
@@ -67,7 +63,7 @@ export class ToolDiscoveryService implements IToolDiscoveryService {
           candidateTool,
           context,
           config.qualityThreshold,
-          config.maxIterations - iterationCount
+          config.maxIterations - iterationCount,
         );
 
         if (validatedTool && validatedTool.quality.overallScore >= config.qualityThreshold) {
@@ -86,17 +82,18 @@ export class ToolDiscoveryService implements IToolDiscoveryService {
         aiReasoning: 'Used multi-method discovery with AI validation',
         processingTime: Date.now() - startTime,
         iterationCount,
-        qualityThreshold: config.qualityThreshold
+        qualityThreshold: config.qualityThreshold,
       };
 
-      this.logger.log(`Discovered ${finalTools.length} high-quality tools in ${metadata.processingTime}ms`);
+      this.logger.log(
+        `Discovered ${finalTools.length} high-quality tools in ${metadata.processingTime}ms`,
+      );
 
       return {
         success: true,
         tools: finalTools,
-        metadata
+        metadata,
       };
-
     } catch (error) {
       this.logger.error(`Tool discovery failed: ${error.message}`);
       return {
@@ -108,9 +105,9 @@ export class ToolDiscoveryService implements IToolDiscoveryService {
           aiReasoning: 'Discovery failed due to error',
           processingTime: Date.now() - startTime,
           iterationCount: 0,
-          qualityThreshold: config.qualityThreshold
+          qualityThreshold: config.qualityThreshold,
         },
-        error: error.message
+        error: error.message,
       };
     }
   }
@@ -157,7 +154,10 @@ export class ToolDiscoveryService implements IToolDiscoveryService {
 
     try {
       const response = await this.callAnthropicForTools(prompt);
-      const suggestions = this.parseJsonWithFallback(response, 'README analysis') as AiToolSuggestion;
+      const suggestions = this.parseJsonWithFallback(
+        response,
+        'README analysis',
+      ) as AiToolSuggestion;
 
       if (!suggestions || !suggestions.tools) {
         this.logger.warn('No valid tools returned from README analysis');
@@ -216,12 +216,18 @@ export class ToolDiscoveryService implements IToolDiscoveryService {
   /**
    * Use AI to judge if a tool is useful/valid
    */
-  async judgeToolQuality(tool: Partial<McpTool>, context: RepositoryContext): Promise<AiQualityJudgment> {
+  async judgeToolQuality(
+    tool: Partial<McpTool>,
+    context: RepositoryContext,
+  ): Promise<AiQualityJudgment> {
     const prompt = this.buildQualityJudgePrompt(tool, context);
 
     try {
       const response = await this.callAnthropicForJudge(prompt);
-      const judgment = this.parseJsonWithFallback(response, 'quality judgment') as AiQualityJudgment;
+      const judgment = this.parseJsonWithFallback(
+        response,
+        'quality judgment',
+      ) as AiQualityJudgment;
 
       if (!judgment || !judgment.quality) {
         throw new Error('Invalid judgment structure returned');
@@ -240,10 +246,10 @@ export class ToolDiscoveryService implements IToolDiscoveryService {
           implementability: 0.1,
           uniqueness: 0.1,
           overallScore: 0.1,
-          reasoning: 'Failed to evaluate due to error'
+          reasoning: 'Failed to evaluate due to error',
         },
         feedback: 'Could not evaluate tool quality',
-        suggestedImprovements: []
+        suggestedImprovements: [],
       };
     }
   }
@@ -255,7 +261,7 @@ export class ToolDiscoveryService implements IToolDiscoveryService {
     tool: Partial<McpTool>,
     context: RepositoryContext,
     qualityThreshold: number,
-    maxIterations: number
+    maxIterations: number,
   ): Promise<McpTool | null> {
     let currentTool = tool;
     let iteration = 0;
@@ -288,13 +294,16 @@ export class ToolDiscoveryService implements IToolDiscoveryService {
   private async regenerateToolWithFeedback(
     tool: Partial<McpTool>,
     feedback: string,
-    context: RepositoryContext
+    context: RepositoryContext,
   ): Promise<Partial<McpTool>> {
     const prompt = this.buildRegenerationPrompt(tool, feedback, context);
 
     try {
       const response = await this.callAnthropicForTools(prompt);
-      const suggestions = this.parseJsonWithFallback(response, 'tool regeneration') as AiToolSuggestion;
+      const suggestions = this.parseJsonWithFallback(
+        response,
+        'tool regeneration',
+      ) as AiToolSuggestion;
 
       if (suggestions && suggestions.tools && suggestions.tools.length > 0) {
         return suggestions.tools[0];
@@ -312,13 +321,16 @@ export class ToolDiscoveryService implements IToolDiscoveryService {
    */
   private async generateToolsFromAnalysis(
     analysis: RepositoryAnalysis,
-    context: RepositoryContext
+    context: RepositoryContext,
   ): Promise<Partial<McpTool>[]> {
     const prompt = this.buildComprehensiveAnalysisPrompt(analysis, context);
 
     try {
       const response = await this.callAnthropicForTools(prompt);
-      const suggestions = this.parseJsonWithFallback(response, 'comprehensive analysis') as AiToolSuggestion;
+      const suggestions = this.parseJsonWithFallback(
+        response,
+        'comprehensive analysis',
+      ) as AiToolSuggestion;
 
       if (!suggestions || !suggestions.tools) {
         this.logger.warn('No valid tools returned from comprehensive analysis');
@@ -347,8 +359,12 @@ export class ToolDiscoveryService implements IToolDiscoveryService {
     else repositoryType = 'library';
 
     // Determine complexity
-    const complexity = analysis.sourceFiles.length > 50 ? 'complex' :
-                      analysis.sourceFiles.length > 10 ? 'medium' : 'simple';
+    const complexity =
+      analysis.sourceFiles.length > 50
+        ? 'complex'
+        : analysis.sourceFiles.length > 10
+          ? 'medium'
+          : 'simple';
 
     // Infer domain from languages and frameworks
     const domain = this.inferDomain(primaryLanguage, frameworks);
@@ -358,7 +374,7 @@ export class ToolDiscoveryService implements IToolDiscoveryService {
       frameworks,
       repositoryType,
       complexity,
-      domain
+      domain,
     };
   }
 
@@ -370,9 +386,9 @@ export class ToolDiscoveryService implements IToolDiscoveryService {
     const mobileFrameworks = ['react-native', 'flutter', 'ionic'];
     const mlFrameworks = ['tensorflow', 'pytorch', 'scikit-learn'];
 
-    if (frameworks.some(f => webFrameworks.includes(f.toLowerCase()))) return 'web';
-    if (frameworks.some(f => mobileFrameworks.includes(f.toLowerCase()))) return 'mobile';
-    if (frameworks.some(f => mlFrameworks.includes(f.toLowerCase()))) return 'ml';
+    if (frameworks.some((f) => webFrameworks.includes(f.toLowerCase()))) return 'web';
+    if (frameworks.some((f) => mobileFrameworks.includes(f.toLowerCase()))) return 'mobile';
+    if (frameworks.some((f) => mlFrameworks.includes(f.toLowerCase()))) return 'ml';
     if (language.toLowerCase() === 'python') return 'data';
 
     return 'general';
@@ -502,9 +518,9 @@ JSON response:`;
   }
 
   private buildApiMappingPrompt(apiPatterns: ApiPattern[], context: RepositoryContext): string {
-    const patternsText = apiPatterns.map(p =>
-      `${p.type}: ${p.endpoints.slice(0, 3).join(', ')} (${p.methods.join(', ')})`
-    ).join(' | ');
+    const patternsText = apiPatterns
+      .map((p) => `${p.type}: ${p.endpoints.slice(0, 3).join(', ')} (${p.methods.join(', ')})`)
+      .join(' | ');
 
     return `Convert API patterns to MCP tools. JSON response only.
 
@@ -580,13 +596,13 @@ EXACT JSON response format:
   "suggestedImprovements": ["specific improvement 1", "specific improvement 2"]
 }
 
-JSON judgment:`
+JSON judgment:`;
   }
 
   private buildRegenerationPrompt(
     tool: Partial<McpTool>,
     feedback: string,
-    context: RepositoryContext
+    context: RepositoryContext,
   ): string {
     return `Improve MCP tool based on feedback. JSON only.
 
@@ -634,7 +650,7 @@ JSON response:`;
 
   private buildComprehensiveAnalysisPrompt(
     analysis: RepositoryAnalysis,
-    context: RepositoryContext
+    context: RepositoryContext,
   ): string {
     const features = Object.entries(analysis.features)
       .filter(([_, value]) => value === true)
@@ -803,7 +819,7 @@ JSON response:`;
 
       // Try basic fixes on the already-cleaned JSON
       try {
-        let fixed = cleanedJson
+        const fixed = cleanedJson
           .replace(/,\s*([}\]])/g, '$1') // Remove trailing commas
           .replace(/([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*):/g, '$1"$2":') // Quote keys
           .replace(/:\s*'([^']*)'/g, ': "$1"'); // Fix single quotes
@@ -829,16 +845,16 @@ JSON response:`;
           implementability: 0.1,
           uniqueness: 0.1,
           overallScore: 0.1,
-          reasoning: `JSON parsing failed in ${context}`
+          reasoning: `JSON parsing failed in ${context}`,
         },
         feedback: 'Could not parse AI response',
-        suggestedImprovements: ['Fix response format']
+        suggestedImprovements: ['Fix response format'],
       };
     } else {
       return {
         tools: [],
         reasoning: `JSON parsing failed in ${context}`,
-        confidence: 0.0
+        confidence: 0.0,
       };
     }
   }
@@ -854,13 +870,13 @@ JSON response:`;
 
   private async convertSuggestionToTool(
     suggestion: Partial<McpTool>,
-    context: RepositoryContext
+    _context: RepositoryContext,
   ): Promise<McpTool> {
     // Fill in any missing fields with defaults
     const defaultSchema: JsonSchema = {
       type: 'object',
       properties: {},
-      required: []
+      required: [],
     };
 
     const defaultHints: ImplementationHints = {
@@ -870,7 +886,7 @@ JSON response:`;
       complexity: 'simple',
       outputFormat: 'text',
       errorHandling: [],
-      examples: []
+      examples: [],
     };
 
     const defaultQuality: ToolQuality = {
@@ -879,7 +895,7 @@ JSON response:`;
       implementability: 0.5,
       uniqueness: 0.5,
       overallScore: 0.5,
-      reasoning: 'Default quality assessment'
+      reasoning: 'Default quality assessment',
     };
 
     return {
@@ -888,7 +904,7 @@ JSON response:`;
       category: suggestion.category!,
       inputSchema: suggestion.inputSchema || defaultSchema,
       implementationHints: suggestion.implementationHints || defaultHints,
-      quality: suggestion.quality || defaultQuality
+      quality: suggestion.quality || defaultQuality,
     };
   }
 }

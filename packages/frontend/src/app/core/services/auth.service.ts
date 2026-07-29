@@ -3,8 +3,7 @@ import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { Router } from '@angular/router';
 import { BehaviorSubject, Observable, throwError } from 'rxjs';
 import { tap, catchError } from 'rxjs/operators';
-import { environment } from '../../../environments/environment';
-import { StateManagementService } from './state-management.service';
+import { API_V1_BASE } from '../config/api.config';
 
 export interface User {
   id: string;
@@ -50,7 +49,7 @@ const REFRESH_TOKEN_KEY = 'mcp-refresh-token';
   providedIn: 'root'
 })
 export class AuthService {
-  private readonly apiUrl = environment.apiUrl;
+  private readonly apiUrl = API_V1_BASE;
   private currentUserSubject = new BehaviorSubject<User | null>(null);
   private isAuthenticatedSubject = new BehaviorSubject<boolean>(false);
   private isLoadingSubject = new BehaviorSubject<boolean>(true);
@@ -61,8 +60,7 @@ export class AuthService {
 
   constructor(
     private http: HttpClient,
-    private router: Router,
-    private stateService: StateManagementService
+    private router: Router
   ) {
     this.checkStoredToken();
   }
@@ -94,7 +92,6 @@ export class AuthService {
     this.clearTokens();
     this.currentUserSubject.next(null);
     this.isAuthenticatedSubject.next(false);
-    this.stateService.setAuthenticated(false, null);
     this.router.navigate(['/auth/login']);
   }
 
@@ -123,7 +120,7 @@ export class AuthService {
     return this.http.get<User>(`${this.apiUrl}/auth/me`).pipe(
       tap(user => {
         this.currentUserSubject.next(user);
-        this.stateService.setAuthenticated(true, user);
+        this.isAuthenticatedSubject.next(true);
       }),
       catchError(error => this.handleError(error))
     );
@@ -203,7 +200,6 @@ export class AuthService {
     this.setTokens(response.accessToken, response.refreshToken);
     this.currentUserSubject.next(response.user);
     this.isAuthenticatedSubject.next(true);
-    this.stateService.setAuthenticated(true, response.user);
   }
 
   /**

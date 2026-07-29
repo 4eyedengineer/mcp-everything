@@ -2,12 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
-import {
-  HealthResponse,
-  ServiceHealth,
-  HealthChecks,
-  OverallStatus,
-} from './health.types';
+import { HealthResponse, ServiceHealth, HealthChecks, OverallStatus } from './health.types';
 
 @Injectable()
 export class HealthService {
@@ -248,9 +243,7 @@ export class HealthService {
     }
 
     // Check for any degraded services
-    const hasDegrade = Object.values(checks).some(
-      (check) => check.status === 'degraded',
-    );
+    const hasDegrade = Object.values(checks).some((check) => check.status === 'degraded');
     if (hasDegrade) {
       return 'degraded';
     }

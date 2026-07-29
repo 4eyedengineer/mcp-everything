@@ -15,11 +15,7 @@ import { MarketplaceService } from './marketplace.service';
 import { CreateServerDto } from './dto/create-server.dto';
 import { UpdateServerDto } from './dto/update-server.dto';
 import { SearchServersDto, PaginatedResponse } from './dto/search-servers.dto';
-import {
-  ServerResponse,
-  ServerSummaryResponse,
-  CategoryResponse,
-} from './dto/server-response.dto';
+import { ServerResponse, ServerSummaryResponse, CategoryResponse } from './dto/server-response.dto';
 import { User } from '../database/entities/user.entity';
 import { Public } from '../auth/decorators/public.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -48,9 +44,7 @@ export class MarketplaceController {
    */
   @Public()
   @Get('servers/featured')
-  async getFeaturedServers(
-    @Query('limit') limit?: number,
-  ): Promise<ServerSummaryResponse[]> {
+  async getFeaturedServers(@Query('limit') limit?: number): Promise<ServerSummaryResponse[]> {
     return this.marketplaceService.getFeatured(limit || 10);
   }
 
@@ -60,9 +54,7 @@ export class MarketplaceController {
    */
   @Public()
   @Get('servers/popular')
-  async getPopularServers(
-    @Query('limit') limit?: number,
-  ): Promise<ServerSummaryResponse[]> {
+  async getPopularServers(@Query('limit') limit?: number): Promise<ServerSummaryResponse[]> {
     return this.marketplaceService.getPopular(limit || 10);
   }
 
@@ -72,9 +64,7 @@ export class MarketplaceController {
    */
   @Public()
   @Get('servers/recent')
-  async getRecentServers(
-    @Query('limit') limit?: number,
-  ): Promise<ServerSummaryResponse[]> {
+  async getRecentServers(@Query('limit') limit?: number): Promise<ServerSummaryResponse[]> {
     return this.marketplaceService.getRecent(limit || 10);
   }
 
@@ -105,9 +95,7 @@ export class MarketplaceController {
   @Public()
   @Post('servers/:id/download')
   @HttpCode(HttpStatus.OK)
-  async recordDownload(
-    @Param('id', ParseUUIDPipe) id: string,
-  ): Promise<{ success: boolean }> {
+  async recordDownload(@Param('id', ParseUUIDPipe) id: string): Promise<{ success: boolean }> {
     await this.marketplaceService.incrementDownloadCount(id);
     return { success: true };
   }

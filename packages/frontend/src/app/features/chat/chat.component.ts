@@ -1,7 +1,6 @@
 import { Component, OnInit, OnDestroy, NgZone } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { HttpClient } from '@angular/common/http';
 import { ActivatedRoute, Router } from '@angular/router';
 import { MatCardModule } from '@angular/material/card';
 import { MatButtonModule } from '@angular/material/button';
@@ -17,10 +16,10 @@ import { ChatService, ChatMessage } from '../../core/services/chat.service';
 import { ConversationService, Deployment } from '../../core/services/conversation.service';
 import { DeploymentService, DeploymentResponse, ValidationResponse } from '../../core/services/deployment.service';
 import { HostingApiService } from '../../core/services/hosting-api.service';
+import { SessionService } from '../../core/services/session.service';
 import { SafeMarkdownPipe } from '../../shared/pipes/safe-markdown.pipe';
 import { DeployModalComponent, DeployModalResult } from './components/deploy-modal/deploy-modal.component';
 import { DeployProgressComponent, DeploymentCompleteEvent } from './components/deploy-progress/deploy-progress.component';
-import { v4 as uuidv4 } from 'uuid';
 import { Subscription } from 'rxjs';
 import * as JSZip from 'jszip';
 
@@ -88,7 +87,7 @@ export class ChatComponent implements OnInit, OnDestroy {
     private conversationService: ConversationService,
     private deploymentService: DeploymentService,
     private hostingApiService: HostingApiService,
-    private http: HttpClient,
+    private sessionService: SessionService,
     private route: ActivatedRoute,
     private router: Router,
     private zone: NgZone,
@@ -96,7 +95,7 @@ export class ChatComponent implements OnInit, OnDestroy {
     private dialog: MatDialog
   ) {
     // Generate or restore session ID
-    this.sessionId = this.getOrCreateSessionId();
+    this.sessionId = this.sessionService.getOrCreateSessionId();
   }
 
   ngOnInit(): void {
@@ -162,19 +161,27 @@ export class ChatComponent implements OnInit, OnDestroy {
     });
   }
 
-  private getOrCreateSessionId(): string {
-    const stored = localStorage.getItem('mcp-session-id');
-    if (stored) {
-      return stored;
-    }
-    const newId = uuidv4();
-    localStorage.setItem('mcp-session-id', newId);
-    return newId;
+  /**
+   * Open the SSE stream for the current session.
+   *
+   * Tickets are single-use and short-lived (60s TTL), so a fresh ticket is
+   * requested each time we (re)connect - including on reconnect after an
+   * error - rather than reusing a previously issued ticket.
+   */
+  private connectToSSE(): void {
+    this.chatService.getStreamTicket(this.sessionId).subscribe({
+      next: ({ ticket }) => this.openEventSource(ticket),
+      error: (error) => {
+        console.error('Failed to obtain SSE stream ticket:', error);
+        // Retry after a delay
+        setTimeout(() => this.connectToSSE(), 5000);
+      }
+    });
   }
 
-  private connectToSSE(): void {
-    const apiUrl = 'http://localhost:3000';
-    this.eventSource = new EventSource(`${apiUrl}/api/chat/stream/${this.sessionId}`);
+  private openEventSource(ticket: string): void {
+    this.disconnectFromSSE();
+    this.eventSource = new EventSource(this.chatService.getStreamUrl(this.sessionId, ticket));
 
     this.eventSource.onmessage = (event) => {
       this.zone.run(() => {
@@ -192,12 +199,9 @@ export class ChatComponent implements OnInit, OnDestroy {
     this.eventSource.onerror = (error) => {
       this.zone.run(() => {
         console.error('SSE connection error:', error);
-        // Attempt to reconnect after 5 seconds
-        setTimeout(() => {
-          if (this.eventSource?.readyState === EventSource.CLOSED) {
-            this.connectToSSE();
-          }
-        }, 5000);
+        this.disconnectFromSSE();
+        // Tickets are single-use - fetch a fresh one before reconnecting
+        setTimeout(() => this.connectToSSE(), 5000);
       });
     };
 
@@ -320,13 +324,8 @@ export class ChatComponent implements OnInit, OnDestroy {
     this.isLoading = true;
 
     // Send to new LangGraph API
-    const apiUrl = 'http://localhost:3000';
-    this.http.post(`${apiUrl}/api/chat/message`, {
-      message: messageToSend,
-      sessionId: this.sessionId,
-      conversationId: this.conversationId
-    }).subscribe({
-      next: (response: any) => {
+    this.chatService.sendMessage(messageToSend, this.sessionId, this.conversationId).subscribe({
+      next: (response) => {
         console.log('Message sent successfully', response);
         // Response will come through SSE stream
       },
@@ -509,8 +508,8 @@ export class ChatComponent implements OnInit, OnDestroy {
   }
 
   clearSession(): void {
-    localStorage.removeItem('mcp-session-id');
-    this.sessionId = this.getOrCreateSessionId();
+    this.sessionService.clearSessionId();
+    this.sessionId = this.sessionService.getOrCreateSessionId();
     this.conversationId = undefined;
     this.latestDeployment = null;
     this.messages = [];

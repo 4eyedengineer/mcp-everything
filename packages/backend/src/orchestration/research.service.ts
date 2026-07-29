@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { ChatAnthropic } from '@langchain/anthropic';
+import * as z from 'zod/v4';
 import { GitHubAnalysisService } from '../github-analysis.service';
 import axios from 'axios';
 // import { ResearchCacheService } from '../database/services/research-cache.service'; // TODO: Implement caching
@@ -11,16 +11,90 @@ import {
   SynthesizedPlan,
 } from './types';
 import { getPlatformContextPrompt } from './platform-context';
-import { safeParseJSON, safeParseJSONArray } from './json-utils';
+import { AnthropicService } from '../ai/anthropic.service';
+
+/**
+ * Output contracts for every AI call in this service. These are handed to the
+ * Anthropic API as JSON Schemas (structured outputs) and re-validated locally,
+ * which replaces the old "return ONLY JSON" + bracket-balancing parse.
+ */
+const InputClassificationSchema = z.object({
+  type: z.enum(['SERVICE_NAME', 'NATURAL_LANGUAGE']),
+  confidence: z.number(),
+  serviceName: z.string().nullable().optional(),
+  intent: z.string().nullable().optional(),
+  keywords: z.array(z.string()).optional(),
+});
+
+const WebSearchSynthesisSchema = z.object({
+  baseUrl: z.string().nullable().optional(),
+  authentication: z
+    .object({
+      type: z.string().nullable().optional(),
+      details: z.string().nullable().optional(),
+    })
+    .nullable()
+    .optional(),
+  endpoints: z.array(z.string()).optional(),
+  rateLimit: z.string().nullable().optional(),
+  bestPractices: z.array(z.string()).optional(),
+});
+
+const ApiDocExtractionSchema = z.object({
+  baseUrl: z.string().nullable().optional(),
+  authentication: z
+    .object({
+      type: z.string(),
+      header: z.string().nullable().optional(),
+      details: z.string().nullable().optional(),
+    })
+    .nullable()
+    .optional(),
+  endpoints: z
+    .array(
+      z.object({
+        method: z.string(),
+        path: z.string(),
+        description: z.string().nullable().optional(),
+      }),
+    )
+    .optional(),
+  rateLimit: z
+    .object({
+      requests: z.number(),
+      window: z.string(),
+    })
+    .nullable()
+    .optional(),
+});
+
+const ServiceIdentificationSchema = z.object({
+  services: z.array(
+    z.object({
+      name: z.string(),
+      confidence: z.number(),
+      reasoning: z.string().nullable().optional(),
+    }),
+  ),
+});
+
+const SynthesizedPlanSchema = z.object({
+  summary: z.string(),
+  keyInsights: z.array(z.string()),
+  recommendedApproach: z.string(),
+  potentialChallenges: z.array(z.string()),
+  confidence: z.number(),
+  reasoning: z.string(),
+});
 
 /**
  * Input Type Classification
  */
 export enum InputType {
-  GITHUB_URL = 'github_url',           // https://github.com/owner/repo
-  WEBSITE_URL = 'website_url',         // https://stripe.com
+  GITHUB_URL = 'github_url', // https://github.com/owner/repo
+  WEBSITE_URL = 'website_url', // https://stripe.com
   DOCUMENTATION_URL = 'documentation_url', // https://docs.stripe.com/api
-  SERVICE_NAME = 'service_name',       // "Stripe API", "OpenAI"
+  SERVICE_NAME = 'service_name', // "Stripe API", "OpenAI"
   NATURAL_LANGUAGE = 'natural_language', // "I want to process payments"
 }
 
@@ -53,30 +127,19 @@ export interface InputClassification {
  *    - webSearchAgent: Search for MCP patterns
  *    - deepGitHubAnalysis: Extract code examples, test patterns
  *    - apiDocumentationAgent: Parse API docs
- * 3. AI synthesis: Claude Haiku combines all sources
+ * 3. AI synthesis: the configured Claude model combines all sources
  * 4. Cache results for 7 days with vector embedding
  * 5. Return research phase data
  */
 @Injectable()
 export class ResearchService {
   private readonly logger = new Logger(ResearchService.name);
-  private readonly llm: ChatAnthropic;
 
   constructor(
     private readonly githubAnalysisService: GitHubAnalysisService,
+    private readonly anthropic: AnthropicService,
     // private readonly researchCacheService: ResearchCacheService, // TODO: Implement caching
-  ) {
-    // Initialize Claude Haiku for cost-effective research synthesis
-    // streaming: true is required by the Anthropic API configuration (Issue #142)
-    this.llm = new ChatAnthropic({
-      modelName: 'claude-haiku-4-5-20251001',
-      temperature: 0.7,
-      topP: undefined, // Fix for @langchain/anthropic bug sending top_p: -1
-      maxTokens: 16000, // Generous limit for research synthesis
-      anthropicApiKey: process.env.ANTHROPIC_API_KEY,
-      streaming: true,
-    });
-  }
+  ) {}
 
   /**
    * Conduct comprehensive research on ANY input
@@ -107,7 +170,9 @@ export class ResearchService {
 
     // Step 1: Classify input type
     const classification = await this.classifyInput(userInput, state);
-    this.logger.log(`Input classified as: ${classification.type} (confidence: ${classification.confidence})`);
+    this.logger.log(
+      `Input classified as: ${classification.type} (confidence: ${classification.confidence})`,
+    );
 
     // Step 2: Route to appropriate research strategy based on input type
     const researchPhase = await this.routeResearchStrategy(classification, state);
@@ -131,7 +196,7 @@ export class ResearchService {
    * @param state - Graph state for additional context
    * @returns Input classification with confidence score
    */
-  private async classifyInput(userInput: string, state: GraphState): Promise<InputClassification> {
+  private async classifyInput(userInput: string, _state: GraphState): Promise<InputClassification> {
     // Quick pattern matching for URLs
     const githubUrlMatch = userInput.match(/github\.com\/([^\/]+)\/([^\/\s]+)/);
     if (githubUrlMatch) {
@@ -177,25 +242,23 @@ User input: "${userInput}"
 SERVICE_NAME examples: "Stripe API", "OpenAI", "AWS S3", "Twilio", "Salesforce"
 NATURAL_LANGUAGE examples: "I want to process payments", "help me send SMS", "integrate with CRM"
 
-Return ONLY valid JSON:
-{
-  "type": "SERVICE_NAME" | "NATURAL_LANGUAGE",
-  "confidence": 0.0-1.0,
-  "serviceName": "extracted service name if applicable",
-  "intent": "user's intent in one sentence",
-  "keywords": ["keyword1", "keyword2", ...]
-}`;
+Provide:
+- type: SERVICE_NAME or NATURAL_LANGUAGE
+- confidence: 0.0-1.0
+- serviceName: extracted service name if applicable
+- intent: user's intent in one sentence
+- keywords: relevant keywords`;
 
     try {
-      const response = await this.llm.invoke(prompt);
-      const content = response.content.toString();
-      const result = safeParseJSON<{
-        type: string;
-        confidence: number;
-        serviceName?: string;
-        intent: string;
-        keywords: string[];
-      }>(content, this.logger);
+      // Cheap classification -> small model.
+      const result = await this.anthropic.completeStructured({
+        prompt,
+        schema: InputClassificationSchema,
+        schemaName: 'InputClassification',
+        model: 'small',
+        maxTokens: 1024,
+        caller: 'research.classifyInput',
+      });
       return {
         type: result.type === 'SERVICE_NAME' ? InputType.SERVICE_NAME : InputType.NATURAL_LANGUAGE,
         confidence: result.confidence,
@@ -206,13 +269,15 @@ Return ONLY valid JSON:
         },
       };
     } catch (error) {
-      this.logger.warn(`Failed to classify input with AI: ${error.message}, defaulting to NATURAL_LANGUAGE`);
+      this.logger.warn(
+        `Failed to classify input with AI: ${error.message}, defaulting to NATURAL_LANGUAGE`,
+      );
       return {
         type: InputType.NATURAL_LANGUAGE,
         confidence: 0.5,
         extractedInfo: {
           intent: userInput,
-          keywords: userInput.split(/\s+/).filter(w => w.length > 3),
+          keywords: userInput.split(/\s+/).filter((w) => w.length > 3),
         },
       };
     }
@@ -455,7 +520,9 @@ Return ONLY valid JSON:
 
     // Research the top identified service
     const topService = services[0];
-    this.logger.log(`Identified service: ${topService.name} (confidence: ${topService.confidence})`);
+    this.logger.log(
+      `Identified service: ${topService.name} (confidence: ${topService.confidence})`,
+    );
 
     // Use service name strategy
     const classification2: InputClassification = {
@@ -479,7 +546,10 @@ Return ONLY valid JSON:
    * @param serviceName - Optional service name for targeted search
    * @returns Web search findings with patterns and best practices
    */
-  private async webSearchAgent(state: GraphState, serviceName?: string): Promise<WebSearchFindings> {
+  private async webSearchAgent(
+    state: GraphState,
+    serviceName?: string,
+  ): Promise<WebSearchFindings> {
     const targetName = serviceName || state.extractedData?.repositoryName || 'API';
     const language = state.extractedData?.targetFramework || 'TypeScript';
 
@@ -499,7 +569,7 @@ Return ONLY valid JSON:
 
     try {
       // Execute all queries in parallel
-      const searchPromises = queries.map(query =>
+      const searchPromises = queries.map((query) =>
         axios.post(
           'https://api.tavily.com/search',
           {
@@ -513,8 +583,8 @@ Return ONLY valid JSON:
           {
             headers: { 'Content-Type': 'application/json' },
             timeout: 10000,
-          }
-        )
+          },
+        ),
       );
 
       const searchResponses = await Promise.all(searchPromises);
@@ -541,7 +611,7 @@ Return ONLY valid JSON:
       // Extract unique results (top 10)
       const uniqueUrls = new Set<string>();
       const results = allResults
-        .filter(r => {
+        .filter((r) => {
           if (uniqueUrls.has(r.url)) return false;
           uniqueUrls.add(r.url);
           return true;
@@ -566,30 +636,24 @@ ${results.map((r, i) => `${i + 1}. [${r.title}](${r.url})\n   ${r.snippet}`).joi
 5. Common use cases
 6. MCP tool patterns and best practices
 
-**Output Format** (STRICT JSON):
-\`\`\`json
-{
-  "baseUrl": "https://api.example.com or null if not found",
-  "authentication": {
-    "type": "api_key|oauth|bearer_token|basic_auth",
-    "details": "How auth works based on docs"
-  },
-  "endpoints": ["endpoint1", "endpoint2", "..."],
-  "rateLimit": "Limit info or Unknown",
-  "bestPractices": ["practice1", "practice2", "..."]
-}
-\`\`\`
+**Provide**:
+- baseUrl: e.g. https://api.example.com, or null if not found
+- authentication: { type: api_key|oauth|bearer_token|basic_auth, details: how auth works }
+- endpoints: list of endpoint names
+- rateLimit: limit info or "Unknown"
+- bestPractices: list of practices`;
 
-Return ONLY valid JSON.`;
-
-      const synthesis = await this.llm.invoke(synthesisPrompt);
-      const synthesisContent = synthesis.content.toString();
-
-      let apiInfo: any = {};
+      let apiInfo: z.infer<typeof WebSearchSynthesisSchema> = {};
       try {
-        apiInfo = safeParseJSON(synthesisContent, this.logger);
+        apiInfo = await this.anthropic.completeStructured({
+          prompt: synthesisPrompt,
+          schema: WebSearchSynthesisSchema,
+          schemaName: 'WebSearchSynthesis',
+          maxTokens: 8000,
+          caller: 'research.webSearchSynthesis',
+        });
       } catch (e) {
-        this.logger.warn(`Failed to parse LLM synthesis: ${e.message}`);
+        this.logger.warn(`Failed to synthesize web search results: ${e.message}`);
       }
 
       // Build best practices from search results and synthesis
@@ -620,7 +684,7 @@ Return ONLY valid JSON.`;
 
       return {
         queries,
-        results: results.map(r => ({
+        results: results.map((r) => ({
           url: r.url,
           title: r.title,
           snippet: r.snippet,
@@ -648,7 +712,6 @@ Return ONLY valid JSON.`;
    * @returns Deep analysis with code examples and patterns
    */
   private async deepGitHubAnalysis(githubUrl: string): Promise<DeepGitHubAnalysis> {
-
     // Use existing GitHubAnalysisService for basic analysis
     const basicAnalysis = await this.githubAnalysisService.analyzeRepository(githubUrl);
 
@@ -675,7 +738,7 @@ Return ONLY valid JSON.`;
 
     this.logger.log(
       `Deep analysis complete: ${codeExamples.length} code examples, ` +
-      `${testPatterns.length} test patterns, ${apiUsagePatterns.length} API patterns`
+        `${testPatterns.length} test patterns, ${apiUsagePatterns.length} API patterns`,
     );
 
     return deepAnalysis;
@@ -718,7 +781,7 @@ Return ONLY valid JSON.`;
       // Add API patterns from source analysis
       if (analysis.apiPatterns && analysis.apiPatterns.length > 0) {
         const patterns = analysis.apiPatterns
-          .map(p => `- ${p.type}: ${p.endpoints.join(', ')}`)
+          .map((p) => `- ${p.type}: ${p.endpoints.join(', ')}`)
           .join('\n');
         contentParts.push(`## API Patterns Detected\n${patterns}`);
       }
@@ -726,19 +789,22 @@ Return ONLY valid JSON.`;
       // Add source file snippets (looking for API client code)
       if (analysis.sourceFiles && analysis.sourceFiles.length > 0) {
         const apiFiles = analysis.sourceFiles
-          .filter(f =>
-            f.path.includes('api') ||
-            f.path.includes('client') ||
-            f.path.includes('service') ||
-            f.content.includes('fetch(') ||
-            f.content.includes('axios') ||
-            f.content.includes('request(')
+          .filter(
+            (f) =>
+              f.path.includes('api') ||
+              f.path.includes('client') ||
+              f.path.includes('service') ||
+              f.content.includes('fetch(') ||
+              f.content.includes('axios') ||
+              f.content.includes('request('),
           )
           .slice(0, 3);
 
         for (const file of apiFiles) {
           const snippet = file.content.slice(0, 1500);
-          contentParts.push(`## ${file.path}\n\`\`\`${file.language || 'javascript'}\n${snippet}\n\`\`\``);
+          contentParts.push(
+            `## ${file.path}\n\`\`\`${file.language || 'javascript'}\n${snippet}\n\`\`\``,
+          );
         }
       }
 
@@ -765,56 +831,39 @@ ${contentParts.join('\n\n').slice(0, 10000)}
 3. API endpoints/operations from code or documentation
 4. Any rate limit information
 
-**Output Format** (STRICT JSON):
-\`\`\`json
-{
-  "baseUrl": "https://api.example.com or null",
-  "authentication": {
-    "type": "api_key|oauth|bearer_token|basic_auth|none|unknown",
-    "details": "How authentication works based on code/docs"
-  },
-  "endpoints": [
-    {
-      "method": "GET|POST|PUT|DELETE",
-      "path": "/endpoint/path",
-      "description": "What this endpoint does"
-    }
-  ],
-  "rateLimit": {
-    "requests": 0,
-    "window": "unknown"
-  }
-}
-\`\`\`
+**Provide**:
+- baseUrl: e.g. https://api.example.com, or null
+- authentication: { type: api_key|oauth|bearer_token|basic_auth|none|unknown, details: how auth works }
+- endpoints: [{ method, path, description }]
+- rateLimit: { requests, window } if documented`;
 
-Return ONLY valid JSON.`;
-
-      const result = await this.llm.invoke(prompt);
-      const content = result.content.toString();
-
-      const parsed = safeParseJSON<{
-        baseUrl?: string;
-        authentication?: { type: string; details?: string };
-        endpoints?: Array<{ method: string; path: string; description: string }>;
-        rateLimit?: { requests: number; window: string };
-      }>(content, this.logger);
+      const parsed = await this.anthropic.completeStructured({
+        prompt,
+        schema: ApiDocExtractionSchema,
+        schemaName: 'GitHubApiDocExtraction',
+        maxTokens: 8000,
+        caller: 'research.extractApiDocsFromGitHub',
+      });
 
       this.logger.log(`Extracted ${parsed.endpoints?.length || 0} endpoints from GitHub repo`);
 
       return {
-        endpoints: parsed.endpoints?.map(ep => ({
-          method: ep.method,
-          path: ep.path,
-          description: ep.description,
-        })) || [],
+        endpoints:
+          parsed.endpoints?.map((ep) => ({
+            method: ep.method,
+            path: ep.path,
+            description: ep.description,
+          })) || [],
         authentication: {
           type: parsed.authentication?.type || 'unknown',
           details: parsed.authentication?.details || 'Authentication details not extracted',
         },
-        rateLimit: parsed.rateLimit ? {
-          requests: parsed.rateLimit.requests,
-          window: parsed.rateLimit.window,
-        } : undefined,
+        rateLimit: parsed.rateLimit
+          ? {
+              requests: parsed.rateLimit.requests,
+              window: parsed.rateLimit.window,
+            }
+          : undefined,
         baseUrl: parsed.baseUrl || undefined,
       };
     } catch (error) {
@@ -845,7 +894,7 @@ Return ONLY valid JSON.`;
         timeout: 15000,
         headers: {
           'User-Agent': 'Mozilla/5.0 (compatible; MCPEverything/1.0; +https://mcp-everything.dev)',
-          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         },
       });
 
@@ -873,57 +922,39 @@ ${text}
 3. Main API endpoints with their HTTP methods and paths
 4. Rate limits if mentioned
 
-**Output Format** (STRICT JSON only):
-\`\`\`json
-{
-  "baseUrl": "https://api.example.com or null if not found",
-  "authentication": {
-    "type": "api_key|oauth|bearer_token|basic_auth|none|unknown",
-    "header": "Header name if applicable (e.g., 'Authorization', 'X-API-Key')",
-    "details": "Brief description of how auth works"
-  },
-  "endpoints": [
-    {
-      "method": "GET|POST|PUT|DELETE|PATCH",
-      "path": "/endpoint/path",
-      "description": "What this endpoint does"
-    }
-  ],
-  "rateLimit": {
-    "requests": 1000,
-    "window": "per minute|per hour|per day"
-  }
-}
-\`\`\`
+**Provide** (use null or empty values when information is unavailable):
+- baseUrl: e.g. https://api.example.com, or null if not found
+- authentication: { type: api_key|oauth|bearer_token|basic_auth|none|unknown, header: header name if applicable, details: how auth works }
+- endpoints: [{ method, path, description }]
+- rateLimit: { requests, window } e.g. { requests: 1000, window: "per minute" }`;
 
-Return ONLY valid JSON. If information is not available, use null or empty values.`;
-
-      const result = await this.llm.invoke(prompt);
-      const content = result.content.toString();
-
-      const parsed = safeParseJSON<{
-        baseUrl?: string;
-        authentication?: { type: string; header?: string; details?: string };
-        endpoints?: Array<{ method: string; path: string; description: string }>;
-        rateLimit?: { requests: number; window: string };
-      }>(content, this.logger);
+      const parsed = await this.anthropic.completeStructured({
+        prompt,
+        schema: ApiDocExtractionSchema,
+        schemaName: 'ApiDocExtraction',
+        maxTokens: 8000,
+        caller: 'research.scrapeApiDocumentation',
+      });
 
       this.logger.log(`Extracted ${parsed.endpoints?.length || 0} endpoints from ${url}`);
 
       return {
-        endpoints: parsed.endpoints?.map(ep => ({
-          method: ep.method,
-          path: ep.path,
-          description: ep.description,
-        })) || [],
+        endpoints:
+          parsed.endpoints?.map((ep) => ({
+            method: ep.method,
+            path: ep.path,
+            description: ep.description,
+          })) || [],
         authentication: {
           type: parsed.authentication?.type || 'unknown',
           details: parsed.authentication?.details || 'Authentication details not extracted',
         },
-        rateLimit: parsed.rateLimit ? {
-          requests: parsed.rateLimit.requests,
-          window: parsed.rateLimit.window,
-        } : undefined,
+        rateLimit: parsed.rateLimit
+          ? {
+              requests: parsed.rateLimit.requests,
+              window: parsed.rateLimit.window,
+            }
+          : undefined,
         baseUrl: parsed.baseUrl || undefined,
       };
     } catch (error) {
@@ -941,24 +972,26 @@ Return ONLY valid JSON. If information is not available, use null or empty value
    * @returns Plain text content
    */
   private htmlToText(html: string): string {
-    return html
-      // Remove script and style tags and their contents
-      .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
-      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
-      // Remove HTML comments
-      .replace(/<!--[\s\S]*?-->/g, '')
-      // Remove tags but keep content
-      .replace(/<[^>]+>/g, ' ')
-      // Decode common HTML entities
-      .replace(/&nbsp;/g, ' ')
-      .replace(/&amp;/g, '&')
-      .replace(/&lt;/g, '<')
-      .replace(/&gt;/g, '>')
-      .replace(/&quot;/g, '"')
-      .replace(/&#39;/g, "'")
-      // Normalize whitespace
-      .replace(/\s+/g, ' ')
-      .trim();
+    return (
+      html
+        // Remove script and style tags and their contents
+        .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+        .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+        // Remove HTML comments
+        .replace(/<!--[\s\S]*?-->/g, '')
+        // Remove tags but keep content
+        .replace(/<[^>]+>/g, ' ')
+        // Decode common HTML entities
+        .replace(/&nbsp;/g, ' ')
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'")
+        // Normalize whitespace
+        .replace(/\s+/g, ' ')
+        .trim()
+    );
   }
 
   /**
@@ -971,9 +1004,11 @@ Return ONLY valid JSON. If information is not available, use null or empty value
    * @param serviceName - Service name (e.g., "Stripe", "OpenAI")
    * @returns List of relevant GitHub repos sorted by stars
    */
-  private async findGitHubReposForService(serviceName: string): Promise<Array<{url: string; stars: number}>> {
+  private async findGitHubReposForService(
+    serviceName: string,
+  ): Promise<Array<{ url: string; stars: number }>> {
     this.logger.log(`Searching for GitHub repos: ${serviceName}`);
-    const repos: Array<{url: string; stars: number}> = [];
+    const repos: Array<{ url: string; stars: number }> = [];
 
     // 1. Search GitHub directly using GitHubAnalysisService's Octokit
     try {
@@ -996,10 +1031,10 @@ Return ONLY valid JSON. If information is not available, use null or empty value
       try {
         const searchResults = await this.tavilySearch(
           `${serviceName} official SDK GitHub repository`,
-          3
+          3,
         );
         for (const result of searchResults) {
-          if (result.url.includes('github.com') && !repos.some(r => r.url === result.url)) {
+          if (result.url.includes('github.com') && !repos.some((r) => r.url === result.url)) {
             repos.push({
               url: result.url,
               stars: 0, // Unknown from web search
@@ -1025,7 +1060,10 @@ Return ONLY valid JSON. If information is not available, use null or empty value
    * @param limit - Maximum number of results
    * @returns Array of repository info
    */
-  private async searchGitHubRepos(query: string, limit: number): Promise<Array<{url: string; stars: number; name: string}>> {
+  private async searchGitHubRepos(
+    query: string,
+    limit: number,
+  ): Promise<Array<{ url: string; stars: number; name: string }>> {
     const { Octokit } = await import('@octokit/rest');
     const octokit = new Octokit({
       auth: process.env.GITHUB_TOKEN,
@@ -1038,7 +1076,7 @@ Return ONLY valid JSON. If information is not available, use null or empty value
       per_page: limit,
     });
 
-    return response.data.items.map(repo => ({
+    return response.data.items.map((repo) => ({
       url: repo.html_url,
       stars: repo.stargazers_count,
       name: repo.full_name,
@@ -1054,7 +1092,9 @@ Return ONLY valid JSON. If information is not available, use null or empty value
    * @param serviceName - Service name (e.g., "Stripe API")
    * @returns Official documentation URL and description
    */
-  private async findOfficialDocumentation(serviceName: string): Promise<{url?: string; description?: string}> {
+  private async findOfficialDocumentation(
+    serviceName: string,
+  ): Promise<{ url?: string; description?: string }> {
     this.logger.log(`Finding official docs for: ${serviceName}`);
 
     if (!process.env.TAVILY_API_KEY) {
@@ -1123,7 +1163,11 @@ Return ONLY valid JSON. If information is not available, use null or empty value
       }
 
       // Check for common official patterns
-      if (domain.startsWith('developer.') || domain.startsWith('docs.') || domain.startsWith('api.')) {
+      if (
+        domain.startsWith('developer.') ||
+        domain.startsWith('docs.') ||
+        domain.startsWith('api.')
+      ) {
         return true;
       }
 
@@ -1162,7 +1206,7 @@ Return ONLY valid JSON. If information is not available, use null or empty value
    */
   private async tavilySearch(
     query: string,
-    maxResults: number = 5
+    maxResults: number = 5,
   ): Promise<Array<{ url: string; title: string; snippet: string; score: number }>> {
     const tavilyApiKey = process.env.TAVILY_API_KEY;
 
@@ -1184,7 +1228,7 @@ Return ONLY valid JSON. If information is not available, use null or empty value
         {
           headers: { 'Content-Type': 'application/json' },
           timeout: 10000,
-        }
+        },
       );
 
       if (!response.data?.results) {
@@ -1215,7 +1259,7 @@ Return ONLY valid JSON. If information is not available, use null or empty value
   private async identifyServicesFromIntent(
     intent: string,
     keywords: string[],
-  ): Promise<Array<{name: string; confidence: number}>> {
+  ): Promise<Array<{ name: string; confidence: number }>> {
     this.logger.log(`Identifying services from intent: "${intent}"`);
 
     const prompt = `Given this user intent, identify relevant API services or platforms they might want to integrate with.
@@ -1231,18 +1275,23 @@ Common services:
 - Storage: AWS S3, Google Cloud Storage, Azure Blob
 - AI: OpenAI, Anthropic Claude, Google AI
 
-Return ONLY valid JSON array:
-[
-  {"name": "Service Name", "confidence": 0.0-1.0, "reasoning": "why this service"},
-  ...
-]
+Provide a "services" list, each entry with:
+- name: service name
+- confidence: 0.0-1.0
+- reasoning: why this service
 
-Return empty array [] if no clear services identified.`;
+Use an empty list if no clear services are identified.`;
 
     try {
-      const response = await this.llm.invoke(prompt);
-      const content = response.content.toString();
-      const services = safeParseJSONArray<any>(content, this.logger);
+      // Cheap identification -> small model.
+      const { services } = await this.anthropic.completeStructured({
+        prompt,
+        schema: ServiceIdentificationSchema,
+        schemaName: 'ServiceIdentification',
+        model: 'small',
+        maxTokens: 2048,
+        caller: 'research.identifyServicesFromIntent',
+      });
       this.logger.log(`Identified ${services.length} services`);
       return services;
     } catch (error) {
@@ -1326,23 +1375,16 @@ Provide:
 3. **Recommended Approach**: Specific strategy for MCP server generation
 4. **Potential Challenges**: 2-3 REAL blockers only (not "might need clarification")
 5. **Confidence**: Score 0-1 based on ability to generate working server
-
-Return ONLY valid JSON in this format:
-{
-  "summary": "string",
-  "keyInsights": ["string", "string", ...],
-  "recommendedApproach": "string",
-  "potentialChallenges": ["string", "string", ...],
-  "confidence": 0.0-1.0,
-  "reasoning": "string explaining confidence score"
-}`;
+6. **Reasoning**: explanation of the confidence score`;
 
     try {
-      const response = await this.llm.invoke(prompt);
-      const content = response.content.toString();
-
-      // Extract JSON from response using safe bracket-balanced parsing
-      const synthesized: SynthesizedPlan = safeParseJSON<SynthesizedPlan>(content, this.logger);
+      const synthesized: SynthesizedPlan = await this.anthropic.completeStructured({
+        prompt,
+        schema: SynthesizedPlanSchema,
+        schemaName: 'SynthesizedPlan',
+        maxTokens: 8000,
+        caller: 'research.synthesizeResearch',
+      });
 
       this.logger.log(`Research synthesized with confidence: ${synthesized.confidence}`);
       return synthesized;
@@ -1361,7 +1403,8 @@ Return ONLY valid JSON in this format:
       return {
         summary,
         keyInsights: insights,
-        recommendedApproach: 'Generate MCP server with standard tool patterns based on available research.',
+        recommendedApproach:
+          'Generate MCP server with standard tool patterns based on available research.',
         potentialChallenges: ['Limited research data', 'May need user clarification'],
         confidence: 0.4,
         reasoning: 'Fallback synthesis due to LLM error',

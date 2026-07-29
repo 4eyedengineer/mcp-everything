@@ -63,9 +63,7 @@ export async function seedDatabase(dataSource: DataSource): Promise<void> {
     isActive: true,
   });
   await userRepository.save(enterpriseUser);
-  console.log(
-    `  Created Enterprise user: ${enterpriseUser.email} (ID: ${enterpriseUser.id})`,
-  );
+  console.log(`  Created Enterprise user: ${enterpriseUser.email} (ID: ${enterpriseUser.id})`);
 
   console.log('Seed data created successfully!');
 }

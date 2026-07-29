@@ -130,7 +130,7 @@ export class SubscriptionService {
     this.logger.log(`Handling subscription created: ${stripeSubscription.id}`);
 
     const customerId = stripeSubscription.customer as string;
-    let subscription = await this.getSubscriptionByCustomerId(customerId);
+    const subscription = await this.getSubscriptionByCustomerId(customerId);
 
     if (!subscription) {
       this.logger.warn(`No subscription record found for customer: ${customerId}`);
@@ -180,7 +180,9 @@ export class SubscriptionService {
       await this.userService.updateTier(subscription.userId, tier);
     }
 
-    this.logger.log(`Subscription updated: user=${subscription.userId}, tier=${tier}, status=${subscription.status}`);
+    this.logger.log(
+      `Subscription updated: user=${subscription.userId}, tier=${tier}, status=${subscription.status}`,
+    );
   }
 
   async handleSubscriptionDeleted(stripeSubscription: StripeSubscriptionData): Promise<void> {
@@ -227,8 +229,13 @@ export class SubscriptionService {
     }
   }
 
-  private mapStripeStatus(status: string): 'active' | 'canceled' | 'past_due' | 'incomplete' | 'trialing' {
-    const statusMap: Record<string, 'active' | 'canceled' | 'past_due' | 'incomplete' | 'trialing'> = {
+  private mapStripeStatus(
+    status: string,
+  ): 'active' | 'canceled' | 'past_due' | 'incomplete' | 'trialing' {
+    const statusMap: Record<
+      string,
+      'active' | 'canceled' | 'past_due' | 'incomplete' | 'trialing'
+    > = {
       active: 'active',
       canceled: 'canceled',
       past_due: 'past_due',

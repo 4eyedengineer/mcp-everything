@@ -99,10 +99,7 @@ export class ErrorLogController {
     @Param('service') service: string,
     @Query('limit', new DefaultValuePipe(100), ParseIntPipe) limit: number,
   ): Promise<ErrorLog[]> {
-    return this.errorLoggingService.getErrorsByService(
-      service,
-      Math.min(limit, 500),
-    );
+    return this.errorLoggingService.getErrorsByService(service, Math.min(limit, 500));
   }
 
   /**
@@ -124,10 +121,7 @@ export class ErrorLogController {
    */
   @Patch(':id/resolve')
   @HttpCode(HttpStatus.NO_CONTENT)
-  async markResolved(
-    @Param('id') id: string,
-    @Body() body: ResolveErrorDto,
-  ): Promise<void> {
+  async markResolved(@Param('id') id: string, @Body() body: ResolveErrorDto): Promise<void> {
     const error = await this.errorLoggingService.getErrorById(id);
     if (!error) {
       throw new NotFoundException(`Error log with ID ${id} not found`);
@@ -141,12 +135,7 @@ export class ErrorLogController {
    */
   @Patch('resolve-multiple')
   @HttpCode(HttpStatus.NO_CONTENT)
-  async markMultipleResolved(
-    @Body() body: ResolveMultipleErrorsDto,
-  ): Promise<void> {
-    await this.errorLoggingService.markMultipleResolved(
-      body.ids,
-      body.resolution,
-    );
+  async markMultipleResolved(@Body() body: ResolveMultipleErrorsDto): Promise<void> {
+    await this.errorLoggingService.markMultipleResolved(body.ids, body.resolution);
   }
 }

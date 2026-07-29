@@ -1,19 +1,6 @@
-import {
-  IsString,
-  IsOptional,
-  IsArray,
-  IsEnum,
-  IsInt,
-  Min,
-  Max,
-  IsBoolean,
-} from 'class-validator';
+import { IsString, IsOptional, IsArray, IsEnum, IsInt, Min, Max, IsBoolean } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
-import {
-  McpServerCategory,
-  McpServerStatus,
-  McpServerLanguage,
-} from '../types/categories';
+import { McpServerCategory, McpServerStatus, McpServerLanguage } from '../types/categories';
 
 export enum SortField {
   DOWNLOADS = 'downloads',
@@ -39,9 +26,7 @@ export class SearchServersDto {
   @IsOptional()
   @IsArray()
   @IsString({ each: true })
-  @Transform(({ value }) =>
-    typeof value === 'string' ? value.split(',') : value,
-  )
+  @Transform(({ value }) => (typeof value === 'string' ? value.split(',') : value))
   tags?: string[];
 
   @IsOptional()

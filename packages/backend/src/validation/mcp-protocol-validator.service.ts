@@ -69,7 +69,10 @@ interface McpResponse {
 interface ServerProcessInfo {
   process: ChildProcess;
   serverDir: string;
-  pendingResponses: Map<string | number, { resolve: Function; reject: Function }>;
+  pendingResponses: Map<
+    string | number,
+    { resolve: (response: McpResponse) => void; reject: (error: Error) => void }
+  >;
   buffer: string;
   stderrBuffer: string;
 }
@@ -120,7 +123,9 @@ export class McpProtocolValidatorService {
    * @param code - Generated server code structure
    * @returns Protocol validation result
    */
-  async validateServer(code: GeneratedCodeForProtocolValidation): Promise<McpProtocolValidationResult> {
+  async validateServer(
+    code: GeneratedCodeForProtocolValidation,
+  ): Promise<McpProtocolValidationResult> {
     const validationId = uuidv4();
     const startTime = Date.now();
     const results: ValidationCheck[] = [];
@@ -151,7 +156,13 @@ export class McpProtocolValidatorService {
       if (!initResult.passed) {
         errors.push(`Initialize handshake failed: ${initResult.message}`);
         await this.stopServer(validationId);
-        return this.createResult(false, results, errors, Date.now() - startTime, initResult.details?.serverInfo);
+        return this.createResult(
+          false,
+          results,
+          errors,
+          Date.now() - startTime,
+          initResult.details?.serverInfo,
+        );
       }
 
       // Step 4: Validate tools/list
@@ -167,7 +178,7 @@ export class McpProtocolValidatorService {
       const schemaResults = await this.validateToolSchemas(tools);
       results.push(...schemaResults);
 
-      const invalidSchemas = schemaResults.filter(r => !r.passed);
+      const invalidSchemas = schemaResults.filter((r) => !r.passed);
       if (invalidSchemas.length > 0) {
         errors.push(`${invalidSchemas.length} tool(s) have invalid input schemas`);
       }
@@ -191,13 +202,14 @@ export class McpProtocolValidatorService {
       await this.stopServer(validationId);
 
       // Calculate overall validity
-      const criticalChecks = results.filter(r =>
-        r.name.includes('initialize') ||
-        r.name.includes('tools/list') ||
-        r.name.includes('build')
+      const criticalChecks = results.filter(
+        (r) =>
+          r.name.includes('initialize') ||
+          r.name.includes('tools/list') ||
+          r.name.includes('build'),
       );
-      const allCriticalPassed = criticalChecks.every(r => r.passed);
-      const mostChecksPassed = results.filter(r => r.passed).length >= results.length * 0.8;
+      const allCriticalPassed = criticalChecks.every((r) => r.passed);
+      const mostChecksPassed = results.filter((r) => r.passed).length >= results.length * 0.8;
       const valid = allCriticalPassed && mostChecksPassed;
 
       return this.createResult(
@@ -207,7 +219,7 @@ export class McpProtocolValidatorService {
         Date.now() - startTime,
         initResult.details?.serverInfo,
         tools.length,
-        resourcesResult.details?.resourceCount
+        resourcesResult.details?.resourceCount,
       );
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
@@ -234,7 +246,7 @@ export class McpProtocolValidatorService {
    */
   private async createTempServerDir(
     validationId: string,
-    code: GeneratedCodeForProtocolValidation
+    code: GeneratedCodeForProtocolValidation,
   ): Promise<string> {
     const tempDir = join(this.tempBaseDir, `validation-${validationId}`);
 
@@ -310,7 +322,7 @@ export class McpProtocolValidatorService {
     command: string,
     args: string[],
     cwd: string,
-    timeout: number
+    timeout: number,
   ): Promise<void> {
     return new Promise((resolve, reject) => {
       const proc = spawn(command, args, {
@@ -413,7 +425,9 @@ export class McpProtocolValidatorService {
 
     while (Date.now() - startTime < maxWaitMs) {
       if (processInfo.process.exitCode !== null) {
-        throw new Error(`Server exited with code ${processInfo.process.exitCode}: ${processInfo.stderrBuffer}`);
+        throw new Error(
+          `Server exited with code ${processInfo.process.exitCode}: ${processInfo.stderrBuffer}`,
+        );
       }
 
       if (processInfo.process.stdin?.writable) {
@@ -459,7 +473,7 @@ export class McpProtocolValidatorService {
   private async sendMessage(
     validationId: string,
     message: McpMessage,
-    timeout: number = 10000
+    timeout: number = 10000,
   ): Promise<McpResponse> {
     const processInfo = this.runningProcesses.get(validationId);
     if (!processInfo) {
@@ -549,10 +563,12 @@ export class McpProtocolValidatorService {
       // Send initialized notification
       const processInfo = this.runningProcesses.get(validationId);
       if (processInfo) {
-        processInfo.process.stdin!.write(JSON.stringify({
-          jsonrpc: '2.0',
-          method: 'notifications/initialized',
-        }) + '\n');
+        processInfo.process.stdin!.write(
+          JSON.stringify({
+            jsonrpc: '2.0',
+            method: 'notifications/initialized',
+          }) + '\n',
+        );
       }
 
       return {
@@ -606,9 +622,7 @@ export class McpProtocolValidatorService {
       const tools = response.result?.tools || [];
 
       // Validate each tool has required fields
-      const invalidTools = tools.filter((t: any) =>
-        !t.name || !t.description || !t.inputSchema
-      );
+      const invalidTools = tools.filter((t: any) => !t.name || !t.description || !t.inputSchema);
 
       if (invalidTools.length > 0) {
         return {
@@ -665,10 +679,7 @@ export class McpProtocolValidatorService {
   /**
    * Validate tool execution
    */
-  private async validateToolExecution(
-    validationId: string,
-    tool: any
-  ): Promise<ValidationCheck> {
+  private async validateToolExecution(validationId: string, tool: any): Promise<ValidationCheck> {
     const startTime = Date.now();
 
     try {
@@ -790,9 +801,7 @@ export class McpProtocolValidatorService {
       const resources = response.result?.resources || [];
 
       // Validate resource structure if any exist
-      const invalidResources = resources.filter((r: any) =>
-        !r.uri || !r.name
-      );
+      const invalidResources = resources.filter((r: any) => !r.uri || !r.name);
 
       if (invalidResources.length > 0) {
         return {
@@ -869,7 +878,7 @@ export class McpProtocolValidatorService {
     totalDuration: number,
     serverInfo?: any,
     toolCount?: number,
-    resourceCount?: number
+    resourceCount?: number,
   ): McpProtocolValidationResult {
     return {
       valid,
@@ -887,25 +896,29 @@ export class McpProtocolValidatorService {
    * Get default TypeScript config
    */
   private getDefaultTsConfig(): string {
-    return JSON.stringify({
-      compilerOptions: {
-        target: 'ES2022',
-        module: 'Node16',
-        moduleResolution: 'Node16',
-        strict: true,
-        esModuleInterop: true,
-        skipLibCheck: true,
-        outDir: './dist',
-        rootDir: './src',
+    return JSON.stringify(
+      {
+        compilerOptions: {
+          target: 'ES2022',
+          module: 'Node16',
+          moduleResolution: 'Node16',
+          strict: true,
+          esModuleInterop: true,
+          skipLibCheck: true,
+          outDir: './dist',
+          rootDir: './src',
+        },
+        include: ['src/**/*'],
       },
-      include: ['src/**/*'],
-    }, null, 2);
+      null,
+      2,
+    );
   }
 
   /**
    * Helper delay function
    */
   private delay(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 }

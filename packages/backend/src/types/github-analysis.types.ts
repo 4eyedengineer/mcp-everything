@@ -118,7 +118,14 @@ export interface AnalysisResponse {
 // Utility types for filtering and searching
 export type FileType = 'source' | 'config' | 'documentation' | 'test' | 'build' | 'other';
 export type AnalysisScope = 'basic' | 'detailed' | 'comprehensive';
-export type TechCategory = 'frontend' | 'backend' | 'mobile' | 'desktop' | 'cli' | 'library' | 'other';
+export type TechCategory =
+  | 'frontend'
+  | 'backend'
+  | 'mobile'
+  | 'desktop'
+  | 'cli'
+  | 'library'
+  | 'other';
 
 export interface AnalysisFilter {
   includeFiles?: string[];

@@ -8,10 +8,7 @@ import {
   PasswordResetEmailOptions,
   WelcomeEmailOptions,
 } from './email.types';
-import {
-  getPasswordResetHtml,
-  getPasswordResetText,
-} from './templates/password-reset.template';
+import { getPasswordResetHtml, getPasswordResetText } from './templates/password-reset.template';
 
 /**
  * Email Service
@@ -30,22 +27,14 @@ export class EmailService {
       provider: (this.configService.get<string>('EMAIL_PROVIDER') ||
         'sendgrid') as EmailConfig['provider'],
       apiKey: this.configService.get<string>('SENDGRID_API_KEY') || '',
-      fromEmail:
-        this.configService.get<string>('EMAIL_FROM') ||
-        'noreply@mcp-everything.com',
-      fromName:
-        this.configService.get<string>('EMAIL_FROM_NAME') || 'MCP Everything',
-      frontendUrl:
-        this.configService.get<string>('FRONTEND_URL') ||
-        'http://localhost:4200',
-      isDevelopment:
-        this.configService.get<string>('NODE_ENV') !== 'production',
+      fromEmail: this.configService.get<string>('EMAIL_FROM') || 'noreply@mcp-everything.com',
+      fromName: this.configService.get<string>('EMAIL_FROM_NAME') || 'MCP Everything',
+      frontendUrl: this.configService.get<string>('FRONTEND_URL') || 'http://localhost:4200',
+      isDevelopment: this.configService.get<string>('NODE_ENV') !== 'production',
     };
 
     if (!this.config.isDevelopment && !this.config.apiKey) {
-      this.logger.warn(
-        'No SENDGRID_API_KEY configured - emails will not be sent in production!',
-      );
+      this.logger.warn('No SENDGRID_API_KEY configured - emails will not be sent in production!');
     }
   }
 
@@ -77,9 +66,7 @@ export class EmailService {
   /**
    * Send a password reset email
    */
-  async sendPasswordResetEmail(
-    options: PasswordResetEmailOptions,
-  ): Promise<SendEmailResult> {
+  async sendPasswordResetEmail(options: PasswordResetEmailOptions): Promise<SendEmailResult> {
     const resetUrl = `${this.config.frontendUrl}/reset-password?token=${options.token}`;
     const expiresInHours = 1;
 
@@ -129,9 +116,7 @@ export class EmailService {
     this.logger.log('[DEV MODE] HTML Content:');
     // Log a truncated version for readability
     const truncatedHtml =
-      options.html.length > 500
-        ? options.html.substring(0, 500) + '... [truncated]'
-        : options.html;
+      options.html.length > 500 ? options.html.substring(0, 500) + '... [truncated]' : options.html;
     this.logger.log(truncatedHtml);
     this.logger.log('='.repeat(60));
 
@@ -161,9 +146,7 @@ export class EmailService {
       },
       subject: options.subject,
       content: [
-        ...(options.text
-          ? [{ type: 'text/plain', value: options.text }]
-          : []),
+        ...(options.text ? [{ type: 'text/plain', value: options.text }] : []),
         { type: 'text/html', value: options.html },
       ],
     };
@@ -179,27 +162,21 @@ export class EmailService {
       // SendGrid returns 202 for accepted emails
       if (response.status === 202) {
         const messageId = response.headers['x-message-id'] || 'unknown';
-        this.logger.log(
-          `Email sent successfully to ${options.to} (messageId: ${messageId})`,
-        );
+        this.logger.log(`Email sent successfully to ${options.to} (messageId: ${messageId})`);
         return {
           success: true,
           messageId,
         };
       }
 
-      this.logger.warn(
-        `Unexpected SendGrid response status: ${response.status}`,
-      );
+      this.logger.warn(`Unexpected SendGrid response status: ${response.status}`);
       return {
         success: false,
         error: `Unexpected status: ${response.status}`,
       };
     } catch (error) {
       const errorMessage =
-        error.response?.data?.errors?.[0]?.message ||
-        error.message ||
-        'Unknown error';
+        error.response?.data?.errors?.[0]?.message || error.message || 'Unknown error';
 
       this.logger.error(`Failed to send email to ${options.to}: ${errorMessage}`);
 

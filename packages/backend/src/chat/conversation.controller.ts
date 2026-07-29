@@ -1,6 +1,18 @@
-import { Controller, Get, Post, Delete, Patch, Body, Param } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Delete,
+  Patch,
+  Body,
+  Param,
+  NotFoundException,
+} from '@nestjs/common';
 import { ConversationService } from '../conversation.service';
 import { DeploymentService } from '../database/services/deployment.service';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { User } from '../database/entities/user.entity';
+import { Conversation } from '../database/entities/conversation.entity';
 // Note: All routes protected by global JWT guard - user authenticated automatically
 
 interface CreateConversationDto {
@@ -19,13 +31,26 @@ export class ConversationController {
   ) {}
 
   /**
+   * Load a conversation owned by the current user.
+   * Throws NotFoundException when it does not exist OR belongs to another user
+   * (including legacy rows with no owner) so existence is never leaked.
+   */
+  private async getOwnedConversationOrFail(id: string, userId: string): Promise<Conversation> {
+    const conversation = await this.conversationService.findByIdForUser(id, userId);
+    if (!conversation) {
+      throw new NotFoundException(`Conversation not found: ${id}`);
+    }
+    return conversation;
+  }
+
+  /**
    * Get all conversations for the current user
    */
   @Get()
-  async getConversations() {
-    const conversations = await this.conversationService.findAll();
+  async getConversations(@CurrentUser() user: User) {
+    const conversations = await this.conversationService.findAllByUser(user.id);
     return {
-      conversations: conversations.map(conv => ({
+      conversations: conversations.map((conv) => ({
         id: conv.id,
         title: this.generateTitle(conv),
         timestamp: conv.updatedAt || conv.createdAt,
@@ -42,8 +67,8 @@ export class ConversationController {
    * FIX #130: Include state field for frontend to access generatedCode
    */
   @Get(':id')
-  async getConversation(@Param('id') id: string) {
-    const conversation = await this.conversationService.findById(id);
+  async getConversation(@CurrentUser() user: User, @Param('id') id: string) {
+    const conversation = await this.getOwnedConversationOrFail(id, user.id);
     return {
       conversation: {
         id: conversation.id,
@@ -63,8 +88,8 @@ export class ConversationController {
    * Create a new conversation
    */
   @Post()
-  async createConversation(@Body() dto: CreateConversationDto) {
-    const conversation = await this.conversationService.create(dto.sessionId);
+  async createConversation(@CurrentUser() user: User, @Body() dto: CreateConversationDto) {
+    const conversation = await this.conversationService.create(dto.sessionId, user.id);
     return {
       conversation: {
         id: conversation.id,
@@ -81,8 +106,8 @@ export class ConversationController {
    * Get messages for a specific conversation
    */
   @Get(':id/messages')
-  async getConversationMessages(@Param('id') id: string) {
-    const conversation = await this.conversationService.findById(id);
+  async getConversationMessages(@CurrentUser() user: User, @Param('id') id: string) {
+    const conversation = await this.getOwnedConversationOrFail(id, user.id);
     const messages = Array.isArray(conversation.messages) ? conversation.messages : [];
 
     return {
@@ -100,10 +125,11 @@ export class ConversationController {
    * Get deployments for a specific conversation
    */
   @Get(':id/deployments')
-  async getConversationDeployments(@Param('id') id: string) {
+  async getConversationDeployments(@CurrentUser() user: User, @Param('id') id: string) {
+    await this.getOwnedConversationOrFail(id, user.id);
     const deployments = await this.deploymentService.getDeploymentsByConversation(id);
     return {
-      deployments: deployments.map(dep => ({
+      deployments: deployments.map((dep) => ({
         id: dep.id,
         conversationId: dep.conversationId,
         deploymentType: dep.deploymentType,
@@ -123,7 +149,8 @@ export class ConversationController {
    * Get the latest deployment for a specific conversation
    */
   @Get(':id/deployments/latest')
-  async getLatestDeployment(@Param('id') id: string) {
+  async getLatestDeployment(@CurrentUser() user: User, @Param('id') id: string) {
+    await this.getOwnedConversationOrFail(id, user.id);
     const deployment = await this.deploymentService.getLatestDeployment(id);
     if (!deployment) {
       return { deployment: null };
@@ -149,7 +176,8 @@ export class ConversationController {
    * Delete a conversation
    */
   @Delete(':id')
-  async deleteConversation(@Param('id') id: string) {
+  async deleteConversation(@CurrentUser() user: User, @Param('id') id: string) {
+    await this.getOwnedConversationOrFail(id, user.id);
     await this.conversationService.delete(id);
     return { success: true };
   }
@@ -158,7 +186,12 @@ export class ConversationController {
    * Update conversation title
    */
   @Patch(':id')
-  async updateConversationTitle(@Param('id') id: string, @Body() dto: UpdateConversationDto) {
+  async updateConversationTitle(
+    @CurrentUser() user: User,
+    @Param('id') id: string,
+    @Body() dto: UpdateConversationDto,
+  ) {
+    await this.getOwnedConversationOrFail(id, user.id);
     const conversation = await this.conversationService.updateTitle(id, dto.title);
     return {
       conversation: {

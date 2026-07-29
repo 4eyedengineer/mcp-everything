@@ -31,7 +31,9 @@ import { GraphState } from '../../orchestration/types';
 @Index('IDX_research_cache_github_url', ['githubUrl'], { unique: true })
 @Index('IDX_research_cache_expires_at', ['expiresAt'])
 @Index('IDX_research_cache_access_count', ['accessCount'], { where: '"accessCount" > 10' })
-@Index('IDX_research_cache_cached_at', ['cachedAt'], { where: 'NOW() - "cachedAt" < interval \'7 days\'' })
+@Index('IDX_research_cache_cached_at', ['cachedAt'], {
+  where: 'NOW() - "cachedAt" < interval \'7 days\'',
+})
 export class ResearchCache {
   /**
    * Primary key: UUID

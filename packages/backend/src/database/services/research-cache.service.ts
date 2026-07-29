@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, IsNull, LessThan, In } from 'typeorm';
+import { Repository, LessThan } from 'typeorm';
 import { ResearchCache } from '../entities/research-cache.entity';
 import { GraphState } from '../../orchestration/types';
 
@@ -78,7 +78,7 @@ export class ResearchCacheService {
       }
 
       // Update access metrics asynchronously (fire and forget)
-      this.updateAccessMetrics(cached.id).catch(err =>
+      this.updateAccessMetrics(cached.id).catch((err) =>
         this.logger.error(`Failed to update access metrics for ${githubUrl}: ${err.message}`),
       );
 
@@ -110,7 +110,7 @@ export class ResearchCacheService {
     }
 
     // Update access metrics asynchronously
-    this.updateAccessMetrics(cached.id).catch(err =>
+    this.updateAccessMetrics(cached.id).catch((err) =>
       this.logger.error(`Failed to update access metrics: ${err.message}`),
     );
 
@@ -260,10 +260,12 @@ export class ResearchCacheService {
     // Note: Raw SQL required for vector operators
     query = this.cacheRepository
       .createQueryBuilder('rc')
-      .select(`
+      .select(
+        `
         rc.*,
         (rc.embedding <-> :queryVector)::float AS distance
-      `)
+      `,
+      )
       .where('rc.status = :status', { status: 'active' })
       .andWhere('rc.embedding IS NOT NULL')
       .andWhere('(rc.embedding <-> :queryVector) < :threshold', {
@@ -281,16 +283,13 @@ export class ResearchCacheService {
       query = query.andWhere('rc.qualityScore >= :minQuality', { minQuality });
     }
 
-    const results = await query
-      .orderBy('distance', 'ASC')
-      .limit(limit)
-      .getRawMany();
+    const results = await query.orderBy('distance', 'ASC').limit(limit).getRawMany();
 
     this.logger.debug(
       `Found ${results.length} similar repositories in ${Date.now() - startTime}ms`,
     );
 
-    return results.map(r => ({
+    return results.map((r) => ({
       ...r,
       distance: parseFloat(r.distance),
     }));
@@ -404,17 +403,15 @@ export class ResearchCacheService {
     }
 
     if (filters.minStars) {
-      query = query.andWhere(
-        `(rc.metadata->>'stars')::integer >= :minStars`,
-        { minStars: filters.minStars },
-      );
+      query = query.andWhere(`(rc.metadata->>'stars')::integer >= :minStars`, {
+        minStars: filters.minStars,
+      });
     }
 
     if (filters.maxStars) {
-      query = query.andWhere(
-        `(rc.metadata->>'stars')::integer <= :maxStars`,
-        { maxStars: filters.maxStars },
-      );
+      query = query.andWhere(`(rc.metadata->>'stars')::integer <= :maxStars`, {
+        maxStars: filters.maxStars,
+      });
     }
 
     if (filters.owner) {
@@ -423,10 +420,7 @@ export class ResearchCacheService {
 
     if (filters.topics && filters.topics.length > 0) {
       const topicsStr = JSON.stringify(filters.topics);
-      query = query.andWhere(
-        `(rc.metadata->'topics') @> :topics::jsonb`,
-        { topics: topicsStr },
-      );
+      query = query.andWhere(`(rc.metadata->'topics') @> :topics::jsonb`, { topics: topicsStr });
     }
 
     // Apply sorting
@@ -507,13 +501,15 @@ export class ResearchCacheService {
       SELECT pg_size_pretty(pg_total_relation_size('research_cache')) as size
     `);
 
-    const hitRate = this.stats.hits + this.stats.misses > 0
-      ? this.stats.hits / (this.stats.hits + this.stats.misses)
-      : 0;
+    const hitRate =
+      this.stats.hits + this.stats.misses > 0
+        ? this.stats.hits / (this.stats.hits + this.stats.misses)
+        : 0;
 
-    const avgSearchTime = this.stats.hits + this.stats.misses > 0
-      ? this.stats.searchTime / (this.stats.hits + this.stats.misses)
-      : 0;
+    const avgSearchTime =
+      this.stats.hits + this.stats.misses > 0
+        ? this.stats.searchTime / (this.stats.hits + this.stats.misses)
+        : 0;
 
     return {
       hitRate: Math.round(hitRate * 100) / 100,
@@ -606,7 +602,7 @@ export class ResearchCacheService {
 
     // Add or update relationship
     const relationships = entry.relationships || [];
-    const existingIndex = relationships.findIndex(r => r.repositoryId === targetRepositoryId);
+    const existingIndex = relationships.findIndex((r) => r.repositoryId === targetRepositoryId);
 
     if (existingIndex >= 0) {
       relationships[existingIndex] = {
@@ -703,11 +699,7 @@ export class ResearchCacheService {
    * Called after successful cache hit
    */
   private async updateAccessMetrics(id: string): Promise<void> {
-    await this.cacheRepository.increment(
-      { id },
-      'accessCount',
-      1,
-    );
+    await this.cacheRepository.increment({ id }, 'accessCount', 1);
 
     await this.cacheRepository.update(id, {
       lastAccessedAt: new Date(),

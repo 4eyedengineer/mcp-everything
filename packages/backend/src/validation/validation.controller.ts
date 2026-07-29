@@ -10,7 +10,7 @@ import {
   HttpException,
   HttpStatus,
 } from '@nestjs/common';
-import { Observable, Subject, interval, takeUntil } from 'rxjs';
+import { Observable, Subject, takeUntil } from 'rxjs';
 import { map, finalize } from 'rxjs/operators';
 
 import { ValidationService } from './validation.service';
@@ -60,10 +60,7 @@ export class ValidationController {
         forceRevalidate: options.forceRevalidate,
       };
 
-      return await this.validationService.validateDeployment(
-        deploymentId,
-        validationOptions,
-      );
+      return await this.validationService.validateDeployment(deploymentId, validationOptions);
     } catch (error) {
       this.logger.error(`Validation failed: ${error.message}`);
       throw new HttpException(
@@ -106,9 +103,7 @@ export class ValidationController {
    * Stream validation progress via SSE
    */
   @Sse(':deploymentId/stream')
-  streamValidationProgress(
-    @Param('deploymentId') deploymentId: string,
-  ): Observable<MessageEvent> {
+  streamValidationProgress(@Param('deploymentId') deploymentId: string): Observable<MessageEvent> {
     this.logger.log(`Starting validation stream for deployment: ${deploymentId}`);
 
     const subject = new Subject<ValidationProgressUpdate>();

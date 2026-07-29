@@ -9,11 +9,7 @@ import { StripeWebhookController } from './stripe-webhook.controller';
 import { UserModule } from '../user/user.module';
 
 @Module({
-  imports: [
-    TypeOrmModule.forFeature([Subscription]),
-    ConfigModule,
-    UserModule,
-  ],
+  imports: [TypeOrmModule.forFeature([Subscription]), ConfigModule, UserModule],
   controllers: [SubscriptionController, StripeWebhookController],
   providers: [StripeService, SubscriptionService],
   exports: [StripeService, SubscriptionService],

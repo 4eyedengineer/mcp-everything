@@ -3,14 +3,9 @@ import { CommonModule } from '@angular/common';
 import { HTTP_INTERCEPTORS } from '@angular/common/http';
 
 // Services
-import { ApiService } from './services/api.service';
 import { AuthService } from './services/auth.service';
-import { GitHubService } from './services/github.service';
-import { McpGenerationService } from './services/mcp-generation.service';
-import { McpServerService } from './services/mcp-server.service';
 import { NotificationService } from './services/notification.service';
 import { LoadingService } from './services/loading.service';
-import { StateManagementService } from './services/state-management.service';
 
 // Interceptors
 import { ApiInterceptor } from './interceptors/api.interceptor';
@@ -26,14 +21,9 @@ import { NoAuthGuard } from './guards/no-auth.guard';
   imports: [CommonModule],
   providers: [
     // Core Services
-    ApiService,
     AuthService,
-    GitHubService,
-    McpGenerationService,
-    McpServerService,
     NotificationService,
     LoadingService,
-    StateManagementService,
 
     // Guards
     AuthGuard,

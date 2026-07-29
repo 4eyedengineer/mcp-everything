@@ -1,12 +1,6 @@
-import {
-  Injectable,
-  Logger,
-  NotFoundException,
-  ForbiddenException,
-  ConflictException,
-} from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, ILike, In, FindOptionsWhere } from 'typeorm';
+import { Repository } from 'typeorm';
 import { McpServer } from '../database/entities/mcp-server.entity';
 import { User } from '../database/entities/user.entity';
 import { CreateServerDto } from './dto/create-server.dto';
@@ -17,11 +11,7 @@ import {
   SortOrder,
   PaginatedResponse,
 } from './dto/search-servers.dto';
-import {
-  ServerResponse,
-  ServerSummaryResponse,
-  CategoryResponse,
-} from './dto/server-response.dto';
+import { ServerResponse, ServerSummaryResponse, CategoryResponse } from './dto/server-response.dto';
 import { MCP_SERVER_CATEGORIES, McpServerCategory } from './types/categories';
 
 @Injectable()
@@ -189,10 +179,9 @@ export class MarketplaceService {
 
     // Text search on name and description
     if (query) {
-      queryBuilder.andWhere(
-        '(server.name ILIKE :query OR server.description ILIKE :query)',
-        { query: `%${query}%` },
-      );
+      queryBuilder.andWhere('(server.name ILIKE :query OR server.description ILIKE :query)', {
+        query: `%${query}%`,
+      });
     }
 
     // Filter by category

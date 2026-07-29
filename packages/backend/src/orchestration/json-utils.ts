@@ -17,7 +17,7 @@ export interface SimpleLogger {
  */
 export function safeParseJSON<T>(text: string, logger?: SimpleLogger): T {
   // Remove markdown code blocks if present
-  let cleaned = text.replace(/```json\s*/gi, '').replace(/```\s*/g, '');
+  const cleaned = text.replace(/```json\s*/gi, '').replace(/```\s*/g, '');
 
   // Find the first { and balance brackets to find the matching }
   const startIndex = cleaned.indexOf('{');
@@ -127,7 +127,7 @@ export function safeParseJSON<T>(text: string, logger?: SimpleLogger): T {
  */
 export function safeParseJSONArray<T>(text: string, logger?: SimpleLogger): T[] {
   // Remove markdown code blocks if present
-  let cleaned = text.replace(/```json\s*/gi, '').replace(/```\s*/g, '');
+  const cleaned = text.replace(/```json\s*/gi, '').replace(/```\s*/g, '');
 
   // Find the first [ and balance brackets to find the matching ]
   const startIndex = cleaned.indexOf('[');

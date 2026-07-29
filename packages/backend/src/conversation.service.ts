@@ -561,6 +561,19 @@ JSON response:`;
   }
 
   /**
+   * Find all conversations owned by a specific user.
+   * Legacy rows without an owner (userId IS NULL) are intentionally excluded.
+   */
+  async findAllByUser(userId: string): Promise<Conversation[]> {
+    return this.conversationRepository.find({
+      where: { userId },
+      order: {
+        updatedAt: 'DESC',
+      },
+    });
+  }
+
+  /**
    * Find conversation by ID
    */
   async findById(id: string): Promise<Conversation> {
@@ -570,11 +583,25 @@ JSON response:`;
   }
 
   /**
+   * Find a conversation by ID scoped to its owner.
+   *
+   * @returns the conversation, or null when it does not exist or is owned by
+   *          somebody else (callers should translate this to a 404 so that
+   *          resource existence is not leaked).
+   */
+  async findByIdForUser(id: string, userId: string): Promise<Conversation | null> {
+    return this.conversationRepository.findOne({
+      where: { id, userId },
+    });
+  }
+
+  /**
    * Create a new conversation
    */
-  async create(sessionId: string): Promise<Conversation> {
+  async create(sessionId: string, userId?: string): Promise<Conversation> {
     const conversation = this.conversationRepository.create({
       sessionId,
+      userId,
       messages: [],
       state: {},
       isActive: true,

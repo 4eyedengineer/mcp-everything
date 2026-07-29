@@ -2,7 +2,7 @@ import { Injectable } from '@angular/core';
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { Observable, throwError, of } from 'rxjs';
 import { catchError, map } from 'rxjs/operators';
-import { environment } from '../../../environments/environment';
+import { API_BASE } from '../config/api.config';
 
 /**
  * Conversation state that may contain generated code
@@ -95,7 +95,7 @@ export interface Deployment {
   providedIn: 'root'
 })
 export class ConversationService {
-  private readonly baseUrl = `${environment.apiUrl}/api`;
+  private readonly baseUrl = API_BASE;
 
   constructor(private http: HttpClient) {}
 

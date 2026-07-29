@@ -27,14 +27,11 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     const request = ctx.getRequest<Request>();
 
     // Convert to Error if needed
-    const error =
-      exception instanceof Error ? exception : new Error(String(exception));
+    const error = exception instanceof Error ? exception : new Error(String(exception));
 
     // Determine HTTP status
     const status =
-      exception instanceof HttpException
-        ? exception.getStatus()
-        : HttpStatus.INTERNAL_SERVER_ERROR;
+      exception instanceof HttpException ? exception.getStatus() : HttpStatus.INTERNAL_SERVER_ERROR;
 
     // Extract conversation ID from various sources
     const conversationId = this.extractConversationId(request);
@@ -81,11 +78,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
   /**
    * Build a consistent error response
    */
-  private buildErrorResponse(
-    error: Error,
-    status: number,
-    request: Request,
-  ): Record<string, any> {
+  private buildErrorResponse(error: Error, status: number, request: Request): Record<string, any> {
     const isDevelopment = process.env.NODE_ENV === 'development';
 
     const response: Record<string, any> = {
@@ -107,10 +100,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     }
 
     // Include validation errors if present (class-validator)
-    if (
-      status === HttpStatus.BAD_REQUEST &&
-      (error as any).response?.message
-    ) {
+    if (status === HttpStatus.BAD_REQUEST && (error as any).response?.message) {
       response.details = (error as any).response.message;
     }
 
@@ -164,9 +154,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     }
 
     // Check URL path for conversation ID pattern
-    const urlMatch = request.url.match(
-      /\/conversation[s]?\/([0-9a-f-]{36})/i,
-    );
+    const urlMatch = request.url.match(/\/conversation[s]?\/([0-9a-f-]{36})/i);
     if (urlMatch) {
       return urlMatch[1];
     }
@@ -196,9 +184,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
   /**
    * Sanitize request headers to remove sensitive information
    */
-  private sanitizeHeaders(
-    headers: Record<string, any>,
-  ): Record<string, string> {
+  private sanitizeHeaders(headers: Record<string, any>): Record<string, string> {
     const sensitiveHeaders = [
       'authorization',
       'cookie',

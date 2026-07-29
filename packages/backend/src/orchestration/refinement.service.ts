@@ -1,17 +1,52 @@
 import { Injectable, Logger, Optional } from '@nestjs/common';
-import { ChatAnthropic } from '@langchain/anthropic';
-import { McpTestingService, GeneratedCode, McpServerTestResult } from '../testing/mcp-testing.service';
+import * as z from 'zod/v4';
+import {
+  McpTestingService,
+  GeneratedCode,
+  McpServerTestResult,
+} from '../testing/mcp-testing.service';
 import { McpGenerationService } from '../mcp-generation.service';
 import {
   McpProtocolValidatorService,
   McpProtocolValidationResult,
 } from '../validation/mcp-protocol-validator.service';
-import {
-  GraphState,
-  FailureAnalysis,
-} from './types';
+import { GraphState, FailureAnalysis } from './types';
 import { getPlatformContextPrompt } from './platform-context';
-import { safeParseJSON } from './json-utils';
+import { AnthropicService } from '../ai/anthropic.service';
+import { TruncatedResponseError } from '../ai/anthropic.errors';
+
+/**
+ * Failure analysis output contract (enforced by the API's structured outputs).
+ */
+const FailureAnalysisSchema = z.object({
+  failureCount: z.number(),
+  categories: z.array(
+    z.object({
+      type: z.enum(['syntax', 'runtime', 'mcp_protocol', 'logic', 'timeout']),
+      count: z.number(),
+    }),
+  ),
+  rootCauses: z.array(z.string()),
+  fixes: z.array(
+    z.object({
+      toolName: z.string(),
+      issue: z.string(),
+      solution: z.string(),
+      priority: z.enum(['HIGH', 'MEDIUM', 'LOW']),
+      codeSnippet: z.string().nullable().optional(),
+    }),
+  ),
+  recommendation: z.string(),
+});
+
+/**
+ * Output caps for code generation. The first attempt is generous; if the model
+ * still hits the cap we retry once at the model's ceiling rather than trying to
+ * "repair" a truncated file.
+ */
+const CODE_GEN_MAX_TOKENS = 64000;
+const CODE_GEN_RETRY_MAX_TOKENS = 128000;
+const ANALYSIS_MAX_TOKENS = 16000;
 
 /**
  * MCP SDK Reference Implementation (Issue #140)
@@ -154,37 +189,51 @@ main().catch(console.error);
 @Injectable()
 export class RefinementService {
   private readonly logger = new Logger(RefinementService.name);
-  private readonly llm: ChatAnthropic;
-  private readonly codeGenLlm: ChatAnthropic;
 
   constructor(
     private readonly mcpTestingService: McpTestingService,
     private readonly mcpGenerationService: McpGenerationService,
+    private readonly anthropic: AnthropicService,
     @Optional() private readonly mcpProtocolValidator?: McpProtocolValidatorService,
-  ) {
-    // Initialize Claude Haiku for failure analysis
-    // streaming: true is required by the Anthropic API configuration (Issue #142)
-    this.llm = new ChatAnthropic({
-      modelName: 'claude-haiku-4-5-20251001',
-      temperature: 0.7,
-      topP: undefined, // Fix for @langchain/anthropic bug sending top_p: -1
-      maxTokens: 16000, // Generous limit for detailed failure analysis
-      anthropicApiKey: process.env.ANTHROPIC_API_KEY,
-      streaming: true,
-    });
+  ) {}
 
-    // Separate LLM instance for code generation with maximum token limit
-    // Claude Haiku 4.5 supports up to 64K output tokens
-    // This prevents truncation of generated TypeScript files (Issue #136)
-    // streaming: true is required by the Anthropic API configuration (Issue #142)
-    this.codeGenLlm = new ChatAnthropic({
-      modelName: 'claude-haiku-4-5-20251001',
-      temperature: 0.3, // Lower temperature for more consistent code output
-      topP: undefined,
-      maxTokens: 64000, // Maximum output for Haiku 4.5 - no truncation
-      anthropicApiKey: process.env.ANTHROPIC_API_KEY,
-      streaming: true,
-    });
+  /**
+   * Generate code with the configured model, retrying once at a higher output
+   * cap if the response was truncated.
+   *
+   * Truncation is reported by the API (`stop_reason: "max_tokens"`) and surfaced
+   * as a TruncatedResponseError - we never brace-balance or fabricate the tail
+   * of a cut-off file.
+   */
+  private async generateCode(prompt: string, caller: string): Promise<string> {
+    try {
+      return await this.anthropic.completeText({
+        prompt,
+        maxTokens: CODE_GEN_MAX_TOKENS,
+        caller,
+      });
+    } catch (error) {
+      if (!(error instanceof TruncatedResponseError)) {
+        throw error;
+      }
+
+      this.logger.warn(
+        `${caller} truncated at ${CODE_GEN_MAX_TOKENS} output tokens, ` +
+          `retrying at ${CODE_GEN_RETRY_MAX_TOKENS}`,
+      );
+
+      return this.anthropic.completeText({
+        prompt,
+        maxTokens: CODE_GEN_RETRY_MAX_TOKENS,
+        caller: `${caller}.retry`,
+      });
+    }
+  }
+
+  /** Strip a fenced TypeScript code block, if the model wrapped its output. */
+  private stripCodeFence(text: string): string {
+    const codeBlockMatch = text.match(/```(?:typescript|ts)?\n([\s\S]*?)\n```/);
+    return codeBlockMatch ? codeBlockMatch[1] : text;
   }
 
   /**
@@ -217,17 +266,14 @@ export class RefinementService {
 
     // Step 2: Test MCP server in Docker
     this.logger.log(`Testing MCP server: ${generatedCode.metadata.tools.length} tools`);
-    const testResults = await this.mcpTestingService.testMcpServer(
-      generatedCode,
-      {
-        cpuLimit: '0.5',
-        memoryLimit: '512m',
-        timeout: 30,
-        toolTimeout: 5,
-        networkMode: 'none',
-        cleanup: true,
-      }
-    );
+    const testResults = await this.mcpTestingService.testMcpServer(generatedCode, {
+      cpuLimit: '0.5',
+      memoryLimit: '512m',
+      timeout: 30,
+      toolTimeout: 5,
+      networkMode: 'none',
+      cleanup: true,
+    });
 
     // Step 3: Check if all tools work
     if (testResults.overallSuccess && testResults.toolsPassedCount === testResults.toolsFound) {
@@ -252,15 +298,16 @@ export class RefinementService {
 
           if (protocolValid) {
             this.logger.log(
-              `✅ Protocol validation PASSED (${protocolValidation.checks.filter(c => c.passed).length}/${protocolValidation.checks.length} checks)`
+              `✅ Protocol validation PASSED (${protocolValidation.checks.filter((c) => c.passed).length}/${protocolValidation.checks.length} checks)`,
             );
           } else {
             this.logger.warn(
-              `⚠️ Protocol validation FAILED: ${protocolValidation.errors.join(', ')}`
+              `⚠️ Protocol validation FAILED: ${protocolValidation.errors.join(', ')}`,
             );
           }
         } catch (validationError) {
-          const errorMsg = validationError instanceof Error ? validationError.message : String(validationError);
+          const errorMsg =
+            validationError instanceof Error ? validationError.message : String(validationError);
           this.logger.warn(`Protocol validation error: ${errorMsg}`);
           // Don't fail on validation errors, just log
           protocolValid = true;
@@ -270,7 +317,7 @@ export class RefinementService {
       // Only succeed if both tool tests and protocol validation pass
       if (protocolValid) {
         this.logger.log(
-          `✅ SUCCESS! All ${testResults.toolsPassedCount} tools work (iteration ${iteration})`
+          `✅ SUCCESS! All ${testResults.toolsPassedCount} tools work (iteration ${iteration})`,
         );
 
         return {
@@ -289,14 +336,15 @@ export class RefinementService {
           failureCount: protocolValidation?.errors.length || 1,
           categories: [{ type: 'mcp_protocol', count: protocolValidation?.errors.length || 1 }],
           rootCauses: protocolValidation?.errors || ['Protocol validation failed'],
-          fixes: protocolValidation?.checks
-            .filter(c => !c.passed)
-            .map(c => ({
-              toolName: c.name.includes(':') ? c.name.split(':')[1] : 'server',
-              issue: c.message,
-              solution: `Fix ${c.name} compliance issue`,
-              priority: 'HIGH' as const,
-            })) || [],
+          fixes:
+            protocolValidation?.checks
+              .filter((c) => !c.passed)
+              .map((c) => ({
+                toolName: c.name.includes(':') ? c.name.split(':')[1] : 'server',
+                issue: c.message,
+                solution: `Fix ${c.name} compliance issue`,
+                priority: 'HIGH' as const,
+              })) || [],
           recommendation: 'Fix MCP protocol compliance issues identified by validation',
         };
 
@@ -304,7 +352,7 @@ export class RefinementService {
         const refinedCode = await this.refineCode(
           generatedCode,
           protocolFailures,
-          state.generationPlan!
+          state.generationPlan!,
         );
 
         return {
@@ -321,7 +369,7 @@ export class RefinementService {
     // Step 4: Check max iterations
     if (iteration >= maxIterations) {
       this.logger.warn(
-        `Max iterations (${maxIterations}) reached. ${testResults.toolsPassedCount}/${testResults.toolsFound} tools passed.`
+        `Max iterations (${maxIterations}) reached. ${testResults.toolsPassedCount}/${testResults.toolsFound} tools passed.`,
       );
 
       return {
@@ -343,7 +391,7 @@ export class RefinementService {
     const refinedCode = await this.refineCode(
       generatedCode,
       failureAnalysis,
-      state.generationPlan!
+      state.generationPlan!,
     );
 
     // Step 7: Continue loop
@@ -378,20 +426,26 @@ export class RefinementService {
     // PRIORITY: If ensemble already discovered tools, use generateFromPlan
     // This respects the ensemble's work and avoids duplicate tool discovery
     if (plan.toolsToGenerate && plan.toolsToGenerate.length > 0) {
-      this.logger.log(`Using ${plan.toolsToGenerate.length} tools from ensemble for MCP server generation`);
+      this.logger.log(
+        `Using ${plan.toolsToGenerate.length} tools from ensemble for MCP server generation`,
+      );
       return await this.generateFromPlan(state);
     }
 
     // Fallback: Use McpGenerationService for GitHub URLs when no ensemble tools exist
     const githubUrl = state.extractedData?.githubUrl;
     if (githubUrl && githubUrl.trim().length > 0 && githubUrl.includes('github.com')) {
-      this.logger.log(`Generating MCP server from GitHub repository (no ensemble tools): ${githubUrl}`);
+      this.logger.log(
+        `Generating MCP server from GitHub repository (no ensemble tools): ${githubUrl}`,
+      );
       const generated = await this.mcpGenerationService.generateMCPServer(githubUrl);
       return this.convertToGeneratedCode(generated);
     }
 
     // No tools available and no GitHub URL - cannot generate
-    throw new Error('No tools available for MCP server generation. Ensemble did not produce tools and no GitHub URL provided.');
+    throw new Error(
+      'No tools available for MCP server generation. Ensemble did not produce tools and no GitHub URL provided.',
+    );
   }
 
   /**
@@ -409,17 +463,22 @@ export class RefinementService {
 
     // Validate that we have tools to generate
     if (!plan.toolsToGenerate || plan.toolsToGenerate.length === 0) {
-      throw new Error('No tools specified in generation plan. Cannot generate MCP server without tools.');
+      throw new Error(
+        'No tools specified in generation plan. Cannot generate MCP server without tools.',
+      );
     }
 
     // Extract service name from user input or research
-    const serviceName = state.userInput.match(/(?:for|with)\s+(?:the\s+)?([A-Z][a-zA-Z\s]+(?:API|api))/)?.[1]
-      || research?.synthesizedPlan?.summary?.match(/([A-Z][a-zA-Z\s]+(?:API|api))/)?.[1]
-      || 'API';
+    const serviceName =
+      state.userInput.match(/(?:for|with)\s+(?:the\s+)?([A-Z][a-zA-Z\s]+(?:API|api))/)?.[1] ||
+      research?.synthesizedPlan?.summary?.match(/([A-Z][a-zA-Z\s]+(?:API|api))/)?.[1] ||
+      'API';
 
     const serverName = serviceName.toLowerCase().replace(/\s+/g, '-').replace(/api$/i, '') + '-mcp';
 
-    this.logger.log(`Generating MCP server "${serverName}" with ${plan.toolsToGenerate.length} tools`);
+    this.logger.log(
+      `Generating MCP server "${serverName}" with ${plan.toolsToGenerate.length} tools`,
+    );
 
     // Generate TypeScript MCP server code using LLM
     const mainFile = await this.generateMainFile(state, serverName);
@@ -428,11 +487,11 @@ export class RefinementService {
 
     // Filter out any undefined tools and validate structure
     const validTools = plan.toolsToGenerate
-      .filter(t => t && t.name && t.description)
-      .map(t => ({
+      .filter((t) => t && t.name && t.description)
+      .map((t) => ({
         name: t.name,
         inputSchema: t.parameters || {},
-        description: t.description
+        description: t.description,
       }));
 
     if (validTools.length === 0) {
@@ -474,14 +533,14 @@ export class RefinementService {
     }
 
     // Filter out any undefined or invalid tools
-    const validTools = plan.toolsToGenerate.filter(t => t && t.name && t.description);
+    const validTools = plan.toolsToGenerate.filter((t) => t && t.name && t.description);
 
     if (validTools.length === 0) {
       throw new Error('No valid tools with name and description found in generation plan');
     }
 
     const toolCount = validTools.length;
-    const toolsList = validTools.map(t => `- ${t.name}: ${t.description}`).join('\n');
+    const toolsList = validTools.map((t) => `- ${t.name}: ${t.description}`).join('\n');
 
     // Build constraint warning if user specified limits (Issue #137)
     let constraintWarning = '';
@@ -525,28 +584,15 @@ ${toolsList}
 **Output Format**: Return ONLY the complete TypeScript code, no explanations.
 Start with imports.`;
 
-    this.logger.log(`Prompt prepared for ${toolCount} valid tools (user constraint: ${state.requestedToolCount || 'none'})`);
-
+    this.logger.log(
+      `Prompt prepared for ${toolCount} valid tools (user constraint: ${state.requestedToolCount || 'none'})`,
+    );
 
     try {
-      // Use codeGenLlm with higher token limit to prevent truncation (Issue #136)
-      const response = await this.codeGenLlm.invoke(prompt);
-      let code = response.content.toString();
+      const response = await this.generateCode(prompt, 'refinement.generateMainFile');
+      const code = this.stripCodeFence(response);
 
-      // Remove markdown code blocks if present
-      const codeBlockMatch = code.match(/\`\`\`(?:typescript|ts)?\n([\s\S]*?)\n\`\`\`/);
-      if (codeBlockMatch) {
-        code = codeBlockMatch[1];
-      }
-
-      // Detect truncation: valid TypeScript files must end with proper structure
-      const truncationDetected = this.detectTruncation(code);
-      if (truncationDetected) {
-        this.logger.warn(`Code truncation detected! Attempting recovery...`);
-        code = this.attemptTruncationRecovery(code);
-      }
-
-      this.logger.log(`Generated main file: ${code.length} characters (truncation: ${truncationDetected})`);
+      this.logger.log(`Generated main file: ${code.length} characters`);
       return code;
     } catch (error) {
       this.logger.error(`Code generation failed: ${error.message}`);
@@ -626,8 +672,8 @@ Start with imports.`;
         },
         dependencies: {
           '@modelcontextprotocol/sdk': '^0.5.0',
-          'zod': '^3.23.0',
-          'axios': '^1.7.0',
+          zod: '^3.23.0',
+          axios: '^1.7.0',
         },
         devDependencies: {
           '@types/node': '^20.0.0',
@@ -635,7 +681,7 @@ Start with imports.`;
         },
       },
       null,
-      2
+      2,
     );
   }
 
@@ -662,7 +708,7 @@ Start with imports.`;
         include: ['src/**/*'],
       },
       null,
-      2
+      2,
     );
   }
 
@@ -684,9 +730,9 @@ Start with imports.`;
    */
   private async analyzeFailures(
     testResults: McpServerTestResult,
-    generatedCode: GeneratedCode
+    generatedCode: GeneratedCode,
   ): Promise<FailureAnalysis> {
-    const failures = testResults.results.filter(r => !r.success);
+    const failures = testResults.results.filter((r) => !r.success);
 
     const prompt = `${getPlatformContextPrompt()}
 
@@ -708,12 +754,16 @@ ${MCP_REFERENCE_IMPLEMENTATION}
 ${testResults.buildError ? `**Build Error**:\n${testResults.buildError}\n` : ''}
 
 **Tool Failures**:
-${failures.map((f, i) => `
+${failures
+  .map(
+    (f, i) => `
 ${i + 1}. Tool: ${f.toolName}
    - Error: ${f.error}
    - MCP Compliant: ${f.mcpCompliant}
    - Execution Time: ${f.executionTime}ms
-`).join('\n')}
+`,
+  )
+  .join('\n')}
 
 **Task**: Analyze root causes and provide specific fixes.
 
@@ -724,28 +774,12 @@ ${i + 1}. Tool: ${f.toolName}
 4. **Logic**: Incorrect implementation, wrong outputs
 5. **Timeout**: Tools taking >5 seconds
 
-**Output Format** (STRICT JSON):
-\`\`\`json
-{
-  "failureCount": number,
-  "categories": [
-    { "type": "syntax|runtime|mcp_protocol|logic|timeout", "count": number }
-  ],
-  "rootCauses": [
-    "Specific description of root cause"
-  ],
-  "fixes": [
-    {
-      "toolName": "tool_name",
-      "issue": "Specific issue description",
-      "solution": "Specific code fix or change needed",
-      "priority": "HIGH|MEDIUM|LOW",
-      "codeSnippet": "Optional: Example code showing the fix"
-    }
-  ],
-  "recommendation": "Overall strategy for fixing all issues"
-}
-\`\`\`
+**Provide**:
+- failureCount
+- categories: [{ type: syntax|runtime|mcp_protocol|logic|timeout, count }]
+- rootCauses: specific descriptions of each root cause
+- fixes: [{ toolName, issue, solution, priority: HIGH|MEDIUM|LOW, codeSnippet (optional) }]
+- recommendation: overall strategy for fixing all issues
 
 **Quality Guidelines**:
 - Be specific: "Missing 'result' field in MCP response" not "Protocol error"
@@ -762,19 +796,19 @@ ${i + 1}. Tool: ${f.toolName}
     "priority": "HIGH",
     "codeSnippet": "return { content: [{ type: 'text', text: JSON.stringify(userData) }] };"
   }]
-}
-
-Return ONLY valid JSON with failure analysis.`;
+}`;
 
     try {
-      const response = await this.llm.invoke(prompt);
-      const content = response.content.toString();
-
-      // Extract JSON using safe bracket-balanced parsing
-      const analysis = safeParseJSON<FailureAnalysis>(content, this.logger);
+      const analysis: FailureAnalysis = await this.anthropic.completeStructured({
+        prompt,
+        schema: FailureAnalysisSchema,
+        schemaName: 'FailureAnalysis',
+        maxTokens: ANALYSIS_MAX_TOKENS,
+        caller: 'refinement.analyzeFailures',
+      });
 
       this.logger.log(
-        `Failure analysis: ${analysis.rootCauses.length} root causes, ${analysis.fixes.length} fixes`
+        `Failure analysis: ${analysis.rootCauses.length} root causes, ${analysis.fixes.length} fixes`,
       );
 
       return analysis;
@@ -785,8 +819,8 @@ Return ONLY valid JSON with failure analysis.`;
       return {
         failureCount: failures.length,
         categories: [{ type: 'runtime', count: failures.length }],
-        rootCauses: failures.map(f => f.error || 'Unknown error'),
-        fixes: failures.map(f => ({
+        rootCauses: failures.map((f) => f.error || 'Unknown error'),
+        fixes: failures.map((f) => ({
           toolName: f.toolName,
           issue: f.error || 'Tool failed',
           solution: 'Review tool implementation and ensure MCP protocol compliance',
@@ -816,7 +850,7 @@ Return ONLY valid JSON with failure analysis.`;
   private async refineCode(
     generatedCode: GeneratedCode,
     failureAnalysis: FailureAnalysis,
-    plan: GraphState['generationPlan']
+    _plan: GraphState['generationPlan'],
   ): Promise<GeneratedCode> {
     const prompt = `${getPlatformContextPrompt()}
 
@@ -840,12 +874,15 @@ ${failureAnalysis.fixes
     const priorityOrder = { HIGH: 3, MEDIUM: 2, LOW: 1 };
     return priorityOrder[b.priority] - priorityOrder[a.priority];
   })
-  .map((f, i) => `
+  .map(
+    (f, i) => `
 ${i + 1}. **${f.toolName}** (${f.priority}):
    - Issue: ${f.issue}
    - Solution: ${f.solution}
    ${f.codeSnippet ? `- Example: ${f.codeSnippet}` : ''}
-`).join('\n')}
+`,
+  )
+  .join('\n')}
 
 **Recommendation**: ${failureAnalysis.recommendation}
 
@@ -867,25 +904,10 @@ Return ONLY the complete corrected TypeScript code (no explanations, no markdown
 Start directly with the imports.`;
 
     try {
-      // Use codeGenLlm with higher token limit to prevent truncation (Issue #136)
-      const response = await this.codeGenLlm.invoke(prompt);
-      const content = response.content.toString();
+      const response = await this.generateCode(prompt, 'refinement.refineCode');
+      const refinedCode = this.stripCodeFence(response);
 
-      // Extract TypeScript code (remove markdown if present)
-      let refinedCode = content;
-      const codeBlockMatch = content.match(/```(?:typescript|ts)?\n([\s\S]*?)\n```/);
-      if (codeBlockMatch) {
-        refinedCode = codeBlockMatch[1];
-      }
-
-      // Detect truncation and attempt recovery (Issue #136)
-      const truncationDetected = this.detectTruncation(refinedCode);
-      if (truncationDetected) {
-        this.logger.warn(`Code truncation detected in refinement! Attempting recovery...`);
-        refinedCode = this.attemptTruncationRecovery(refinedCode);
-      }
-
-      this.logger.log(`Code refined: ${refinedCode.length} characters (truncation: ${truncationDetected})`);
+      this.logger.log(`Code refined: ${refinedCode.length} characters`);
 
       // Return new GeneratedCode with refined main file
       return {
@@ -902,116 +924,5 @@ Start directly with the imports.`;
       // Fallback: Return original code (will likely fail again, but graceful)
       return generatedCode;
     }
-  }
-
-  /**
-   * Detect Truncation
-   *
-   * Checks if generated TypeScript code appears to be truncated.
-   * Valid MCP server files should end with proper structure.
-   *
-   * Detection heuristics:
-   * 1. File should end with main() call or export
-   * 2. Braces should be balanced
-   * 3. No trailing incomplete statements
-   *
-   * @param code - Generated TypeScript code
-   * @returns True if truncation detected
-   */
-  private detectTruncation(code: string): boolean {
-    if (!code || code.length === 0) {
-      return true;
-    }
-
-    const trimmedCode = code.trim();
-
-    // Check 1: Valid TypeScript files should end with specific patterns
-    const validEndings = [
-      /main\(\)\.catch\([^)]*\);?\s*$/,           // main().catch(console.error);
-      /main\(\);?\s*$/,                            // main();
-      /export\s+\{[^}]*\};?\s*$/,                 // export { ... };
-      /export\s+default\s+\w+;?\s*$/,             // export default X;
-      /\}\s*$/,                                    // ends with closing brace
-    ];
-
-    const hasValidEnding = validEndings.some(pattern => pattern.test(trimmedCode));
-
-    // Check 2: Brace balance (opening vs closing)
-    const openBraces = (code.match(/\{/g) || []).length;
-    const closeBraces = (code.match(/\}/g) || []).length;
-    const bracesBalanced = openBraces === closeBraces;
-
-    // Check 3: Parentheses balance
-    const openParens = (code.match(/\(/g) || []).length;
-    const closeParens = (code.match(/\)/g) || []).length;
-    const parensBalanced = openParens === closeParens;
-
-    // Check 4: Look for obvious truncation patterns
-    const truncationPatterns = [
-      /[=+\-*/%&|^!<>]\s*$/,    // ends with operator
-      /,\s*$/,                   // ends with comma
-      /\(\s*$/,                  // ends with open paren
-      /\[\s*$/,                  // ends with open bracket
-      /:\s*$/,                   // ends with colon
-      /\.\s*$/,                  // ends with dot
-      /=>\s*$/,                  // ends with arrow
-      /\b(if|else|for|while|switch|try|catch|const|let|var|function|async|await|return)\s*$/i,
-    ];
-
-    const hasObviousTruncation = truncationPatterns.some(pattern => pattern.test(trimmedCode));
-
-    // Truncation detected if any of these conditions fail
-    const isTruncated = !hasValidEnding || !bracesBalanced || !parensBalanced || hasObviousTruncation;
-
-    if (isTruncated) {
-      this.logger.debug(`Truncation detection: validEnding=${hasValidEnding}, braces=${openBraces}/${closeBraces}, parens=${openParens}/${closeParens}, obviousTruncation=${hasObviousTruncation}`);
-    }
-
-    return isTruncated;
-  }
-
-  /**
-   * Attempt Truncation Recovery
-   *
-   * Tries to fix truncated code by adding missing closing structures.
-   * This is a best-effort recovery - the code may still not compile,
-   * but the refinement loop will catch and fix remaining issues.
-   *
-   * @param code - Truncated TypeScript code
-   * @returns Code with attempted fixes
-   */
-  private attemptTruncationRecovery(code: string): string {
-    let fixedCode = code.trim();
-
-    // Count unbalanced braces and add closing ones
-    const openBraces = (fixedCode.match(/\{/g) || []).length;
-    const closeBraces = (fixedCode.match(/\}/g) || []).length;
-    const missingBraces = openBraces - closeBraces;
-
-    if (missingBraces > 0) {
-      this.logger.debug(`Adding ${missingBraces} missing closing braces`);
-      fixedCode += '\n' + '}'.repeat(missingBraces);
-    }
-
-    // Count unbalanced parentheses
-    const openParens = (fixedCode.match(/\(/g) || []).length;
-    const closeParens = (fixedCode.match(/\)/g) || []).length;
-    const missingParens = openParens - closeParens;
-
-    if (missingParens > 0) {
-      this.logger.debug(`Adding ${missingParens} missing closing parentheses`);
-      // Insert before the closing braces we just added
-      const insertPos = fixedCode.length - missingBraces;
-      fixedCode = fixedCode.slice(0, insertPos) + ')'.repeat(missingParens) + fixedCode.slice(insertPos);
-    }
-
-    // Add main() call if missing and we have a main function
-    if (!fixedCode.includes('main()') && fixedCode.includes('async function main')) {
-      this.logger.debug('Adding missing main() call');
-      fixedCode += '\n\nmain().catch(console.error);';
-    }
-
-    this.logger.log(`Truncation recovery: added ${missingBraces} braces, ${missingParens} parens`);
-    return fixedCode;
   }
 }

@@ -2,11 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Octokit } from '@octokit/rest';
 
-import {
-  ValidationResult,
-  WorkflowRunInfo,
-  ToolValidationResult,
-} from '../types/validation.types';
+import { ValidationResult, WorkflowRunInfo, ToolValidationResult } from '../types/validation.types';
 
 /**
  * GitHub Actions-based validator for MCP servers
@@ -58,7 +54,11 @@ export class GitHubActionsValidatorProvider {
   /**
    * Get workflow run by ID
    */
-  async getWorkflowRun(owner: string, repo: string, runId: number): Promise<WorkflowRunInfo | null> {
+  async getWorkflowRun(
+    owner: string,
+    repo: string,
+    runId: number,
+  ): Promise<WorkflowRunInfo | null> {
     try {
       const { data: run } = await this.octokit.actions.getWorkflowRun({
         owner,
@@ -171,7 +171,13 @@ export class GitHubActionsValidatorProvider {
     owner: string,
     repo: string,
     runId: number,
-  ): Promise<Array<{ name: string; conclusion: string | null; steps: Array<{ name: string; conclusion: string | null }> }>> {
+  ): Promise<
+    Array<{
+      name: string;
+      conclusion: string | null;
+      steps: Array<{ name: string; conclusion: string | null }>;
+    }>
+  > {
     try {
       const { data } = await this.octokit.actions.listJobsForWorkflowRun({
         owner,
@@ -197,7 +203,11 @@ export class GitHubActionsValidatorProvider {
    * Parse job results to extract tool test results
    */
   private parseJobResults(
-    jobs: Array<{ name: string; conclusion: string | null; steps: Array<{ name: string; conclusion: string | null }> }>,
+    jobs: Array<{
+      name: string;
+      conclusion: string | null;
+      steps: Array<{ name: string; conclusion: string | null }>;
+    }>,
   ): ToolValidationResult[] {
     const results: ToolValidationResult[] = [];
 
@@ -205,7 +215,10 @@ export class GitHubActionsValidatorProvider {
       // Look for test steps
       for (const step of job.steps) {
         // Check if this is a test step
-        if (step.name.toLowerCase().includes('test') || step.name.toLowerCase().includes('validate')) {
+        if (
+          step.name.toLowerCase().includes('test') ||
+          step.name.toLowerCase().includes('validate')
+        ) {
           results.push({
             toolName: step.name,
             success: step.conclusion === 'success',
@@ -236,10 +249,7 @@ export class GitHubActionsValidatorProvider {
    */
   parseRepositoryUrl(url: string): { owner: string; repo: string } | null {
     // Handle GitHub URLs
-    const patterns = [
-      /github\.com\/([^/]+)\/([^/]+)/,
-      /github\.com:([^/]+)\/([^/]+)/,
-    ];
+    const patterns = [/github\.com\/([^/]+)\/([^/]+)/, /github\.com:([^/]+)\/([^/]+)/];
 
     for (const pattern of patterns) {
       const match = url.match(pattern);
