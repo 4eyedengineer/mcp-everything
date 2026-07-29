@@ -1,8 +1,24 @@
 name: Deploy
 
+# Image update flow:
+#   - Pushes to `main` (that touch backend/frontend code) and manual
+#     workflow_dispatch runs build+push `:latest` for both images, which is
+#     what k8s/base/{backend,frontend}/deployment.yaml pin to. A cluster using
+#     `imagePullPolicy: Always` picks up a new `:latest` on the next pod
+#     restart/rollout (e.g. `kubectl rollout restart deployment/mcp-backend`).
+#   - Published GitHub releases additionally tag images with the release
+#     semver (`type=semver` below) for pinning a specific version instead of
+#     `:latest`, by editing the `image:` field in the k8s manifests.
 on:
   release:
     types: [published]
+  push:
+    branches: [main]
+    paths:
+      - 'packages/backend/**'
+      - 'packages/frontend/**'
+      - '.github/workflows/deploy.yml'
+  workflow_dispatch: {}
 
 env:
   REGISTRY: ghcr.io
@@ -33,6 +49,7 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=sha,prefix=
+            type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Extract metadata for frontend
         id: meta-frontend
@@ -43,6 +60,7 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=sha,prefix=
+            type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3

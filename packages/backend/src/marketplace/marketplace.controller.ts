@@ -10,15 +10,18 @@ import {
   HttpCode,
   HttpStatus,
   ParseUUIDPipe,
+  UseGuards,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { MarketplaceService } from './marketplace.service';
 import { CreateServerDto } from './dto/create-server.dto';
-import { UpdateServerDto } from './dto/update-server.dto';
+import { UpdateServerDto, AdminUpdateServerDto } from './dto/update-server.dto';
 import { SearchServersDto, PaginatedResponse } from './dto/search-servers.dto';
 import { ServerResponse, ServerSummaryResponse, CategoryResponse } from './dto/server-response.dto';
 import { User } from '../database/entities/user.entity';
 import { Public } from '../auth/decorators/public.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { AdminGuard } from './guards/admin.guard';
 
 @Controller('api/v1/marketplace')
 export class MarketplaceController {
@@ -91,8 +94,13 @@ export class MarketplaceController {
   /**
    * Record a download and increment counter
    * POST /api/v1/marketplace/servers/:id/download
+   *
+   * Stays @Public() - downloads are expected from anonymous CLI/client
+   * installs - but is tightly throttled since it's an unauthenticated
+   * counter increment that would otherwise be trivial to game.
    */
   @Public()
+  @Throttle({ default: { limit: 10, ttl: 60000 } }) // 10 requests per minute per IP
   @Post('servers/:id/download')
   @HttpCode(HttpStatus.OK)
   async recordDownload(@Param('id', ParseUUIDPipe) id: string): Promise<{ success: boolean }> {
@@ -172,5 +180,23 @@ export class MarketplaceController {
     @CurrentUser() user: User,
   ): Promise<ServerResponse> {
     return this.marketplaceService.unpublish(id, user);
+  }
+
+  // ==================== Admin Endpoints ====================
+
+  /**
+   * Admin update a server - status, featured flag, and any other fields.
+   * PATCH /api/v1/marketplace/admin/servers/:id
+   *
+   * Gated by AdminGuard (ADMIN_USER_EMAILS allowlist) - see guards/admin.guard.ts
+   * for why this is an interim mechanism rather than a real role check.
+   */
+  @UseGuards(AdminGuard)
+  @Patch('admin/servers/:id')
+  async adminUpdateServer(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: AdminUpdateServerDto,
+  ): Promise<ServerResponse> {
+    return this.marketplaceService.adminUpdate(id, dto);
   }
 }
