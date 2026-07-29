@@ -502,7 +502,15 @@ export class RefinementService {
       mainFile,
       packageJson,
       tsConfig,
-      supportingFiles: {},
+      // Every generated server needs a Dockerfile: container-registry.service.ts
+      // runs `docker build` directly against the on-disk server directory when
+      // deploying. This is the primary (ensemble-tools) generation path, so
+      // emitting them here is required - convertToGeneratedCode only covers the
+      // GitHub-URL fallback and refinement iterations 2+.
+      supportingFiles: {
+        Dockerfile: this.generateDockerfile(),
+        '.dockerignore': this.generateDockerignore(),
+      },
       metadata: {
         tools: validTools,
         iteration: 1,
@@ -738,7 +746,8 @@ Start with imports.`;
 FROM node:20-alpine AS build
 WORKDIR /app
 COPY package*.json ./
-RUN npm ci --ignore-scripts
+# npm install, not npm ci: generated servers ship without a package-lock.json
+RUN npm install --ignore-scripts --no-audit --no-fund
 COPY . .
 RUN npm run build
 
