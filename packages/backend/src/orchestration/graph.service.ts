@@ -3,6 +3,7 @@ import { StateGraph, END, START, Annotation, CompiledStateGraph } from '@langcha
 import * as z from 'zod/v4';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { ConfigService } from '@nestjs/config';
 import { mkdirSync, writeFileSync, existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { Conversation, ConversationMemory } from '../database/entities';
@@ -55,10 +56,17 @@ export class GraphOrchestrationService {
     private readonly anthropic: AnthropicService,
     // Logging services
     structuredLogger: StructuredLoggerService,
+    private readonly configService: ConfigService,
     @Optional() private errorLoggingService?: ErrorLoggingService,
   ) {
     this.logger = structuredLogger.setContext('GraphOrchestrationService');
-    this.generatedServersDir = join(process.cwd(), '../../generated-servers');
+    // In the production container image cwd is /app and the Dockerfile
+    // provisions a writable /app/generated-servers - `../../generated-servers`
+    // resolves outside of /app and is not writable by the nestjs user.
+    this.generatedServersDir = this.configService.get<string>(
+      'GENERATED_SERVERS_DIR',
+      join(process.cwd(), 'generated-servers'),
+    );
     this.buildGraph();
   }
 

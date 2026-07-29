@@ -1,6 +1,7 @@
 /// <reference types="jest" />
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
+import { ConfigService } from '@nestjs/config';
 import { NotFoundException, NotImplementedException } from '@nestjs/common';
 import { DeploymentOrchestratorService } from './deployment.service';
 import { Deployment } from '../database/entities/deployment.entity';
@@ -153,6 +154,10 @@ describe('DeploymentOrchestratorService', () => {
         {
           provide: ValidationService,
           useValue: mockValidationService,
+        },
+        {
+          provide: ConfigService,
+          useValue: { get: jest.fn((_key: string, defaultValue?: unknown) => defaultValue) },
         },
       ],
     }).compile();

@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { existsSync, readdirSync, readFileSync } from 'fs';
 import { join } from 'path';
 
@@ -26,8 +27,16 @@ export class LocalDockerValidatorProvider {
   private readonly generatedServersDir: string;
   private progressCallbacks: Map<string, (update: ValidationProgressUpdate) => void> = new Map();
 
-  constructor(private readonly mcpTestingService: McpTestingService) {
-    this.generatedServersDir = join(process.cwd(), '../../generated-servers');
+  constructor(
+    private readonly mcpTestingService: McpTestingService,
+    private readonly configService: ConfigService,
+  ) {
+    // Must resolve to the same directory as GraphOrchestrationService (see
+    // graph.service.ts) so validation can find the files generation wrote.
+    this.generatedServersDir = this.configService.get<string>(
+      'GENERATED_SERVERS_DIR',
+      join(process.cwd(), 'generated-servers'),
+    );
   }
 
   /**

@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { ConfigService } from '@nestjs/config';
 import { existsSync, readdirSync, readFileSync } from 'fs';
 import { join } from 'path';
 
@@ -57,8 +58,15 @@ export class DeploymentOrchestratorService {
     private readonly rollbackService: DeploymentRollbackService,
     @Inject(forwardRef(() => ValidationService))
     private readonly validationService: ValidationService,
+    private readonly configService: ConfigService,
   ) {
-    this.generatedServersDir = join(process.cwd(), '../../generated-servers');
+    // Must match GraphOrchestrationService's resolution of this same
+    // directory (see graph.service.ts) so deployment can find the files
+    // that generation wrote to disk.
+    this.generatedServersDir = this.configService.get<string>(
+      'GENERATED_SERVERS_DIR',
+      join(process.cwd(), 'generated-servers'),
+    );
   }
 
   /**
@@ -182,6 +190,18 @@ export class DeploymentOrchestratorService {
       }
 
       const serverName = options.serverName || this.getServerName(conversation);
+
+      // Persist server metadata (serverName/localPath/description/tools/envVars)
+      // so HostingService.deployToCloud can later find this generated server on
+      // disk without re-deriving it. Done regardless of whether the GitHub
+      // deploy below succeeds, since the files already exist on disk.
+      await this.persistDeploymentServerMetadata(
+        savedDeployment.id,
+        conversationId,
+        conversation,
+        serverName,
+        options,
+      );
 
       // Always add .gitignore
       files.push(...this.gitignoreProvider.generateGitignoreFiles());
@@ -336,6 +356,18 @@ export class DeploymentOrchestratorService {
       const tools = this.getToolsFromConversation(conversation);
 
       const serverName = options.serverName || this.getServerName(conversation);
+
+      // Persist server metadata (serverName/localPath/description/tools/envVars)
+      // so HostingService.deployToCloud can later find this generated server on
+      // disk without re-deriving it. Done regardless of whether the Gist
+      // deploy below succeeds, since the files already exist on disk.
+      await this.persistDeploymentServerMetadata(
+        savedDeployment.id,
+        conversationId,
+        conversation,
+        serverName,
+        options,
+      );
 
       // Deploy to Gist using single-file bundled format
       const result = await this.gistProvider.deploySingleFile(
@@ -869,5 +901,42 @@ export class DeploymentOrchestratorService {
       name: tool.name,
       description: tool.description || `Tool: ${tool.name}`,
     }));
+  }
+
+  /**
+   * Persist server metadata (serverName, localPath, description, tools,
+   * envVars) onto a deployment record.
+   *
+   * These columns (added by migration 1733200001000-AddDeploymentServerFields)
+   * are what HostingService.deployToCloud reads to build+push a Docker image
+   * and generate K8s manifests for a generated server. Nothing previously
+   * wrote them, so cloud hosting could never locate a real deployment.
+   */
+  private async persistDeploymentServerMetadata(
+    deploymentId: string,
+    conversationId: string,
+    conversation: Conversation,
+    serverName: string,
+    options: DeploymentOptions,
+  ): Promise<void> {
+    const tools = this.getToolsFromConversation(conversation).map((tool) => ({
+      name: tool.name,
+      description: tool.description,
+      inputSchema: undefined,
+    }));
+
+    const envVars = options.envVars?.map((envVar) => ({
+      name: envVar.name,
+      required: !envVar.skipped,
+    }));
+
+    await this.deploymentRepository.update(deploymentId, {
+      serverName,
+      localPath: join(this.generatedServersDir, conversationId),
+      description:
+        options.description || `MCP Server generated from conversation ${conversationId}`,
+      tools,
+      envVars,
+    });
   }
 }
