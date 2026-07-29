@@ -3,6 +3,7 @@ import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { Observable, throwError, interval } from 'rxjs';
 import { catchError, map, switchMap, takeWhile, startWith } from 'rxjs/operators';
 import { API_BASE } from '../config/api.config';
+import { parseHttpError } from '../../shared/utils/http-error.util';
 
 /**
  * Status values for hosted servers
@@ -224,23 +225,14 @@ export class HostingApiService {
   private handleError(error: HttpErrorResponse, operation: string): Observable<never> {
     console.error(`${operation} failed:`, error);
 
-    let errorMessage = 'An unexpected error occurred';
+    let errorMessage: string;
 
-    if (error.error instanceof ErrorEvent) {
-      // Client-side error
-      errorMessage = error.error.message;
-    } else if (error.error?.error) {
-      // Backend error with message
-      errorMessage = error.error.error;
-    } else if (error.error?.message) {
-      // Alternative backend error format
-      errorMessage = error.error.message;
-    } else if (error.status === 404) {
+    if (error.status === 404) {
       errorMessage = 'Server not found. It may have been deleted.';
-    } else if (error.status === 429) {
-      errorMessage = 'Too many requests. Please wait a moment before trying again.';
     } else if (error.status === 500) {
       errorMessage = 'Server error during operation. Please try again.';
+    } else {
+      errorMessage = parseHttpError(error);
     }
 
     return throwError(() => ({

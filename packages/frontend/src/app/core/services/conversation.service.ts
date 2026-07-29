@@ -1,8 +1,9 @@
 import { Injectable } from '@angular/core';
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
-import { Observable, throwError, of } from 'rxjs';
+import { Observable, of } from 'rxjs';
 import { catchError, map } from 'rxjs/operators';
 import { API_BASE } from '../config/api.config';
+import { parseHttpError } from '../../shared/utils/http-error.util';
 
 /**
  * Conversation state that may contain generated code
@@ -221,7 +222,7 @@ export class ConversationService {
    */
   private handleError<T>(operation = 'operation', result?: T) {
     return (error: HttpErrorResponse): Observable<T> => {
-      console.error(`${operation} failed:`, error);
+      console.error(`${operation} failed:`, parseHttpError(error));
 
       // Log error details for debugging
       if (error.error instanceof ErrorEvent) {

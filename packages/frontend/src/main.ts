@@ -1,15 +1,11 @@
 import { bootstrapApplication } from '@angular/platform-browser';
+import { enableProdMode } from '@angular/core';
 import { AppComponent } from './app/app.component';
-import { enableProdMode, importProvidersFrom } from '@angular/core';
+import { appConfig } from './app/app.config';
 import { environment } from './environments/environment';
-import { AppModule } from './app/app.module';
 
 if (environment.production) {
   enableProdMode();
 }
 
-bootstrapApplication(AppComponent, {
-  providers: [
-    importProvidersFrom(AppModule)
-  ]
-}).catch(err => console.error('Error starting app:', err));
+bootstrapApplication(AppComponent, appConfig).catch(err => console.error('Error starting app:', err));

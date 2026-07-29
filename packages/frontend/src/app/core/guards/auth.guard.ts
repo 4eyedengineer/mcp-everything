@@ -1,46 +1,65 @@
-import { Injectable } from '@angular/core';
-import { CanActivate, CanActivateChild, Router } from '@angular/router';
-import { Observable, of } from 'rxjs';
-import { map, take, catchError, filter, switchMap } from 'rxjs/operators';
+import { inject } from '@angular/core';
+import { CanActivateFn, Router } from '@angular/router';
+import { catchError, filter, map, of, switchMap, take } from 'rxjs';
 import { AuthService } from '../services/auth.service';
 
-@Injectable({
-  providedIn: 'root'
-})
-export class AuthGuard implements CanActivate, CanActivateChild {
-  constructor(
-    private authService: AuthService,
-    private router: Router
-  ) {}
+/**
+ * Factory for the two route guards that depend on auth state:
+ * - `redirectTo: 'require-auth'`: only allow access when authenticated,
+ *   otherwise redirect to `/auth/login` (replaces the old `AuthGuard`).
+ * - `redirectTo: 'require-no-auth'`: only allow access when NOT
+ *   authenticated, otherwise redirect to `/chat` (replaces `NoAuthGuard`).
+ *
+ * Both wait for `AuthService.isLoading$` to settle before checking
+ * `isAuthenticated$`, exactly as the previous class-based guards did.
+ */
+function createAuthGuard(mode: 'require-auth' | 'require-no-auth'): CanActivateFn {
+  return () => {
+    const authService = inject(AuthService);
+    const router = inject(Router);
 
-  canActivate(): Observable<boolean> {
-    return this.checkAuth();
-  }
-
-  canActivateChild(): Observable<boolean> {
-    return this.checkAuth();
-  }
-
-  private checkAuth(): Observable<boolean> {
-    // Wait for the auth service to finish loading before checking auth status
-    return this.authService.isLoading$.pipe(
+    return authService.isLoading$.pipe(
       filter(isLoading => !isLoading),
       take(1),
-      switchMap(() => this.authService.isAuthenticated$),
+      switchMap(() => authService.isAuthenticated$),
       take(1),
       map(isAuthenticated => {
-        if (isAuthenticated) {
-          return true;
+        if (mode === 'require-auth') {
+          if (isAuthenticated) {
+            return true;
+          }
+          router.navigate(['/auth/login']);
+          return false;
         }
-        // User is not authenticated - redirect to login
-        this.router.navigate(['/auth/login']);
-        return false;
+
+        // require-no-auth
+        if (isAuthenticated) {
+          router.navigate(['/chat']);
+          return false;
+        }
+        return true;
       }),
       catchError(() => {
-        // On error, redirect to login
-        this.router.navigate(['/auth/login']);
-        return of(false);
+        if (mode === 'require-auth') {
+          // On error, redirect to login
+          router.navigate(['/auth/login']);
+          return of(false);
+        }
+        // On error, allow access (they can try to login)
+        return of(true);
       })
     );
-  }
+  };
 }
+
+/**
+ * Only allow access to a route when the user is authenticated; otherwise
+ * redirect to `/auth/login`.
+ */
+export const authGuard: CanActivateFn = createAuthGuard('require-auth');
+
+/**
+ * Prevent authenticated users from accessing auth pages (login, register,
+ * etc.); redirects to `/chat` if already logged in.
+ */
+export const noAuthGuard: CanActivateFn = createAuthGuard('require-no-auth');

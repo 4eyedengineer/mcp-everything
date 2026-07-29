@@ -1,99 +1,104 @@
-import { Injectable } from '@angular/core';
 import {
-  HttpInterceptor,
-  HttpRequest,
-  HttpHandler,
+  HttpErrorResponse,
   HttpEvent,
-  HttpErrorResponse
+  HttpHandlerFn,
+  HttpInterceptorFn,
+  HttpRequest
 } from '@angular/common/http';
-import { Observable, throwError, BehaviorSubject } from 'rxjs';
-import { catchError, filter, take, switchMap, finalize } from 'rxjs/operators';
+import { inject } from '@angular/core';
+import { BehaviorSubject, Observable, throwError } from 'rxjs';
+import { catchError, filter, finalize, switchMap, take } from 'rxjs/operators';
 import { AuthService } from '../services/auth.service';
 
-@Injectable()
-export class AuthInterceptor implements HttpInterceptor {
-  private isRefreshing = false;
-  private refreshTokenSubject = new BehaviorSubject<string | null>(null);
+// Module-level state: shared for the lifetime of the app, mirroring the
+// singleton behavior the old class-based `AuthInterceptor` had via DI.
+let isRefreshing = false;
+const refreshTokenSubject = new BehaviorSubject<string | null>(null);
 
-  constructor(private authService: AuthService) {}
+const AUTH_ENDPOINTS = [
+  '/auth/login',
+  '/auth/register',
+  '/auth/refresh',
+  '/auth/forgot-password',
+  '/auth/reset-password',
+  '/auth/github',
+  '/auth/google',
+  '/auth/me'
+];
 
-  intercept(req: HttpRequest<unknown>, next: HttpHandler): Observable<HttpEvent<unknown>> {
-    // Skip auth header for auth endpoints (except /auth/me and /auth/refresh)
-    if (this.isAuthEndpoint(req.url) && !this.isProtectedAuthEndpoint(req.url)) {
-      return next.handle(req);
+function isAuthEndpoint(url: string): boolean {
+  return AUTH_ENDPOINTS.some(endpoint => url.includes(endpoint));
+}
+
+function isProtectedAuthEndpoint(url: string): boolean {
+  return url.includes('/auth/me');
+}
+
+function addAuthHeader(request: HttpRequest<unknown>, token: string): HttpRequest<unknown> {
+  return request.clone({
+    setHeaders: {
+      Authorization: `Bearer ${token}`
     }
+  });
+}
 
-    // Add auth header if token exists
-    const token = this.authService.getAccessToken();
-    if (token) {
-      req = this.addAuthHeader(req, token);
-    }
+function handle401Error(
+  request: HttpRequest<unknown>,
+  authService: AuthService,
+  next: HttpHandlerFn
+): Observable<HttpEvent<unknown>> {
+  if (!isRefreshing) {
+    isRefreshing = true;
+    refreshTokenSubject.next(null);
 
-    return next.handle(req).pipe(
-      catchError((error: HttpErrorResponse) => {
-        // Handle 401 errors by attempting to refresh the token
-        if (error.status === 401 && !this.isAuthEndpoint(req.url)) {
-          return this.handle401Error(req, next);
-        }
+    return authService.refreshToken().pipe(
+      switchMap(response => {
+        refreshTokenSubject.next(response.accessToken);
+        return next(addAuthHeader(request, response.accessToken));
+      }),
+      catchError(error => {
+        // Refresh failed - logout and redirect to login
+        authService.logout();
         return throwError(() => error);
+      }),
+      finalize(() => {
+        isRefreshing = false;
       })
     );
   }
 
-  private addAuthHeader(request: HttpRequest<unknown>, token: string): HttpRequest<unknown> {
-    return request.clone({
-      setHeaders: {
-        Authorization: `Bearer ${token}`
-      }
-    });
-  }
-
-  private isAuthEndpoint(url: string): boolean {
-    const authEndpoints = [
-      '/auth/login',
-      '/auth/register',
-      '/auth/refresh',
-      '/auth/forgot-password',
-      '/auth/reset-password',
-      '/auth/github',
-      '/auth/google',
-      '/auth/me'
-    ];
-    return authEndpoints.some(endpoint => url.includes(endpoint));
-  }
-
-  private isProtectedAuthEndpoint(url: string): boolean {
-    return url.includes('/auth/me');
-  }
-
-  private handle401Error(request: HttpRequest<unknown>, next: HttpHandler): Observable<HttpEvent<unknown>> {
-    if (!this.isRefreshing) {
-      this.isRefreshing = true;
-      this.refreshTokenSubject.next(null);
-
-      return this.authService.refreshToken().pipe(
-        switchMap(response => {
-          this.refreshTokenSubject.next(response.accessToken);
-          return next.handle(this.addAuthHeader(request, response.accessToken));
-        }),
-        catchError(error => {
-          // Refresh failed - logout and redirect to login
-          this.authService.logout();
-          return throwError(() => error);
-        }),
-        finalize(() => {
-          this.isRefreshing = false;
-        })
-      );
-    } else {
-      // Token refresh is already in progress - wait for it to complete
-      return this.refreshTokenSubject.pipe(
-        filter(token => token !== null),
-        take(1),
-        switchMap(token => {
-          return next.handle(this.addAuthHeader(request, token!));
-        })
-      );
-    }
-  }
+  // Token refresh is already in progress - wait for it to complete
+  return refreshTokenSubject.pipe(
+    filter((token): token is string => token !== null),
+    take(1),
+    switchMap(token => next(addAuthHeader(request, token)))
+  );
 }
+
+/**
+ * Attaches the bearer access token to outgoing requests (except public auth
+ * endpoints), and transparently retries the request with a refreshed token on
+ * a 401 response.
+ */
+export const authInterceptor: HttpInterceptorFn = (req, next) => {
+  const authService = inject(AuthService);
+
+  // Skip auth header for auth endpoints (except /auth/me and /auth/refresh)
+  if (isAuthEndpoint(req.url) && !isProtectedAuthEndpoint(req.url)) {
+    return next(req);
+  }
+
+  // Add auth header if token exists
+  const token = authService.getAccessToken();
+  const authedReq = token ? addAuthHeader(req, token) : req;
+
+  return next(authedReq).pipe(
+    catchError((error: HttpErrorResponse) => {
+      // Handle 401 errors by attempting to refresh the token
+      if (error.status === 401 && !isAuthEndpoint(req.url)) {
+        return handle401Error(authedReq, authService, next);
+      }
+      return throwError(() => error);
+    })
+  );
+};

@@ -2,8 +2,8 @@
 <div class="app-container">
   <!-- Conversation Sidebar (Collapsible) -->
   <mcp-conversation-sidebar
-    [isOpen]="sidebarOpen"
-    [conversations]="conversations"
+    [isOpen]="sidebarOpen()"
+    [conversations]="conversations()"
     (close)="closeSidebar()"
     (newChat)="onNewChat()"
     (selectConversation)="onSelectConversation($event)">

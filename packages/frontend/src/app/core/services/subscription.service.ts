@@ -1,7 +1,8 @@
 import { Injectable } from '@angular/core';
-import { HttpClient } from '@angular/common/http';
+import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { Observable, BehaviorSubject, tap, catchError, of } from 'rxjs';
 import { environment } from '../../../environments/environment';
+import { parseHttpError } from '../../shared/utils/http-error.util';
 
 export interface TierLimits {
   monthlyServerLimit: number;
@@ -78,8 +79,8 @@ export class SubscriptionService {
   getSubscription(): Observable<SubscriptionInfo> {
     return this.http.get<SubscriptionInfo>(this.baseUrl).pipe(
       tap(subscription => this.subscriptionSubject.next(subscription)),
-      catchError(error => {
-        console.error('Failed to get subscription:', error);
+      catchError((error: HttpErrorResponse) => {
+        console.error('Failed to get subscription:', parseHttpError(error));
         return of({
           tier: 'free' as const,
           status: 'active' as const,
@@ -92,8 +93,8 @@ export class SubscriptionService {
   getTierInfo(): Observable<TierInfo> {
     return this.http.get<TierInfo>(`${this.baseUrl}/tier`).pipe(
       tap(tierInfo => this.tierInfoSubject.next(tierInfo)),
-      catchError(error => {
-        console.error('Failed to get tier info:', error);
+      catchError((error: HttpErrorResponse) => {
+        console.error('Failed to get tier info:', parseHttpError(error));
         return of({
           currentTier: 'free' as const,
           limits: {
@@ -118,8 +119,8 @@ export class SubscriptionService {
   getUsage(): Observable<UsageInfo> {
     return this.http.get<UsageInfo>(`${this.baseUrl}/usage`).pipe(
       tap(usage => this.usageSubject.next(usage)),
-      catchError(error => {
-        console.error('Failed to get usage:', error);
+      catchError((error: HttpErrorResponse) => {
+        console.error('Failed to get usage:', parseHttpError(error));
         return of({
           serversDeployedThisMonth: 0,
           monthlyLimit: 5,

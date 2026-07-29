@@ -23,8 +23,16 @@ export interface ServerEnvVar {
   description?: string;
 }
 
+/**
+ * Renders a summary card for a just-generated MCP server (name, description,
+ * tools, required env vars) with download/host actions.
+ *
+ * Renamed from `ServerCardComponent` to `GeneratedServerCardComponent` to
+ * disambiguate it from `shared/components/server-card`, which renders
+ * marketplace listing cards.
+ */
 @Component({
-  selector: 'mcp-server-card',
+  selector: 'mcp-generated-server-card',
   standalone: true,
   imports: [
     CommonModule,
@@ -34,10 +42,10 @@ export interface ServerEnvVar {
     MatChipsModule,
     MatTooltipModule
   ],
-  templateUrl: './server-card.component.html',
-  styleUrls: ['./server-card.component.scss']
+  templateUrl: './generated-server-card.component.html',
+  styleUrls: ['./generated-server-card.component.scss']
 })
-export class ServerCardComponent {
+export class GeneratedServerCardComponent {
   @Input() serverName = 'MCP Server';
   @Input() description = '';
   @Input() tools: ServerTool[] = [];

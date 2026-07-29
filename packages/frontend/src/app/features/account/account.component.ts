@@ -177,11 +177,9 @@ export class AccountComponent implements OnInit, OnDestroy {
         window.location.href = result.url;
       }
     } catch (error) {
+      // The global error interceptor already shows a toast for the failed
+      // request - avoid showing a second, redundant one here.
       console.error('Checkout failed:', error);
-      this.snackBar.open('Failed to start checkout. Please try again.', 'Dismiss', {
-        duration: 5000,
-        panelClass: ['error-snackbar']
-      });
     } finally {
       this.isUpgrading = false;
     }

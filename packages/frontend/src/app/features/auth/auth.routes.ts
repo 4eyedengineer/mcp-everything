@@ -1,12 +1,11 @@
-import { NgModule } from '@angular/core';
-import { RouterModule, Routes } from '@angular/router';
+import { Routes } from '@angular/router';
 import { LoginComponent } from './components/login/login.component';
 import { RegisterComponent } from './components/register/register.component';
 import { OAuthCallbackComponent } from './components/oauth-callback/oauth-callback.component';
 import { ForgotPasswordComponent } from './components/forgot-password/forgot-password.component';
 import { ResetPasswordComponent } from './components/reset-password/reset-password.component';
 
-const routes: Routes = [
+export const AUTH_ROUTES: Routes = [
   {
     path: '',
     redirectTo: 'login',
@@ -53,15 +52,3 @@ const routes: Routes = [
     }
   }
 ];
-
-@NgModule({
-  imports: [
-    LoginComponent,
-    RegisterComponent,
-    OAuthCallbackComponent,
-    ForgotPasswordComponent,
-    ResetPasswordComponent,
-    RouterModule.forChild(routes)
-  ]
-})
-export class AuthModule { }

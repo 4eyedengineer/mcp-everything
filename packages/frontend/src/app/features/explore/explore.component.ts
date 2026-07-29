@@ -195,8 +195,9 @@ export class ExploreComponent implements OnInit, OnDestroy {
         }
       },
       error: (err) => {
+        // The global error interceptor already shows a toast for the failed
+        // request - avoid showing a second, redundant one here.
         console.error('Failed to record download:', err);
-        this.notificationService.error('Failed to download server');
       },
     });
   }
