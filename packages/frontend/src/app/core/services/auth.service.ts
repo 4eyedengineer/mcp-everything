@@ -5,6 +5,7 @@ import { BehaviorSubject, Observable, throwError } from 'rxjs';
 import { tap, catchError } from 'rxjs/operators';
 import { API_V1_BASE } from '../config/api.config';
 import { NotificationService } from './notification.service';
+import { SessionService } from './session.service';
 
 export interface User {
   id: string;
@@ -70,8 +71,21 @@ export class AuthService {
   constructor(
     private http: HttpClient,
     private router: Router,
-    private notificationService: NotificationService
+    private notificationService: NotificationService,
+    private sessionService: SessionService
   ) {}
+
+  /**
+   * The backend binds a chat session id to the first user that claims it, so
+   * a session id must never outlive a change of signed-in identity - reusing
+   * one across accounts makes the stream-ticket endpoint reject the session
+   * ("Session not found") and the chat stream silently breaks. Called on
+   * login, register, OAuth callback, and logout (NOT on silent token refresh,
+   * which is the same identity).
+   */
+  private rotateChatSession(): void {
+    this.sessionService.clearSessionId();
+  }
 
   /**
    * Restore the session from a stored token. Called from an app initializer
@@ -89,7 +103,10 @@ export class AuthService {
    */
   register(data: RegisterRequest): Observable<TokenResponse> {
     return this.http.post<TokenResponse>(`${this.apiUrl}/auth/register`, data).pipe(
-      tap(response => this.handleAuthResponse(response)),
+      tap(response => {
+        this.rotateChatSession();
+        this.handleAuthResponse(response);
+      }),
       catchError(error => this.handleError(error))
     );
   }
@@ -99,7 +116,10 @@ export class AuthService {
    */
   login(email: string, password: string): Observable<TokenResponse> {
     return this.http.post<TokenResponse>(`${this.apiUrl}/auth/login`, { email, password }).pipe(
-      tap(response => this.handleAuthResponse(response)),
+      tap(response => {
+        this.rotateChatSession();
+        this.handleAuthResponse(response);
+      }),
       catchError(error => this.handleError(error))
     );
   }
@@ -108,6 +128,7 @@ export class AuthService {
    * Logout the current user
    */
   logout(): void {
+    this.rotateChatSession();
     this.clearTokens();
     this.currentUserSubject.next(null);
     this.isAuthenticatedSubject.next(false);
@@ -173,6 +194,7 @@ export class AuthService {
    * Handle OAuth callback - store tokens and fetch user profile
    */
   handleOAuthCallback(token: string, refreshToken: string): Observable<User> {
+    this.rotateChatSession();
     this.setTokens(token, refreshToken);
     this.isAuthenticatedSubject.next(true);
 
