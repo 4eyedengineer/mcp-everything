@@ -50,7 +50,12 @@
 
   .suggestion-cards {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    // Fixed 3-column grid (matching the fixed count of 3 suggestion cards)
+    // rather than auto-fit minmax(280px, 1fr): the welcome-screen container
+    // caps out at 800px wide, so 3 * 280px + 2 * 16px gap (872px) never fit
+    // and the third card wrapped onto its own lopsided row. Tablet/mobile
+    // breakpoints below override this back to auto-fit/1-column.
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 16px;
     width: 100%;
     max-width: 900px;
@@ -237,6 +242,18 @@
       color: white;
     }
   }
+
+  // A user bubble whose send failed - dimmed to read as "not actually
+  // delivered" rather than a normal sent message.
+  &.failed-message {
+    .message-body {
+      opacity: 0.6;
+    }
+
+    .avatar-circle {
+      opacity: 0.6;
+    }
+  }
 }
 
 .message-avatar {
@@ -287,7 +304,14 @@
     font-size: 15px;
     line-height: 1.6;
     color: var(--text-primary);
-    white-space: pre-wrap;
+    // NOTE: deliberately no `white-space: pre-wrap` here. Content is always
+    // rendered through the safeMarkdown pipe (marked), which already turns
+    // literal newlines into <br>/paragraph breaks per its `breaks: true`
+    // option. `pre-wrap` on this container additionally preserved marked's
+    // own formatting whitespace between block-level tags (e.g. "</p>\n<ul>")
+    // as visible blank space, roughly doubling the gap between blocks on
+    // every structured reply. Code blocks keep correct whitespace handling
+    // via the `<pre>` element's UA-default `white-space: pre` below.
     word-wrap: break-word;
 
     p {
@@ -340,6 +364,59 @@
       &:hover {
         background-color: var(--background-hover);
         color: var(--text-primary);
+      }
+    }
+  }
+
+  // Compact progress step trail - prior step messages, muted, below the
+  // current (bold, in message-body) step.
+  .progress-trail {
+    margin: 4px 0 0 0;
+    padding-left: 20px;
+    list-style: disc;
+
+    li {
+      font-size: 13px;
+      color: var(--text-secondary);
+      line-height: 1.5;
+    }
+  }
+
+  // Failed-send indicator + inline retry, shown under a user bubble whose
+  // send failed.
+  .failed-indicator {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 4px;
+    font-size: 13px;
+    color: var(--error-text);
+
+    .failed-icon {
+      font-size: 16px;
+      width: 16px;
+      height: 16px;
+      color: #ef5350;
+    }
+
+    .retry-inline-button {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 13px;
+      min-width: 0;
+      padding: 0 8px;
+      line-height: 28px;
+      color: var(--error-text);
+
+      mat-icon {
+        font-size: 16px;
+        width: 16px;
+        height: 16px;
+      }
+
+      &:hover {
+        background-color: rgba(198, 40, 40, 0.1);
       }
     }
   }
@@ -754,6 +831,14 @@
       width: 22px;
       height: 22px;
     }
+
+    // While loading, the button is disabled (there's no backend cancel
+    // path) - show a spinner rather than a stop icon, which would
+    // misleadingly imply the disabled button could cancel the in-flight
+    // request.
+    ::ng-deep mat-spinner circle {
+      stroke: var(--text-secondary);
+    }
   }
 }
 
@@ -761,7 +846,7 @@
   margin-top: 12px;
   text-align: center;
   font-size: 12px;
-  color: #8e8e8e;
+  color: var(--text-tertiary);
 }
 
 // Animations

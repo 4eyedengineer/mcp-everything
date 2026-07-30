@@ -7,7 +7,7 @@
 
     <div class="oauth-buttons">
       <button mat-stroked-button class="oauth-button github" (click)="loginWithGitHub()">
-        <mat-icon svgIcon="github">code</mat-icon>
+        <mat-icon>code</mat-icon>
         <span>Continue with GitHub</span>
       </button>
       <button mat-stroked-button class="oauth-button google" (click)="loginWithGoogle()">
@@ -37,7 +37,14 @@
         <mat-label>Password</mat-label>
         <input matInput formControlName="password" [type]="hidePassword ? 'password' : 'text'" autocomplete="current-password">
         <mat-icon matPrefix>lock</mat-icon>
-        <button mat-icon-button matSuffix (click)="togglePasswordVisibility()" type="button">
+        <button
+          mat-icon-button
+          matSuffix
+          (click)="togglePasswordVisibility()"
+          type="button"
+          [matTooltip]="hidePassword ? 'Show password' : 'Hide password'"
+          [attr.aria-label]="hidePassword ? 'Show password' : 'Hide password'"
+          [attr.aria-pressed]="!hidePassword">
           <mat-icon>{{ hidePassword ? 'visibility_off' : 'visibility' }}</mat-icon>
         </button>
         @if (passwordControl?.hasError('required') && passwordControl?.touched) {

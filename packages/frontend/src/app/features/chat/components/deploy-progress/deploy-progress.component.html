@@ -49,7 +49,7 @@
         <label>Endpoint URL:</label>
         <div class="endpoint-value">
           <code>{{ endpointUrl }}</code>
-          <button mat-icon-button (click)="copyEndpoint()" matTooltip="Copy URL">
+          <button mat-icon-button (click)="copyEndpoint()" matTooltip="Copy URL" aria-label="Copy endpoint URL">
             <mat-icon>content_copy</mat-icon>
           </button>
         </div>
@@ -60,7 +60,7 @@
         <label>Configure Claude Desktop:</label>
         <div class="config-code">
           <pre><code>{{ claudeDesktopConfig }}</code></pre>
-          <button mat-icon-button (click)="copyConfig()" matTooltip="Copy config" class="copy-config-btn">
+          <button mat-icon-button (click)="copyConfig()" matTooltip="Copy config" aria-label="Copy Claude Desktop config" class="copy-config-btn">
             <mat-icon>content_copy</mat-icon>
           </button>
         </div>

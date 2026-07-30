@@ -32,6 +32,26 @@ export class Conversation {
     role: 'user' | 'assistant' | 'system';
     content: string;
     timestamp: Date;
+    /**
+     * Optional per-message payload, set on the assistant's generation-complete
+     * message. Stored inline in this jsonb column (no separate migration
+     * needed - jsonb already accepts arbitrary extra keys per element).
+     *
+     * This is what makes the generated server's Deploy/Download actions and
+     * validation badge survive a page reload: previously they only ever
+     * existed in the one-shot SSE `complete` event and vanished once history
+     * was reloaded from GET /conversations/:id/messages.
+     */
+    metadata?: {
+      generatedCode?: any;
+      validation?: {
+        success: boolean;
+        buildSuccess: boolean;
+        toolsFound: number;
+        toolsPassedCount: number;
+        iterations: number;
+      };
+    };
   }>;
 
   @Column({ type: 'jsonb', nullable: true })

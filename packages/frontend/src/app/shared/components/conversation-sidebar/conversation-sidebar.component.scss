@@ -1,4 +1,7 @@
 // Overlay
+// Shown below the desktop breakpoint (matches app.component.scss's
+// `.sidebar-open` reflow threshold), where the sidebar is an off-canvas
+// panel over dimmed content rather than something that shares layout space.
 .sidebar-overlay {
   position: fixed;
   top: 0;
@@ -9,7 +12,7 @@
   z-index: 998;
   display: none;
 
-  @media (max-width: 768px) {
+  @media (max-width: 1023px) {
     display: block;
   }
 }
@@ -32,7 +35,7 @@
     left: 0;
   }
 
-  @media (max-width: 768px) {
+  @media (max-width: 1023px) {
     width: 280px;
     box-shadow: 2px 0 8px rgba(0, 0, 0, 0.1);
   }

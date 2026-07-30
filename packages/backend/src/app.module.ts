@@ -24,6 +24,7 @@ import { MetricsModule } from './metrics/metrics.module';
 import { ApiKeyModule } from './api-key/api-key.module';
 import { UsageStatsModule } from './usage-stats/usage-stats.module';
 import { GitHubModule } from './github/github.module';
+import { McpServerModule } from './mcp-server/mcp-server.module';
 import {
   Conversation,
   PipelineRun,
@@ -109,6 +110,7 @@ export class AppController {
     ApiKeyModule,
     UsageStatsModule,
     GitHubModule,
+    McpServerModule,
   ],
   controllers: [AppController],
   providers: [

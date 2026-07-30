@@ -1,9 +1,26 @@
 import { HttpErrorResponse, HttpInterceptorFn, HttpRequest } from '@angular/common/http';
 import { inject } from '@angular/core';
+import { Router } from '@angular/router';
 import { catchError, retry, throwError } from 'rxjs';
 import { environment } from '../../../environments/environment';
 import { NotificationService } from '../services/notification.service';
+import { AuthService } from '../services/auth.service';
 import { parseHttpError } from '../../shared/utils/http-error.util';
+
+// Endpoints the auth interceptor never transparently retries on 401 (see
+// AUTH_ENDPOINTS in auth.interceptor.ts) - a 401 from one of these is a
+// direct, final answer (e.g. wrong password at login) rather than a token
+// that's about to be silently refreshed, so it's always safe to toast.
+const NON_RETRIED_AUTH_ENDPOINTS = [
+  '/auth/login',
+  '/auth/register',
+  '/auth/refresh',
+  '/auth/forgot-password',
+  '/auth/reset-password',
+  '/auth/github',
+  '/auth/google',
+  '/auth/me'
+];
 
 function shouldRetry(req: HttpRequest<unknown>): boolean {
   // Only retry GET requests
@@ -20,6 +37,47 @@ function shouldSkipNotification(req: HttpRequest<unknown>): boolean {
 }
 
 /**
+ * Whether a 401 on this request is about to be handled silently elsewhere,
+ * and so should NOT surface a toast here:
+ *
+ * - While the initial session restore is still in flight (AuthService.init()
+ *   -> checkStoredToken()), a 401 on /auth/me is an expected step of that
+ *   restore (it triggers an internal refresh) - not a user-facing failure.
+ * - For any other, non-auth endpoint, the auth interceptor transparently
+ *   retries 401s via a token refresh before the caller ever sees the error.
+ *   If that refresh itself fails, AuthService.refreshToken() shows its own
+ *   "Session Expired" toast and logs out - so staying quiet here never
+ *   leaves a real failure unreported, it just avoids reporting one
+ *   speculatively before the retry has had a chance to run.
+ * - A background call that 401s with no token at all while the user is
+ *   sitting on a public /auth/* page (login/register/forgot/reset password)
+ *   is expected - they haven't signed in yet, so "please sign in" is noise,
+ *   not news.
+ */
+function isHandledElsewhere(req: HttpRequest<unknown>, authService: AuthService, router: Router): boolean {
+  if (authService.isLoading) {
+    return true;
+  }
+
+  const isNonRetriedAuthEndpoint = NON_RETRIED_AUTH_ENDPOINTS.some(endpoint => req.url.includes(endpoint));
+  if (isNonRetriedAuthEndpoint) {
+    return false;
+  }
+
+  if (authService.getAccessToken()) {
+    // A token exists - the auth interceptor will attempt a silent refresh
+    // before this is a final answer.
+    return true;
+  }
+
+  // No stored token: nothing for the auth interceptor to refresh with, so
+  // it will fail fast and log out without a toast of its own. Surface the
+  // failure here unless the user is already on a public auth page, where
+  // an unauthenticated background request is expected rather than broken.
+  return router.url.startsWith('/auth');
+}
+
+/**
  * The single place in the app that shows error toasts for failed HTTP
  * requests. Callers that need to surface a more specific/business-aware
  * error message of their own (e.g. deployment tier-limit errors) should add
@@ -29,11 +87,13 @@ function shouldSkipNotification(req: HttpRequest<unknown>): boolean {
  */
 export const errorInterceptor: HttpInterceptorFn = (req, next) => {
   const notificationService = inject(NotificationService);
+  const authService = inject(AuthService);
+  const router = inject(Router);
 
   return next(req).pipe(
     retry(shouldRetry(req) ? 1 : 0),
     catchError((error: HttpErrorResponse) => {
-      handleError(error, req, notificationService);
+      handleError(error, req, notificationService, authService, router);
       return throwError(() => error);
     })
   );
@@ -42,7 +102,9 @@ export const errorInterceptor: HttpInterceptorFn = (req, next) => {
 function handleError(
   error: HttpErrorResponse,
   req: HttpRequest<unknown>,
-  notificationService: NotificationService
+  notificationService: NotificationService,
+  authService: AuthService,
+  router: Router
 ): void {
   const skipNotification = shouldSkipNotification(req);
 
@@ -60,6 +122,14 @@ function handleError(
     return;
   }
 
+  // 401s are handled specially further down (see isHandledElsewhere) since
+  // the auth interceptor may silently retry them via a token refresh -
+  // toasting here immediately would race that retry and fire even when the
+  // request is about to succeed transparently.
+  if (error.status === 401 && isHandledElsewhere(req, authService, router)) {
+    return;
+  }
+
   switch (error.status) {
     case 0:
       notificationService.error(
@@ -73,8 +143,10 @@ function handleError(
       break;
 
     case 401:
+      // Only reached when isHandledElsewhere() is false above - i.e. there's
+      // no token to retry with, so this is a direct, unrecoverable auth
+      // failure rather than something the auth interceptor is about to fix.
       notificationService.error('Authentication Required', 'Please sign in to continue.');
-      // Could trigger logout here
       break;
 
     case 403:

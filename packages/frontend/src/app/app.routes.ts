@@ -11,6 +11,7 @@ export const routes: Routes = [
     path: 'auth',
     loadChildren: () => import('./features/auth/auth.routes').then(m => m.AUTH_ROUTES),
     canActivate: [noAuthGuard],
+    title: 'Sign In - MCP Everything',
     data: {
       title: 'Authentication',
       description: 'Sign in or create an account'
@@ -20,6 +21,7 @@ export const routes: Routes = [
     path: 'chat',
     loadChildren: () => import('./features/chat/chat.routes').then(m => m.CHAT_ROUTES),
     canActivate: [authGuard],
+    title: 'Chat - MCP Everything',
     data: {
       title: 'Chat',
       description: 'Chat with AI to design and generate MCP servers'
@@ -28,6 +30,7 @@ export const routes: Routes = [
   {
     path: 'explore',
     loadChildren: () => import('./features/explore/explore.routes').then(m => m.EXPLORE_ROUTES),
+    title: 'Explore - MCP Everything',
     data: {
       title: 'Explore',
       description: 'Browse generated MCP servers'
@@ -37,6 +40,7 @@ export const routes: Routes = [
     path: 'servers',
     loadComponent: () => import('./features/servers/servers.component').then(m => m.ServersComponent),
     canActivate: [authGuard],
+    title: 'My Servers - MCP Everything',
     data: {
       title: 'My Servers',
       description: 'Manage your hosted MCP servers'
@@ -46,6 +50,7 @@ export const routes: Routes = [
     path: 'account',
     loadComponent: () => import('./features/account/account.component').then(m => m.AccountComponent),
     canActivate: [authGuard],
+    title: 'Account - MCP Everything',
     data: {
       title: 'Account',
       description: 'Manage your account and settings'

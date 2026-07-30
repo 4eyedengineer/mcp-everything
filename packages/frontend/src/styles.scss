@@ -78,7 +78,10 @@ html, body {
 
   --text-primary: #1f1f1f;
   --text-secondary: #6b6b6b;
-  --text-tertiary: #8e8e8e;
+  // Was #8e8e8e (3.28:1 on white - fails WCAG AA 4.5:1 for normal text).
+  // Darkened to clear 4.5:1; dark-theme value below is unchanged since it
+  // already passes against the dark background.
+  --text-tertiary: #757575;
   --text-disabled: #b0b0b0;
 
   --border-light: #f0f0f0;
@@ -482,6 +485,93 @@ html, body {
   .error-message {
     color: var(--text-secondary);
     margin-bottom: var(--spacing-lg);
+  }
+}
+
+/* Visible keyboard-focus indicators (WCAG 2.4.7).
+   Material's ripple/state-layer doesn't leave a visible indicator once the
+   mouse-only affordances are accounted for, so keyboard users tabbing
+   through nav links, icon buttons, sidebar rows, and suggestion cards had
+   no indication of where focus was. :focus-visible only fires for
+   keyboard/programmatic focus (not mouse clicks), so this doesn't add a
+   ring on every click.
+   Uses --text-primary rather than --primary-color/--accent-color: this is
+   a monochromatic palette where primary/accent are identical grays, and in
+   the dark theme that gray only clears ~2.1:1 against the dark surfaces
+   (fails the 3:1 WCAG 1.4.11 minimum for non-text UI indicators). Text
+   colors are guaranteed high-contrast against the background by
+   definition, so --text-primary reliably clears 3:1 in both themes. */
+.mat-mdc-button,
+.mat-mdc-raised-button,
+.mat-mdc-outlined-button,
+.mat-mdc-unelevated-button,
+.mat-mdc-icon-button,
+.mat-mdc-fab,
+.mat-mdc-mini-fab,
+.mat-mdc-menu-item,
+a.brand-link,
+a[routerLink],
+.nav-button,
+.nav-icon-button,
+.suggestion-card,
+.conversation-item,
+.footer-button {
+  &:focus-visible {
+    outline: 2px solid var(--text-primary) !important;
+    outline-offset: 2px;
+    box-shadow: none !important;
+  }
+}
+
+/* Dark-mode snackbar surface.
+   The MatSnackBar panel (a CDK overlay appended to <body>) wasn't picking
+   up the app's dark palette, so toasts rendered as the only bright white
+   surface on screen in dark mode. Pin the surface/text colors explicitly
+   using the theme variables; light mode is untouched (normal Material
+   look). Visual only - does not touch NotificationService's logic. */
+.dark-theme .mat-mdc-snack-bar-container {
+  .mdc-snackbar__surface {
+    background-color: var(--surface-alt) !important;
+  }
+
+  .mdc-snackbar__label {
+    color: var(--text-primary) !important;
+  }
+
+  .mat-mdc-button {
+    color: var(--text-primary) !important;
+
+    .mdc-button__label {
+      color: var(--text-primary) !important;
+    }
+  }
+}
+
+/* Respect prefers-reduced-motion: kill decorative CSS transitions/animations
+   (hover transitions, shimmer skeletons, sidebar shadow, etc.) while keeping
+   essential progress indicators (spinners/progress bars) actually moving -
+   a "frozen" spinner reads as broken, not accessible. Angular's animations
+   package (used for the sidebar slide/fade) doesn't read this media query
+   on its own; that's gated separately via an `[@.disabled]` binding driven
+   by matchMedia (see AppComponent). */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .mat-mdc-progress-spinner,
+  .mat-mdc-progress-spinner *,
+  .mat-mdc-progress-bar,
+  .mat-mdc-progress-bar *,
+  .spinning {
+    animation-duration: revert !important;
+    animation-iteration-count: revert !important;
+    transition-duration: revert !important;
   }
 }
 

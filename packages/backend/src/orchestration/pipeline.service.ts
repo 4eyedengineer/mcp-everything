@@ -1036,6 +1036,7 @@ ${result.error || 'Some tools may need manual fixes.'}`;
         role: 'assistant',
         content: state.response,
         timestamp: new Date(),
+        metadata: this.buildMessageMetadata(state),
       });
     }
 
@@ -1440,12 +1441,53 @@ What would you like to create?`;
   }
 
   /**
+   * Build the per-message metadata persisted alongside the assistant's
+   * generation-complete reply, so it survives a page reload instead of only
+   * existing in the one-shot SSE `complete` event.
+   *
+   * `validation` is only attached when a real refinement iteration ran in
+   * *this* execution (`state.refinementHistory` is in-memory only and never
+   * synced to `conversation.state` - it's cleared along with the rest of the
+   * resumable pipeline state once a run finishes). Never fabricated for runs
+   * that didn't refine (e.g. a stale `generatedCode` with no history).
+   */
+  private buildMessageMetadata(
+    state: PipelineState,
+  ): Conversation['messages'][number]['metadata'] | undefined {
+    if (!state.generatedCode) {
+      return undefined;
+    }
+
+    const lastRefinement = state.refinementHistory?.[state.refinementHistory.length - 1];
+
+    return {
+      generatedCode: state.generatedCode,
+      ...(lastRefinement
+        ? {
+            validation: {
+              success: lastRefinement.testResults.overallSuccess,
+              buildSuccess: lastRefinement.testResults.buildSuccess,
+              toolsFound: lastRefinement.testResults.toolsFound,
+              toolsPassedCount: lastRefinement.testResults.toolsPassedCount,
+              iterations: lastRefinement.iteration,
+            },
+          }
+        : {}),
+    };
+  }
+
+  /**
    * Save a message to the conversation's messages array
    * FIX #130: Use save() instead of update() for reliable JSONB persistence
    */
   private async saveMessageToConversation(
     conversationId: string,
-    message: { role: 'user' | 'assistant' | 'system'; content: string; timestamp: Date },
+    message: {
+      role: 'user' | 'assistant' | 'system';
+      content: string;
+      timestamp: Date;
+      metadata?: Conversation['messages'][number]['metadata'];
+    },
   ): Promise<void> {
     const conversation = await this.conversationRepo.findOne({
       where: { id: conversationId },

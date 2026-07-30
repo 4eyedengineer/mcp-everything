@@ -1,7 +1,7 @@
 import { Injectable, NgZone, signal } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Observable, forkJoin, of, throwError } from 'rxjs';
-import { catchError, map, tap } from 'rxjs/operators';
+import { catchError, switchMap, tap } from 'rxjs/operators';
 import { ConversationService, Deployment } from './conversation.service';
 import { DeploymentResponse } from './deployment.service';
 import { API_BASE } from '../config/api.config';
@@ -13,6 +13,15 @@ export interface ChatMessage {
   type?: 'user' | 'assistant' | 'progress' | 'error';
   generatedCode?: any;
   deploymentResult?: DeploymentResponse;
+  /** True when this was an optimistic user bubble whose send ultimately failed. */
+  failed?: boolean;
+  /**
+   * For progress bubbles: prior step messages, oldest first, kept alongside
+   * the latest message (which lives in `content`) so the user can see a
+   * compact trail of what's already happened instead of a single mutating
+   * line.
+   */
+  progressSteps?: string[];
 }
 
 export interface ChatRequest {
@@ -64,6 +73,15 @@ interface StreamUpdate {
 export class ChatService {
   private readonly baseUrl = API_BASE;
 
+  /**
+   * Placeholder progress bubble text that should never itself show up as a
+   * "prior step" in the compact progress trail (see `handleProgressUpdate`).
+   */
+  private static readonly PLACEHOLDER_PROGRESS_MESSAGES = new Set([
+    'Working on it…',
+    'Reconnecting to an in-progress generation…'
+  ]);
+
   /** All messages for the currently active conversation. */
   readonly messages = signal<ChatMessage[]>([]);
   /** True while waiting for the assistant's reply to a sent message. */
@@ -99,6 +117,15 @@ export class ChatService {
    */
   addMessage(message: ChatMessage): void {
     this.messages.update(current => [...current, message]);
+  }
+
+  /**
+   * Remove a specific message from the list (identity-based). Used to drop
+   * the placeholder "Working on it…" progress bubble on send failure, and to
+   * discard a failed user bubble when it's retried.
+   */
+  removeMessage(message: ChatMessage): void {
+    this.messages.update(current => current.filter(m => m !== message));
   }
 
   /**
@@ -161,7 +188,17 @@ export class ChatService {
         })
       )
     }).pipe(
-      map(({ messages, conversation }) => {
+      switchMap(({ messages, conversation }) => {
+        // ConversationService swallows HTTP errors internally and resolves
+        // to a fallback value instead of erroring - `undefined` is only ever
+        // returned by getConversation when that request failed (e.g. the
+        // conversationId in the URL doesn't exist, a 404). Surface that here
+        // as a real error so the caller can navigate away from the bogus
+        // URL instead of silently rendering an empty "new chat" screen.
+        if (!conversation) {
+          return throwError(() => new Error(`Conversation ${conversationId} not found`));
+        }
+
         // Transform ConversationMessage to ChatMessage format
         const chatMessages: ChatMessage[] = messages.map(msg => ({
           content: msg.content,
@@ -188,7 +225,7 @@ export class ChatService {
         }
 
         this.messages.set(chatMessages);
-        return chatMessages;
+        return of(chatMessages);
       })
     );
   }
@@ -203,13 +240,28 @@ export class ChatService {
    * stream (see `connect`).
    */
   sendMessage(content: string, sessionId: string): Observable<ChatResponse> {
-    this.addMessage({
+    const userMessage: ChatMessage = {
       content,
       isUser: true,
       timestamp: new Date(),
       type: 'user'
-    });
+    };
+    this.addMessage(userMessage);
     this.isLoading.set(true);
+
+    // Append a lightweight progress bubble immediately so there's no dead
+    // air between clicking send and the first real SSE progress event. If a
+    // pipeline run for this send actually starts, the first 'progress' SSE
+    // update (handleProgressUpdate) takes over this same object in place
+    // rather than creating a duplicate bubble. If the send itself fails
+    // (caught below), this placeholder is removed.
+    this.currentProgressMessage = {
+      content: 'Working on it…',
+      isUser: false,
+      timestamp: new Date(),
+      type: 'progress'
+    };
+    this.addMessage(this.currentProgressMessage);
 
     const request: ChatRequest = {
       message: content,
@@ -231,12 +283,23 @@ export class ChatService {
       catchError(error => {
         console.error('Error sending message:', error);
         this.isLoading.set(false);
-        this.addMessage({
-          content: 'Failed to send message. Please try again.',
-          isUser: false,
-          timestamp: new Date(),
-          type: 'error'
-        });
+
+        // Clean up the placeholder progress bubble - the request never
+        // reached the point of producing real progress, so there is nothing
+        // to show progress on.
+        if (this.currentProgressMessage) {
+          this.removeMessage(this.currentProgressMessage);
+          this.currentProgressMessage = undefined;
+        }
+
+        // Mark the optimistic user bubble as failed (rather than leaving it
+        // looking like a normal sent message next to an unrelated error
+        // bubble) so the UI and the retry affordance can key off it. The
+        // caller (ChatComponent) is responsible for restoring the composer
+        // draft and offering retry.
+        userMessage.failed = true;
+        this.messages.update(current => [...current]);
+
         return throwError(() => error);
       })
     );
@@ -341,15 +404,32 @@ export class ChatService {
   }
 
   private handleProgressUpdate(update: StreamUpdate): void {
+    const nextContent = update.message || 'Processing...';
+
     // Update or create progress message
     if (this.currentProgressMessage) {
-      this.currentProgressMessage.content = update.message || 'Processing...';
+      const previousContent = this.currentProgressMessage.content;
+
+      // Retain a compact trail of prior step messages instead of just
+      // mutating a single line - but only once we have a genuine step to
+      // record, and never the initial placeholder ("Working on it…" /
+      // "Reconnecting...") which isn't a real pipeline step.
+      if (
+        previousContent &&
+        previousContent !== nextContent &&
+        !ChatService.PLACEHOLDER_PROGRESS_MESSAGES.has(previousContent)
+      ) {
+        const steps = this.currentProgressMessage.progressSteps || [];
+        this.currentProgressMessage.progressSteps = [...steps, previousContent];
+      }
+
+      this.currentProgressMessage.content = nextContent;
       // The message object was mutated in place; replace the array reference
       // so bindings depending on `messages()` re-evaluate.
       this.messages.update(current => [...current]);
     } else {
       this.currentProgressMessage = {
-        content: update.message || 'Processing...',
+        content: nextContent,
         isUser: false,
         timestamp: new Date(update.timestamp),
         type: 'progress'

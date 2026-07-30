@@ -52,7 +52,8 @@
               [class.user-message]="message.type === 'user'"
               [class.assistant-message]="message.type === 'assistant'"
               [class.progress-message]="message.type === 'progress'"
-              [class.error-message]="message.type === 'error'">
+              [class.error-message]="message.type === 'error'"
+              [class.failed-message]="message.failed">
 
               <!-- Avatar -->
               <div class="message-avatar">
@@ -80,17 +81,32 @@
 
                 <div class="message-body" [innerHTML]="message.content | safeMarkdown"></div>
 
+                <!-- Progress Step Trail -->
+                @if (message.type === 'progress' && message.progressSteps?.length) {
+                  <ul class="progress-trail">
+                    @for (step of message.progressSteps; track step) {
+                      <li>{{ step }}</li>
+                    }
+                  </ul>
+                }
+
+                <!-- Failed Send Indicator -->
+                @if (message.type === 'user' && message.failed) {
+                  <div class="failed-indicator">
+                    <mat-icon class="failed-icon">error_outline</mat-icon>
+                    <span>Failed to send</span>
+                    <button mat-button class="retry-inline-button" (click)="retryMessage(message)">
+                      <mat-icon>refresh</mat-icon>
+                      Retry
+                    </button>
+                  </div>
+                }
+
                 <!-- Action Buttons -->
                 @if (message.type === 'assistant' && !message.generatedCode) {
                   <div class="message-actions">
-                    <button mat-icon-button matTooltip="Copy" class="action-button">
+                    <button mat-icon-button matTooltip="Copy" aria-label="Copy message" class="action-button" (click)="copyToClipboard(message.content)">
                       <mat-icon>content_copy</mat-icon>
-                    </button>
-                    <button mat-icon-button matTooltip="Like" class="action-button">
-                      <mat-icon>thumb_up</mat-icon>
-                    </button>
-                    <button mat-icon-button matTooltip="Dislike" class="action-button">
-                      <mat-icon>thumb_down</mat-icon>
                     </button>
                   </div>
                 }
@@ -177,7 +193,8 @@
                           <code>git clone {{ message.deploymentResult?.urls?.clone }}</code>
                           <button mat-icon-button
                                   (click)="copyToClipboard('git clone ' + message.deploymentResult?.urls?.clone)"
-                                  matTooltip="Copy clone command">
+                                  matTooltip="Copy clone command"
+                                  aria-label="Copy clone command">
                             <mat-icon>content_copy</mat-icon>
                           </button>
                         </div>
@@ -318,14 +335,6 @@
   <div class="input-area">
     <div class="input-container">
       <div class="input-wrapper">
-        <!-- Attachment Button -->
-        <button
-          mat-icon-button
-          class="input-icon-button"
-          matTooltip="Attach file">
-          <mat-icon>attach_file</mat-icon>
-        </button>
-
         <!-- Text Input -->
         <textarea
           #messageInput
@@ -346,7 +355,11 @@
           [disabled]="!currentMessage().trim() || chatService.isLoading()"
           (click)="sendMessage()"
           aria-label="Send message">
-          <mat-icon>{{ chatService.isLoading() ? 'stop_circle' : 'send' }}</mat-icon>
+          @if (chatService.isLoading()) {
+            <mat-spinner diameter="20"></mat-spinner>
+          } @else {
+            <mat-icon>send</mat-icon>
+          }
         </button>
       </div>
 

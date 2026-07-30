@@ -8,6 +8,7 @@ import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatCheckboxModule } from '@angular/material/checkbox';
+import { MatTooltipModule } from '@angular/material/tooltip';
 import { AuthService } from '../../../../core/services/auth.service';
 
 @Component({
@@ -22,7 +23,8 @@ import { AuthService } from '../../../../core/services/auth.service';
     MatButtonModule,
     MatIconModule,
     MatProgressSpinnerModule,
-    MatCheckboxModule
+    MatCheckboxModule,
+    MatTooltipModule
   ],
   templateUrl: './register.component.html',
   styleUrls: ['./register.component.scss']

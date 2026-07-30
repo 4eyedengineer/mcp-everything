@@ -132,6 +132,13 @@ export class ChatComponent implements OnInit, OnDestroy {
       error: error => {
         console.error('Error loading conversation history:', error);
         this.isLoadingHistory.set(false);
+
+        // The conversationId in the URL doesn't correspond to a real
+        // conversation (e.g. a bad/stale UUID). Rather than silently
+        // leaving the bogus URL in place while showing the normal empty
+        // new-chat screen, bounce back to /chat and let the user know why.
+        this.router.navigate(['/chat'], { replaceUrl: true });
+        this.snackBar.open('Conversation not found', 'Close', { duration: 4000 });
       }
     });
   }
@@ -143,10 +150,31 @@ export class ChatComponent implements OnInit, OnDestroy {
     }
 
     this.currentMessage.set('');
+    this.dispatchMessage(text);
+  }
+
+  /**
+   * Re-send a message whose original send failed. Discards the failed user
+   * bubble first so retrying doesn't leave a duplicate/stale copy behind.
+   */
+  retryMessage(message: ChatMessage): void {
+    if (this.chatService.isLoading()) {
+      return;
+    }
+    const text = message.content;
+    this.chatService.removeMessage(message);
+    this.dispatchMessage(text);
+  }
+
+  private dispatchMessage(text: string): void {
     this.chatService.sendMessage(text, this.sessionId).subscribe({
       next: response => console.log('Message sent successfully', response),
       error: () => {
-        // Error message is already applied to chat state by ChatService.
+        // Restore the draft so the user's text isn't lost on failure. The
+        // failed user bubble itself is marked (with a retry affordance in
+        // the template) and the placeholder progress bubble is cleaned up
+        // by ChatService.
+        this.currentMessage.set(text);
       }
     });
   }

@@ -1,7 +1,15 @@
 <nav class="top-nav">
   <div class="nav-content">
-    <!-- Left Section: Hamburger Only -->
+    <!-- Left Section: Brand + Hamburger -->
     <div class="nav-left">
+      <a
+        routerLink="/chat"
+        class="brand-link"
+        aria-label="MCP Everything - go to chat">
+        <mat-icon class="brand-icon">hub</mat-icon>
+        <span class="brand-text">MCP Everything</span>
+      </a>
+
       <button
         mat-icon-button
         (click)="onToggleSidebar()"
@@ -16,17 +24,30 @@
     <div class="nav-center">
       <button
         mat-button
+        routerLink="/chat"
+        routerLinkActive="active"
+        class="nav-button"
+        aria-label="Chat">
+        <mat-icon>chat_bubble_outline</mat-icon>
+        <span class="nav-label">Chat</span>
+      </button>
+      <button
+        mat-button
         routerLink="/explore"
         routerLinkActive="active"
-        class="nav-button">
-        Explore
+        class="nav-button"
+        aria-label="Explore">
+        <mat-icon>explore</mat-icon>
+        <span class="nav-label">Explore</span>
       </button>
       <button
         mat-button
         routerLink="/servers"
         routerLinkActive="active"
-        class="nav-button">
-        My Servers
+        class="nav-button"
+        aria-label="My Servers">
+        <mat-icon>dns</mat-icon>
+        <span class="nav-label">My Servers</span>
       </button>
     </div>
 
@@ -35,6 +56,7 @@
       <button
         mat-icon-button
         matTooltip="Documentation"
+        aria-label="Documentation"
         class="nav-icon-button">
         <mat-icon>menu_book</mat-icon>
       </button>
@@ -43,6 +65,7 @@
         mat-icon-button
         routerLink="/account"
         matTooltip="Account"
+        aria-label="Account"
         class="nav-icon-button">
         <mat-icon>account_circle</mat-icon>
       </button>

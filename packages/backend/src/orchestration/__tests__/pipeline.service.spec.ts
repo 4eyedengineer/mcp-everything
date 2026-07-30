@@ -346,6 +346,26 @@ describe('GenerationPipeline', () => {
       expect(readFileSync(join(dir, 'README.md'), 'utf-8')).toContain('list_posts');
     });
 
+    it('persists generatedCode + a real validation summary on the assistant message so it survives a reload', async () => {
+      await collect(
+        await service.execute(SESSION_ID, 'MCP server for JSONPlaceholder', CONVERSATION_ID, USER_ID),
+      );
+
+      const assistantMessage = conversationRepo.row.messages.find(
+        (m: any) => m.role === 'assistant',
+      );
+      expect(assistantMessage.metadata?.generatedCode).toEqual(generatedCode());
+      // Matches createMockTestResults(true, 1) from the refinementService mock -
+      // a real result from this run, not a fabricated summary.
+      expect(assistantMessage.metadata?.validation).toEqual({
+        success: true,
+        buildSuccess: true,
+        toolsFound: 1,
+        toolsPassedCount: 1,
+        iterations: 1,
+      });
+    });
+
     it('answers a help request without researching or generating', async () => {
       respondWith({ intent: intentResponse({ intent: 'help' }) });
 
@@ -359,6 +379,12 @@ describe('GenerationPipeline', () => {
       expect(final.executedSteps).toEqual(['analyzeIntent', 'provideHelp', 'persist']);
       expect(researchService.conductResearch).not.toHaveBeenCalled();
       expect(refinementService.refineUntilWorking).not.toHaveBeenCalled();
+
+      // No generated code on a help reply - metadata must not be fabricated.
+      const assistantMessage = conversationRepo.row.messages.find(
+        (m: any) => m.role === 'assistant',
+      );
+      expect(assistantMessage.metadata).toBeUndefined();
     });
   });
 

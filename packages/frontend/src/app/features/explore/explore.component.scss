@@ -14,8 +14,16 @@
 
 // Page Header
 .page-header {
-  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
   margin-bottom: 48px;
+
+  .page-header-text {
+    flex: 1;
+    min-width: 0;
+  }
 
   h1 {
     font-size: 36px;
@@ -30,6 +38,27 @@
     color: var(--text-secondary);
     margin: 0;
     line-height: 1.5;
+  }
+
+  // Permanent CTA to chat - unlike the empty-state button below, this stays
+  // visible once servers exist, so there's always a one-click path to chat
+  // from Explore.
+  .new-chat-button {
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+}
+
+@media (max-width: 640px) {
+  .page-header {
+    flex-direction: column;
+    align-items: flex-start;
+    text-align: left;
+
+    .new-chat-button {
+      align-self: stretch;
+      justify-content: center;
+    }
   }
 }
 

@@ -115,4 +115,69 @@ describe('ConversationController', () => {
       );
     });
   });
+
+  describe('getConversationMessages', () => {
+    it('includes metadata (generatedCode + validation) on a message that carries it', async () => {
+      const generatedCode = { mainFile: 'console.log(1)', supportingFiles: {} };
+      const conv = baseConversation({
+        messages: [
+          { role: 'user', content: 'Generate an MCP server', timestamp: new Date('2026-01-01T00:00:00Z') },
+          {
+            role: 'assistant',
+            content: 'Done!',
+            timestamp: new Date('2026-01-01T00:00:01Z'),
+            metadata: {
+              generatedCode,
+              validation: {
+                success: true,
+                buildSuccess: true,
+                toolsFound: 3,
+                toolsPassedCount: 3,
+                iterations: 1,
+              },
+            },
+          },
+        ],
+      });
+      conversationService.findByIdForUser.mockResolvedValue(conv);
+
+      const result = await controller.getConversationMessages(mockUser, 'conv-1');
+
+      expect(result.messages).toHaveLength(2);
+      expect((result.messages[0] as any).metadata).toBeUndefined();
+      expect((result.messages[1] as any).metadata).toEqual({
+        generatedCode,
+        validation: {
+          success: true,
+          buildSuccess: true,
+          toolsFound: 3,
+          toolsPassedCount: 3,
+          iterations: 1,
+        },
+      });
+    });
+
+    it('omits the metadata key entirely for messages without it (no frontend-visible shape change)', async () => {
+      const conv = baseConversation({
+        messages: [
+          { role: 'user', content: 'hi', timestamp: new Date('2026-01-01T00:00:00Z') },
+          { role: 'assistant', content: 'hello', timestamp: new Date('2026-01-01T00:00:01Z') },
+        ],
+      });
+      conversationService.findByIdForUser.mockResolvedValue(conv);
+
+      const result = await controller.getConversationMessages(mockUser, 'conv-1');
+
+      expect('metadata' in result.messages[0]).toBe(false);
+      expect('metadata' in result.messages[1]).toBe(false);
+    });
+
+    it('throws NotFoundException when the conversation does not belong to the user', async () => {
+      conversationService.findByIdForUser.mockResolvedValue(null);
+
+      await expect(controller.getConversationMessages(mockUser, 'conv-1')).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+  });
 });

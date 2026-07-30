@@ -25,6 +25,14 @@ export class NotificationService {
 
   private activeNotifications: Map<string, MatSnackBarRef<any>> = new Map();
 
+  // Dedupe identical toasts fired in quick succession (e.g. two background
+  // boot requests failing with the same generic message at nearly the same
+  // time) so the user sees one toast instead of it flickering/reopening.
+  // Maps a "type|title|message" signature to { id, shownAt } for the most
+  // recent notification with that signature.
+  private recentSignatures: Map<string, { id: string; shownAt: number }> = new Map();
+  private static readonly DEDUPE_WINDOW_MS = 4000;
+
   constructor(private snackBar: MatSnackBar) {}
 
   /**
@@ -41,16 +49,28 @@ export class NotificationService {
   }
 
   /**
-   * Show error notification
+   * Show error notification.
+   *
+   * Auto-dismisses after 8s by default (with a "Close" action for anyone
+   * who wants it gone sooner). Pass `{ persistent: true }` ONLY for cases
+   * where the toast must stay until the user acts on it - e.g. a session
+   * that has genuinely expired mid-use. Do not default to persistent for
+   * routine request failures; a stuck toast blocks pointer events over
+   * whatever it overlaps (the nav bar on mobile).
    */
-  error(title: string, message?: string, action?: { label: string; handler: () => void }): string {
+  error(
+    title: string,
+    message?: string,
+    action?: { label: string; handler: () => void },
+    options?: { persistent?: boolean }
+  ): string {
     return this.show({
       type: 'error',
       title,
       message,
       action,
       duration: 8000,
-      persistent: true
+      persistent: options?.persistent ?? false
     });
   }
 
@@ -84,6 +104,21 @@ export class NotificationService {
    * Show custom notification
    */
   show(options: Partial<Notification>): string {
+    const type = options.type ?? 'info';
+    const title = options.title ?? '';
+    const signature = `${type}|${title}|${options.message ?? ''}`;
+
+    const existing = this.recentSignatures.get(signature);
+    if (existing) {
+      const stillActive = this.activeNotifications.has(existing.id);
+      const withinDedupeWindow = Date.now() - existing.shownAt < NotificationService.DEDUPE_WINDOW_MS;
+      if (stillActive || withinDedupeWindow) {
+        // Same type/title/message already showing (or just shown) - skip
+        // opening a duplicate toast on top of/right after it.
+        return existing.id;
+      }
+    }
+
     const id = this.generateId();
     const notification: Notification = {
       id,
@@ -93,6 +128,8 @@ export class NotificationService {
       timestamp: new Date(),
       ...options
     };
+
+    this.recentSignatures.set(signature, { id, shownAt: Date.now() });
 
     // Build display message
     const displayMessage = notification.message

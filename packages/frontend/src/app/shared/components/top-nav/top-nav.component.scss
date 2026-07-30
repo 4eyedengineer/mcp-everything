@@ -24,8 +24,43 @@
 .nav-left {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
   flex: 1;
+  min-width: 0;
+}
+
+.brand-link {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  margin-right: 4px;
+  border-radius: 8px;
+  color: var(--text-primary);
+  text-decoration: none;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.2px;
+  white-space: nowrap;
+  overflow: hidden;
+  transition: background-color 0.2s ease;
+
+  &:hover {
+    background-color: var(--background-hover);
+  }
+
+  .brand-icon {
+    color: var(--primary-color);
+    font-size: 22px;
+    width: 22px;
+    height: 22px;
+    flex-shrink: 0;
+  }
+
+  .brand-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
 }
 
 // Center Section
@@ -38,6 +73,9 @@
   gap: 8px;
 
   .nav-button {
+    display: flex;
+    align-items: center;
+    gap: 6px;
     font-size: 14px;
     font-weight: 500;
     color: var(--text-secondary);
@@ -45,6 +83,13 @@
     height: 40px;
     border-radius: 8px;
     transition: all 0.2s ease;
+    white-space: nowrap;
+
+    mat-icon {
+      font-size: 18px;
+      width: 18px;
+      height: 18px;
+    }
 
     &:hover {
       background-color: var(--background-hover);
@@ -109,5 +154,37 @@
 
   .nav-right {
     gap: 0;
+  }
+
+  // Icon-only nav buttons: keeps the bar on one line and avoids the
+  // 2-line wrap seen at narrow widths (e.g. "My Servers").
+  .nav-center {
+    gap: 2px;
+
+    .nav-button {
+      padding: 6px 10px;
+      min-width: 0;
+
+      mat-icon {
+        margin: 0;
+      }
+    }
+
+    .nav-label {
+      display: none;
+    }
+  }
+}
+
+// Very narrow widths: collapse the wordmark to just the icon so the
+// brand + hamburger + centered nav all fit without overlapping.
+@media (max-width: 480px) {
+  .brand-link {
+    padding: 6px;
+    margin-right: 0;
+
+    .brand-text {
+      display: none;
+    }
   }
 }

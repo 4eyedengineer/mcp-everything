@@ -4,6 +4,7 @@ import { Router } from '@angular/router';
 import { BehaviorSubject, Observable, throwError } from 'rxjs';
 import { tap, catchError } from 'rxjs/operators';
 import { API_V1_BASE } from '../config/api.config';
+import { NotificationService } from './notification.service';
 
 export interface User {
   id: string;
@@ -60,7 +61,8 @@ export class AuthService {
 
   constructor(
     private http: HttpClient,
-    private router: Router
+    private router: Router,
+    private notificationService: NotificationService
   ) {}
 
   /**
@@ -116,9 +118,33 @@ export class AuthService {
     return this.http.post<TokenResponse>(`${this.apiUrl}/auth/refresh`, { refreshToken }).pipe(
       tap(response => this.handleAuthResponse(response)),
       catchError(error => {
+        this.notifySessionExpired();
         this.logout();
         return throwError(() => error);
       })
+    );
+  }
+
+  /**
+   * Inform the user that their session could not be restored/renewed - this
+   * is the single place a real, non-recoverable 401 (one that survives the
+   * silent refresh attempt in the auth interceptor / checkStoredToken)
+   * results in a toast, so it never fires speculatively during the normal
+   * boot/refresh race.
+   *
+   * Shown as sticky (persistent, requires dismissal) only when it happens
+   * mid-session - i.e. the user was actively using the app and got signed
+   * out unexpectedly, the "truly warranted" case for a persistent toast. A
+   * failed silent restore at boot (the user hasn't done anything yet this
+   * session) gets a normal auto-dismissing toast.
+   */
+  private notifySessionExpired(): void {
+    const isBootRestore = this.isLoadingSubject.value;
+    this.notificationService.error(
+      'Session Expired',
+      'Please sign in again to continue.',
+      undefined,
+      { persistent: !isBootRestore }
     );
   }
 
@@ -240,6 +266,16 @@ export class AuthService {
    */
   get isAuthenticated(): boolean {
     return this.isAuthenticatedSubject.value;
+  }
+
+  /**
+   * Whether the initial session restore (from a stored token, run at app
+   * boot via `init()`) is still in flight. Used by the error interceptor to
+   * avoid toasting on 401s that are an expected, transient part of that
+   * restore rather than a real auth failure.
+   */
+  get isLoading(): boolean {
+    return this.isLoadingSubject.value;
   }
 
   /**

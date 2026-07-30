@@ -1,24 +1,39 @@
 <!-- LibreChat-Style Layout -->
-<div class="app-container">
-  <!-- Conversation Sidebar (Collapsible) -->
-  <mcp-conversation-sidebar
-    [isOpen]="sidebarOpen()"
-    [conversations]="conversations()"
-    (close)="closeSidebar()"
-    (newChat)="onNewChat()"
-    (selectConversation)="onSelectConversation($event)"
-    (deleteConversation)="onDeleteConversation($event)"
-    (renameConversation)="onRenameConversation($event)">
-  </mcp-conversation-sidebar>
+<!--
+  /auth/* renders without the app shell (no top nav / sidebar): it's its own
+  full-page flow, and rendering the shell around it leaked app controls
+  around the login card and put several irrelevant tab stops (hamburger,
+  offscreen sidebar links) ahead of the email field in tab order.
+-->
+<ng-container *ngIf="!isAuthRoute(); else authOutlet">
+  <div class="app-container" [class.sidebar-open]="sidebarOpen()">
+    <!-- Conversation Sidebar (Collapsible) -->
+    <mcp-conversation-sidebar
+      [isOpen]="sidebarOpen()"
+      [conversations]="conversations()"
+      [@.disabled]="prefersReducedMotion()"
+      (close)="closeSidebar()"
+      (newChat)="onNewChat()"
+      (selectConversation)="onSelectConversation($event)"
+      (deleteConversation)="onDeleteConversation($event)"
+      (renameConversation)="onRenameConversation($event)">
+    </mcp-conversation-sidebar>
 
-  <!-- Main Content Area -->
-  <div class="main-container">
-    <!-- Top Navigation Bar -->
-    <mcp-top-nav (toggleSidebar)="toggleSidebar()"></mcp-top-nav>
+    <!-- Main Content Area -->
+    <div class="main-container">
+      <!-- Top Navigation Bar -->
+      <mcp-top-nav (toggleSidebar)="toggleSidebar()"></mcp-top-nav>
 
-    <!-- Content Area (Router Outlet) -->
-    <main class="content-area">
-      <router-outlet></router-outlet>
-    </main>
+      <!-- Content Area (Router Outlet) -->
+      <main class="content-area">
+        <router-outlet></router-outlet>
+      </main>
+    </div>
   </div>
-</div>
+</ng-container>
+
+<ng-template #authOutlet>
+  <main class="content-area auth-content-area">
+    <router-outlet></router-outlet>
+  </main>
+</ng-template>

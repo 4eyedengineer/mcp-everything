@@ -7,7 +7,7 @@
 
     <div class="oauth-buttons">
       <button mat-stroked-button class="oauth-button github" (click)="loginWithGitHub()">
-        <mat-icon svgIcon="github">code</mat-icon>
+        <mat-icon>code</mat-icon>
         <span>Sign up with GitHub</span>
       </button>
       <button mat-stroked-button class="oauth-button google" (click)="loginWithGoogle()">
@@ -49,7 +49,14 @@
         <mat-label>Password</mat-label>
         <input matInput formControlName="password" [type]="hidePassword ? 'password' : 'text'" autocomplete="new-password">
         <mat-icon matPrefix>lock</mat-icon>
-        <button mat-icon-button matSuffix (click)="togglePasswordVisibility()" type="button">
+        <button
+          mat-icon-button
+          matSuffix
+          (click)="togglePasswordVisibility()"
+          type="button"
+          [matTooltip]="hidePassword ? 'Show password' : 'Hide password'"
+          [attr.aria-label]="hidePassword ? 'Show password' : 'Hide password'"
+          [attr.aria-pressed]="!hidePassword">
           <mat-icon>{{ hidePassword ? 'visibility_off' : 'visibility' }}</mat-icon>
         </button>
         @if (passwordControl?.hasError('required') && passwordControl?.touched) {
@@ -67,7 +74,14 @@
         <mat-label>Confirm Password</mat-label>
         <input matInput formControlName="confirmPassword" [type]="hideConfirmPassword ? 'password' : 'text'" autocomplete="new-password">
         <mat-icon matPrefix>lock_outline</mat-icon>
-        <button mat-icon-button matSuffix (click)="toggleConfirmPasswordVisibility()" type="button">
+        <button
+          mat-icon-button
+          matSuffix
+          (click)="toggleConfirmPasswordVisibility()"
+          type="button"
+          [matTooltip]="hideConfirmPassword ? 'Show password' : 'Hide password'"
+          [attr.aria-label]="hideConfirmPassword ? 'Show confirm password' : 'Hide confirm password'"
+          [attr.aria-pressed]="!hideConfirmPassword">
           <mat-icon>{{ hideConfirmPassword ? 'visibility_off' : 'visibility' }}</mat-icon>
         </button>
         @if (confirmPasswordControl?.hasError('required') && confirmPasswordControl?.touched) {

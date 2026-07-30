@@ -131,6 +131,14 @@ export class ConversationController {
         content: msg.content || '',
         role: msg.role || 'assistant',
         timestamp: new Date(msg.timestamp || conversation.createdAt),
+        // Generated code + validation summary, when this message carries them
+        // (set by GenerationPipeline.persist at generation-complete time).
+        // Lets a reloaded conversation restore Deploy/Download actions and
+        // the validation badge, which previously only ever existed in the
+        // one-shot SSE `complete` event and were lost on refresh. Ownership
+        // of the conversation - and therefore this generated source - is
+        // already enforced by getOwnedConversationOrFail above.
+        ...(msg.metadata ? { metadata: msg.metadata } : {}),
       })),
     };
   }
