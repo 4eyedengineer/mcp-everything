@@ -70,6 +70,60 @@ jobs:
           DATABASE_PASSWORD: test
           DATABASE_NAME: test
 
+  # Runs the migration chain from scratch against an empty database.
+  #
+  # Why this job exists: development uses `synchronize: true`, which builds the
+  # schema from the entities and therefore never executes a single migration.
+  # That masked a `research_cache` migration whose SQL PostgreSQL rejects
+  # outright (a NOW() index predicate and WITH-after-WHERE clause order) - only
+  # 1 of 10 migrations applied on a fresh database, so production
+  # (`synchronize: false`) could not deploy at all, and nothing in CI noticed.
+  # This job covers the real production path: fresh DB -> full chain -> no
+  # pending migrations left.
+  migrations-backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        # pgvector image: the research_cache migration does CREATE EXTENSION vector.
+        image: pgvector/pgvector:pg15
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: migrations_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_HOST: localhost
+      DATABASE_PORT: 5432
+      DATABASE_USER: test
+      DATABASE_PASSWORD: test
+      DATABASE_NAME: migrations_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      # migration:run points at dist/database/data-source.js, so build first.
+      - run: npm run build --workspace=@mcp-everything/backend
+      - name: Apply all migrations to an empty database
+        run: npm run migration:run --workspace=@mcp-everything/backend
+      # Fails if any migration is still pending, i.e. the chain stopped early.
+      - name: Assert no migrations left pending
+        run: |
+          npm run migration:show --workspace=@mcp-everything/backend > migration-status.txt 2>&1
+          cat migration-status.txt
+          if grep -q '\[ \]' migration-status.txt; then
+            echo "::error::Pending migrations remain after migration:run - the chain is broken"
+            exit 1
+          fi
+
   test-frontend:
     runs-on: ubuntu-latest
     steps:
@@ -83,7 +137,7 @@ jobs:
 
   build-frontend:
     runs-on: ubuntu-latest
-    needs: [backend-lint, backend-typecheck, test-backend, test-frontend]
+    needs: [backend-lint, backend-typecheck, test-backend, migrations-backend, test-frontend]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
