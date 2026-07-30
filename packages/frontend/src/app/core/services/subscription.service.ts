@@ -33,7 +33,13 @@ export interface SubscriptionInfo {
 }
 
 export interface UsageInfo {
+  /**
+   * @deprecated Misleading name - this counts MCP server *generations*, not
+   * deployments. Kept for one release for back-compat; use
+   * `generationsThisMonth` instead.
+   */
   serversDeployedThisMonth: number;
+  generationsThisMonth: number;
   monthlyLimit: number;
   periodStart: string;
   periodEnd: string;
@@ -123,6 +129,7 @@ export class SubscriptionService {
         console.error('Failed to get usage:', parseHttpError(error));
         return of({
           serversDeployedThisMonth: 0,
+          generationsThisMonth: 0,
           monthlyLimit: 5,
           periodStart: new Date().toISOString(),
           periodEnd: new Date().toISOString(),

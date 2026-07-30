@@ -10,6 +10,7 @@ Complete guide for deploying MCP Everything to production environments.
 - [Production Configuration](#production-configuration)
 - [Monitoring and Logging](#monitoring-and-logging)
 - [Scaling](#scaling)
+- [MCP Server Hosting (Host on Cloud)](#mcp-server-hosting-host-on-cloud)
 - [Troubleshooting](#troubleshooting)
 
 ## Overview
@@ -719,6 +720,88 @@ import * as redisStore from 'cache-manager-redis-store';
 })
 export class AppModule {}
 ```
+
+## MCP Server Hosting (Host on Cloud)
+
+"Host on Cloud" (`POST /api/hosting/deploy/:conversationId`, `HostingService.deployToCloud`)
+builds a generated MCP server into a container image and deploys it. There are
+two `HOSTING_MODE`s:
+
+- **`kubernetes`** (default, unset): build+push the image to a container
+  registry (GHCR, or a local `localhost:5000` registry when `LOCAL_DEV=true`),
+  generate K8s manifests (`ManifestGeneratorService`), and commit them to a
+  GitOps repo (`GitOpsService`) for ArgoCD/a real cluster to reconcile. This
+  is the cluster-ready production path. **Its "running" status means
+  "manifests committed for a cluster to reconcile," not "verified serving
+  traffic"** - nothing in this codebase confirms a real cluster ever
+  schedules the pod, and the generated Deployment's liveness/readiness
+  probes (`GET /health` on port 3000) assume an HTTP server, while
+  `GenerationPipeline` today only ever emits **stdio**-transport MCP servers
+  (see `generated-servers/*/src/index.ts` - `StdioServerTransport`, no HTTP
+  listener at all). A real cluster deployment of a generated server as it
+  exists today would fail its probes and never go Ready; making that work
+  needs either an HTTP wrapper around generated servers or probes/manifests
+  that don't assume one.
+- **`docker-run`**: build the image locally and run it as a real Docker
+  container on the host, verifying it's an actual working MCP server via the
+  stdio `initialize`/`tools/list` handshake before ever reporting `running`
+  (`LocalDockerHostingService`). No registry, no GitOps repo, no cluster.
+
+### Local hosting on WSL2
+
+This path exists because "Host on Cloud" had never been exercised
+end-to-end, and the first environment it was exercised in was a WSL2 distro
+with:
+- no `docker` CLI installed at all (only Windows Docker Desktop's client,
+  reachable via the Windows filesystem mount, e.g.
+  `/mnt/c/Program Files/Docker/Docker/resources/bin/docker.exe` - bind
+  mounts of WSL paths don't work there, but `docker build` (tar-streamed
+  context) and `docker run` with port mappings do)
+- no image registry
+- no Kubernetes cluster (`kubectl` may be installed but has nothing to talk to)
+
+To exercise the flow in an environment like this:
+
+```bash
+# packages/backend/.env
+DOCKER_BIN=/mnt/c/Program Files/Docker/Docker/resources/bin/docker.exe
+HOSTING_MODE=docker-run
+```
+
+Then `POST /api/hosting/deploy/:conversationId` (after a prior
+`POST /api/deploy/github` or `POST /api/deploy/gist` for that conversation,
+which is what populates the `Deployment.serverName`/`localPath` columns
+`HostingService` reads) will:
+1. `docker build` the generated server's `Dockerfile` into a local
+   `mcp-local/<serverId>:latest` image (no push).
+2. `docker run -i --rm --name mcp-hosted-<serverId>` the image and perform
+   the MCP `initialize` + `tools/list` handshake against its stdio transport,
+   recording the real tool list and protocol version returned.
+3. Only then mark the `HostedServer` row `running` - a build or handshake
+   failure is recorded as `failed` with the real underlying error, never
+   silently treated as success.
+
+`GET /api/hosting/servers/:serverId/logs` returns real `docker logs` output
+in this mode. Stop/start/delete map to `docker stop`/re-`docker run`/removal
+of the tracked container.
+
+**Honest limitations of `docker-run` mode** (this is what still separates it
+from real cloud hosting):
+- A container's lifetime is tied to the backend process that started it
+  (tracked in an in-memory map, the same pattern `McpTestingService` uses for
+  sandboxed test containers) - a backend restart orphans/loses track of any
+  running local-docker hosted servers. A real Kubernetes Deployment survives
+  that via the kubelet/ReplicaSet; there is no supervisor here.
+- No registry push, no multi-host scheduling, no ingress/TLS, no horizontal
+  scaling - it proves the container image and the MCP server inside it are
+  correct, not that the cluster deployment path works.
+- Getting from here to a real cluster deployment still needs: a reachable
+  image registry to push to, a running Kubernetes cluster (or KinD via the
+  existing `LOCAL_DEV=true` + `scripts/kind/setup.sh` workflow) for
+  `kubectl apply`/ArgoCD to reconcile against, and - independent of hosting
+  mode entirely - an HTTP transport (or a K8s-appropriate stdio exec-based
+  proxy) for generated servers, since the K8s manifests' liveness/readiness
+  probes assume one that doesn't exist today.
 
 ## Troubleshooting
 

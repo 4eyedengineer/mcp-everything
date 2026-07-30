@@ -13,11 +13,30 @@ export class ContainerRegistryService {
   private readonly owner: string;
   private readonly repo: string;
   private readonly localRegistry: string = 'localhost:5000';
+  /**
+   * Path/name of the docker CLI to invoke. Defaults to 'docker' (found on
+   * PATH in normal Linux/CI environments). On this WSL2 dev box there is no
+   * docker CLI installed in the distro at all - only Windows Docker Desktop's
+   * client binary, reachable via the Windows filesystem mount - so DOCKER_BIN
+   * can be pointed at that path instead. See DEPLOYMENT.md "local hosting on
+   * WSL2".
+   */
+  private readonly dockerBin: string;
 
   constructor(private readonly configService: ConfigService) {
     this.registry = this.configService.get<string>('GHCR_REGISTRY', 'ghcr.io');
     this.owner = this.configService.get<string>('GHCR_OWNER');
     this.repo = this.configService.get<string>('GHCR_REPO', 'mcp-servers');
+    this.dockerBin = this.configService.get<string>('DOCKER_BIN', 'docker');
+  }
+
+  /**
+   * Quote a path/argument for safe interpolation into the shell command
+   * string used by `exec()`. Needed because DOCKER_BIN may be a Windows path
+   * containing spaces (e.g. ".../Docker Desktop/.../docker.exe").
+   */
+  private quote(value: string): string {
+    return `"${value.replace(/"/g, '\\"')}"`;
   }
 
   /**
@@ -39,11 +58,24 @@ export class ContainerRegistryService {
 
   /**
    * Get full image name for a server
+   *
+   * @throws when GHCR_OWNER is not configured and we are not in LOCAL_DEV
+   *         mode - previously this silently built a tag like
+   *         `ghcr.io/undefined/mcp-servers/...`, which `docker build` would
+   *         accept and only fail confusingly on push (or worse, succeed
+   *         locally and fail only when actually pushed).
    */
   getImageName(serverId: string, tag: string = 'latest'): string {
     if (this.isLocalDev()) {
       // Local registry: localhost:5000/server-id:tag
       return `${this.localRegistry}/${serverId}:${tag}`;
+    }
+    if (!this.owner) {
+      throw new Error(
+        'GHCR_OWNER is not configured. Set GHCR_OWNER (or LOCAL_DEV=true / ' +
+          "HOSTING_MODE=docker-run for local development) - without it the image tag " +
+          "would contain the literal string 'undefined'.",
+      );
     }
     // GHCR: ghcr.io/owner/repo/server-id:tag
     return `${this.registry}/${this.owner}/${this.repo}/${serverId}:${tag}`;
@@ -73,7 +105,7 @@ export class ContainerRegistryService {
     try {
       // Use stdin for password to avoid shell escaping issues
       await execAsync(
-        `echo "${token}" | docker login ${this.registry} -u ${this.owner} --password-stdin`,
+        `echo "${token}" | ${this.quote(this.dockerBin)} login ${this.registry} -u ${this.owner} --password-stdin`,
       );
       this.logger.log(`Logged in to GHCR (${this.registry}) as ${this.owner}`);
     } catch (error) {
@@ -93,7 +125,7 @@ export class ContainerRegistryService {
     this.logger.log(`Building image: ${imageName} for ${targetRegistry}`);
     try {
       const { stdout: buildOutput } = await execAsync(
-        `docker build -t ${imageName} ${serverDir}`,
+        `${this.quote(this.dockerBin)} build -t ${imageName} ${this.quote(serverDir)}`,
         { maxBuffer: 10 * 1024 * 1024 }, // 10MB buffer for build output
       );
       this.logger.debug(`Build output: ${buildOutput}`);
@@ -105,7 +137,9 @@ export class ContainerRegistryService {
     // Push the image
     this.logger.log(`Pushing image: ${imageName}`);
     try {
-      const { stdout: pushOutput } = await execAsync(`docker push ${imageName}`);
+      const { stdout: pushOutput } = await execAsync(
+        `${this.quote(this.dockerBin)} push ${imageName}`,
+      );
       this.logger.debug(`Push output: ${pushOutput}`);
     } catch (error) {
       this.logger.error(`Failed to push image: ${error.message}`);
@@ -124,7 +158,7 @@ export class ContainerRegistryService {
       // For local registry, delete via Docker CLI
       const imageName = this.getImageName(serverId);
       try {
-        await execAsync(`docker rmi ${imageName} 2>/dev/null || true`);
+        await execAsync(`${this.quote(this.dockerBin)} rmi ${imageName} 2>/dev/null || true`);
         this.logger.log(`Deleted local image: ${serverId}`);
       } catch (error) {
         this.logger.warn(`Failed to delete local image (may not exist): ${error.message}`);
@@ -168,7 +202,7 @@ export class ContainerRegistryService {
       // Check local Docker images
       const imageName = this.getImageName(serverId, tag);
       try {
-        await execAsync(`docker image inspect ${imageName}`);
+        await execAsync(`${this.quote(this.dockerBin)} image inspect ${imageName}`);
         return true;
       } catch {
         return false;
@@ -211,8 +245,8 @@ export class ContainerRegistryService {
     const targetImage = this.getImageName(serverId, targetTag);
 
     try {
-      await execAsync(`docker tag ${sourceImage} ${targetImage}`);
-      await execAsync(`docker push ${targetImage}`);
+      await execAsync(`${this.quote(this.dockerBin)} tag ${sourceImage} ${targetImage}`);
+      await execAsync(`${this.quote(this.dockerBin)} push ${targetImage}`);
       this.logger.log(`Tagged ${sourceImage} as ${targetImage}`);
       return targetImage;
     } catch (error) {

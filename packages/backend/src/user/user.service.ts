@@ -250,7 +250,14 @@ export class UserService {
   }
 
   async getUsageStats(userId: string): Promise<{
+    /**
+     * @deprecated Misleading name - this counts *generations*, not
+     * deployments (see `checkCanGenerate` above for why generation is the
+     * quota-consuming unit). Kept for one release so existing callers don't
+     * break; prefer `generationsThisMonth`.
+     */
     serversDeployedThisMonth: number;
+    generationsThisMonth: number;
     monthlyLimit: number;
     periodStart: Date;
     periodEnd: Date;
@@ -268,7 +275,9 @@ export class UserService {
         : Math.max(0, usage.monthlyLimit - usage.serversDeployedThisMonth);
 
     return {
+      // One-release back-compat shim, see field doc comment above.
       serversDeployedThisMonth: usage.serversDeployedThisMonth,
+      generationsThisMonth: usage.serversDeployedThisMonth,
       monthlyLimit: usage.monthlyLimit,
       periodStart: usage.periodStart,
       periodEnd: usage.periodEnd,

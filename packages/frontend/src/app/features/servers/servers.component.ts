@@ -1,16 +1,32 @@
 import { Component, OnInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { RouterModule } from '@angular/router';
+import { RouterModule, Router } from '@angular/router';
 import { MatIconModule } from '@angular/material/icon';
 import { MatButtonModule } from '@angular/material/button';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
-import { Subject, interval } from 'rxjs';
+import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
+import { forkJoin, Subject, interval } from 'rxjs';
 import { takeUntil, startWith, switchMap } from 'rxjs/operators';
+import * as JSZip from 'jszip';
 
 import { HostingApiService, HostedServer } from '../../core/services/hosting-api.service';
+import { MyServersApiService, MyServerEntry } from '../../core/services/my-servers-api.service';
+import { ConversationService } from '../../core/services/conversation.service';
 import { ServerManagementCardComponent } from './components/server-management-card/server-management-card.component';
 import { LogsModalComponent } from './components/logs-modal/logs-modal.component';
 import { ConfirmModalComponent } from './components/confirm-modal/confirm-modal.component';
+
+/**
+ * A "My Servers" row: the lifecycle-ladder entry from the aggregation
+ * endpoint, plus (once it reaches the 'hosted' rung) the full hosted-server
+ * record needed to drive the existing management card's start/stop/logs
+ * actions - the ladder endpoint intentionally only returns a thin summary
+ * (serverId/endpointUrl/status), not the full HostedServer shape.
+ */
+interface ServerRow {
+  entry: MyServerEntry;
+  hostedServer?: HostedServer;
+}
 
 @Component({
   selector: 'mcp-servers',
@@ -21,6 +37,7 @@ import { ConfirmModalComponent } from './components/confirm-modal/confirm-modal.
     MatIconModule,
     MatButtonModule,
     MatProgressSpinnerModule,
+    MatSnackBarModule,
     ServerManagementCardComponent,
     LogsModalComponent,
     ConfirmModalComponent
@@ -29,7 +46,7 @@ import { ConfirmModalComponent } from './components/confirm-modal/confirm-modal.
   styleUrls: ['./servers.component.scss']
 })
 export class ServersComponent implements OnInit, OnDestroy {
-  servers: HostedServer[] = [];
+  rows: ServerRow[] = [];
   isLoading = true;
   error: string | null = null;
 
@@ -39,7 +56,13 @@ export class ServersComponent implements OnInit, OnDestroy {
   private destroy$ = new Subject<void>();
   private refreshInterval = 30000; // 30 seconds
 
-  constructor(private hostingApiService: HostingApiService) {}
+  constructor(
+    private hostingApiService: HostingApiService,
+    private myServersApiService: MyServersApiService,
+    private conversationService: ConversationService,
+    private router: Router,
+    private snackBar: MatSnackBar
+  ) {}
 
   ngOnInit(): void {
     this.loadServers();
@@ -51,17 +74,26 @@ export class ServersComponent implements OnInit, OnDestroy {
     this.destroy$.complete();
   }
 
-  private loadServers(): void {
-    this.isLoading = true;
-    this.error = null;
+  private loadServers(showSpinner = true): void {
+    if (showSpinner) {
+      this.isLoading = true;
+      this.error = null;
+    }
 
-    this.hostingApiService.listServers().subscribe({
-      next: (response) => {
-        this.servers = response.servers;
+    forkJoin({
+      myServers: this.myServersApiService.getMyServers(),
+      hostedServers: this.hostingApiService.listServers()
+    }).subscribe({
+      next: ({ myServers, hostedServers }) => {
+        const hostedByServerId = new Map(hostedServers.servers.map((s) => [s.serverId, s]));
+        this.rows = myServers.map((entry) => ({
+          entry,
+          hostedServer: entry.hosted ? hostedByServerId.get(entry.hosted.serverId) : undefined
+        }));
         this.isLoading = false;
       },
       error: (err) => {
-        this.error = err.error || 'Failed to load servers';
+        this.error = err?.error || 'Failed to load servers';
         this.isLoading = false;
       }
     });
@@ -71,11 +103,20 @@ export class ServersComponent implements OnInit, OnDestroy {
     interval(this.refreshInterval)
       .pipe(
         takeUntil(this.destroy$),
-        switchMap(() => this.hostingApiService.listServers())
+        switchMap(() =>
+          forkJoin({
+            myServers: this.myServersApiService.getMyServers(),
+            hostedServers: this.hostingApiService.listServers()
+          })
+        )
       )
       .subscribe({
-        next: (response) => {
-          this.servers = response.servers;
+        next: ({ myServers, hostedServers }) => {
+          const hostedByServerId = new Map(hostedServers.servers.map((s) => [s.serverId, s]));
+          this.rows = myServers.map((entry) => ({
+            entry,
+            hostedServer: entry.hosted ? hostedByServerId.get(entry.hosted.serverId) : undefined
+          }));
         },
         error: (err) => {
           console.error('Auto-refresh failed:', err);
@@ -87,10 +128,118 @@ export class ServersComponent implements OnInit, OnDestroy {
     this.loadServers();
   }
 
+  openChat(conversationId: string): void {
+    this.router.navigate(['/chat', conversationId]);
+  }
+
+  /** Ladder step index for the stepper chips: 0=generated, 1=deployed, 2=hosted. */
+  stepIndex(status: MyServerEntry['status']): number {
+    return status === 'hosted' ? 2 : status === 'deployed' ? 1 : 0;
+  }
+
+  async downloadZip(row: ServerRow): Promise<void> {
+    const conversationId = row.entry.conversationId;
+
+    this.conversationService.getConversation(conversationId).subscribe({
+      next: async (conversation) => {
+        let generatedCode = conversation?.state?.generatedCode;
+
+        if (!generatedCode) {
+          // Fall back to the last assistant message's metadata, same as the
+          // chat page does when conversation.state has no copy.
+          this.conversationService.getConversationMessages(conversationId).subscribe({
+            next: async (messages) => {
+              const lastWithCode = [...messages]
+                .reverse()
+                .find((m) => m.role === 'assistant' && m.metadata?.generatedCode);
+              generatedCode = lastWithCode?.metadata?.generatedCode;
+              if (!generatedCode) {
+                this.snackBar.open('No generated code found for this server', 'Close', {
+                  duration: 3000
+                });
+                return;
+              }
+              await this.buildAndDownloadZip(generatedCode, row.entry.serverName);
+            },
+            error: () => {
+              this.snackBar.open('Failed to load generated code', 'Close', { duration: 3000 });
+            }
+          });
+          return;
+        }
+
+        await this.buildAndDownloadZip(generatedCode, row.entry.serverName);
+      },
+      error: () => {
+        this.snackBar.open('Failed to load generated code', 'Close', { duration: 3000 });
+      }
+    });
+  }
+
+  /**
+   * Builds and downloads a ZIP for a generated server. Mirrors
+   * ChatComponent.downloadAsZip (features/chat/chat.component.ts) so the
+   * download behaves identically whether triggered from the conversation or
+   * from this page.
+   */
+  private async buildAndDownloadZip(generatedCode: any, serverName: string): Promise<void> {
+    const zip = new JSZip();
+    const files = generatedCode.supportingFiles || {};
+    const mainFile = generatedCode.mainFile || '';
+    const documentation = generatedCode.documentation || '';
+
+    if (mainFile) {
+      zip.file('src/index.ts', mainFile);
+    }
+
+    for (const [filename, content] of Object.entries(files)) {
+      if (typeof content === 'string') {
+        const filePath = filename.startsWith('src/') ? filename : `src/${filename}`;
+        zip.file(filePath, content);
+      }
+    }
+
+    if (documentation) {
+      zip.file('README.md', documentation);
+    }
+
+    if (!files['package.json']) {
+      const packageJson = {
+        name: 'mcp-server',
+        version: '1.0.0',
+        type: 'module',
+        main: 'dist/index.js',
+        scripts: {
+          build: 'tsc',
+          start: 'node dist/index.js'
+        },
+        dependencies: {
+          '@modelcontextprotocol/sdk': '^1.0.0'
+        },
+        devDependencies: {
+          typescript: '^5.0.0',
+          '@types/node': '^20.0.0'
+        }
+      };
+      zip.file('package.json', JSON.stringify(packageJson, null, 2));
+    }
+
+    const content = await zip.generateAsync({ type: 'blob' });
+    const url = URL.createObjectURL(content);
+    const link = document.createElement('a');
+    link.href = url;
+    const slug = (serverName || 'mcp-server').toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    link.download = `${slug || 'mcp-server'}.zip`;
+    link.click();
+    URL.revokeObjectURL(url);
+
+    this.snackBar.open('ZIP file downloaded', 'Close', { duration: 2000 });
+  }
+
   startServer(server: HostedServer): void {
     this.hostingApiService.startServer(server.serverId).subscribe({
       next: () => {
-        this.loadServers();
+        this.loadServers(false);
       },
       error: (err) => {
         console.error('Failed to start server:', err);
@@ -101,7 +250,7 @@ export class ServersComponent implements OnInit, OnDestroy {
   stopServer(server: HostedServer): void {
     this.hostingApiService.stopServer(server.serverId).subscribe({
       next: () => {
-        this.loadServers();
+        this.loadServers(false);
       },
       error: (err) => {
         console.error('Failed to stop server:', err);
@@ -119,7 +268,7 @@ export class ServersComponent implements OnInit, OnDestroy {
     this.hostingApiService.deleteServer(this.serverToDelete.serverId).subscribe({
       next: () => {
         this.serverToDelete = null;
-        this.loadServers();
+        this.loadServers(false);
       },
       error: (err) => {
         console.error('Failed to delete server:', err);

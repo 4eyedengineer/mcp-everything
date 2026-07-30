@@ -44,6 +44,7 @@ describe('UsageStatsService', () => {
     mockUserService = {
       getUsageStats: jest.fn().mockResolvedValue({
         serversDeployedThisMonth: 0,
+        generationsThisMonth: 0,
         monthlyLimit: 5,
         periodStart: new Date('2026-07-01T00:00:00.000Z'),
         periodEnd: new Date('2026-07-31T23:59:59.999Z'),

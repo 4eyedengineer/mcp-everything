@@ -28,12 +28,16 @@ export class HostingController {
   async deployServer(
     @CurrentUser() user: User,
     @Param('conversationId') conversationId: string,
-    @Body() _dto: DeployServerDto,
+    @Body() dto: DeployServerDto,
   ) {
     try {
       this.logger.log(`Deploying server for conversation: ${conversationId}`);
 
-      const result = await this.hostingService.deployToCloud(conversationId, user.id);
+      const result = await this.hostingService.deployToCloud(
+        conversationId,
+        user.id,
+        dto.envVars,
+      );
 
       return {
         success: result.success,

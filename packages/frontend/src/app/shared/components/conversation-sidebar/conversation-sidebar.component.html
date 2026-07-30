@@ -91,7 +91,7 @@
     <div class="usage-stats">
       <ng-container *ngIf="!isUnlimited(usage.monthlyLimit); else unlimitedUsage">
         <div class="usage-count">
-          {{ usage.serversDeployedThisMonth }} / {{ usage.monthlyLimit }} deployments
+          {{ usage.generationsThisMonth }} / {{ usage.monthlyLimit }} generations
         </div>
         <mat-progress-bar
           mode="determinate"
@@ -109,7 +109,7 @@
       <ng-template #unlimitedUsage>
         <div class="usage-count unlimited">
           <mat-icon>all_inclusive</mat-icon>
-          {{ usage.serversDeployedThisMonth }} deployments (unlimited)
+          {{ usage.generationsThisMonth }} generations (unlimited)
         </div>
       </ng-template>
     </div>

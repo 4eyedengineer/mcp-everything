@@ -1,13 +1,13 @@
 <div class="servers-page">
   <header class="servers-header">
-    <h1>My Hosted Servers</h1>
+    <h1>My Servers</h1>
     <div class="header-actions">
       <button mat-icon-button (click)="refreshServers()" class="refresh-button" title="Refresh" aria-label="Refresh servers">
         <mat-icon>refresh</mat-icon>
       </button>
       <button mat-raised-button routerLink="/chat" class="btn-primary">
         <mat-icon>add</mat-icon>
-        New Server
+        New Chat
       </button>
     </div>
   </header>
@@ -26,27 +26,104 @@
   </div>
 
   <!-- Empty State -->
-  <div *ngIf="!isLoading && !error && servers.length === 0" class="empty-state">
-    <mat-icon class="empty-icon">cloud_off</mat-icon>
-    <h2>No Hosted Servers Yet</h2>
-    <p>You haven't deployed any MCP servers to the cloud.</p>
-    <p>Create a new server through the chat interface and deploy it to get started.</p>
+  <div *ngIf="!isLoading && !error && rows.length === 0" class="empty-state">
+    <mat-icon class="empty-icon">auto_awesome</mat-icon>
+    <h2>No Servers Yet</h2>
+    <p>Every MCP server you generate shows up here, tracked through its full lifecycle:</p>
+    <div class="empty-ladder">
+      <span class="empty-ladder-step">1. Generate a server in chat</span>
+      <mat-icon>arrow_forward</mat-icon>
+      <span class="empty-ladder-step">2. It appears here</span>
+      <mat-icon>arrow_forward</mat-icon>
+      <span class="empty-ladder-step">3. Deploy or host it from its conversation</span>
+    </div>
     <button mat-raised-button routerLink="/chat" class="btn-primary">
       <mat-icon>add</mat-icon>
-      Create Your First Server
+      New Chat
     </button>
   </div>
 
   <!-- Servers List -->
-  <div *ngIf="!isLoading && !error && servers.length > 0" class="servers-list">
-    <mcp-server-management-card
-      *ngFor="let server of servers"
-      [server]="server"
-      (start)="startServer($event)"
-      (stop)="stopServer($event)"
-      (delete)="openDeleteConfirmation($event)"
-      (viewLogs)="openLogs($event)">
-    </mcp-server-management-card>
+  <div *ngIf="!isLoading && !error && rows.length > 0" class="servers-list">
+    <div class="server-ladder-card" *ngFor="let row of rows">
+      <div class="ladder-card-header">
+        <div class="ladder-card-title">
+          <h3>{{ row.entry.serverName }}</h3>
+          <p class="ladder-card-description" *ngIf="row.entry.description">{{ row.entry.description }}</p>
+        </div>
+        <div class="ladder-card-meta">
+          <span class="tool-count">
+            <mat-icon>build</mat-icon>
+            {{ row.entry.toolCount }} tool{{ row.entry.toolCount === 1 ? '' : 's' }}
+          </span>
+        </div>
+      </div>
+
+      <!-- Lifecycle stepper -->
+      <div class="ladder-stepper">
+        <div class="ladder-step" [class.done]="stepIndex(row.entry.status) >= 0" [class.current]="row.entry.status === 'generated'">
+          <mat-icon>{{ stepIndex(row.entry.status) >= 0 ? 'check_circle' : 'radio_button_unchecked' }}</mat-icon>
+          <span>Generated</span>
+        </div>
+        <div class="ladder-connector" [class.done]="stepIndex(row.entry.status) >= 1"></div>
+        <div class="ladder-step" [class.done]="stepIndex(row.entry.status) >= 1" [class.current]="row.entry.status === 'deployed'">
+          <mat-icon>{{ stepIndex(row.entry.status) >= 1 ? 'check_circle' : 'radio_button_unchecked' }}</mat-icon>
+          <span>Deployed</span>
+        </div>
+        <div class="ladder-connector" [class.done]="stepIndex(row.entry.status) >= 2"></div>
+        <div class="ladder-step" [class.done]="stepIndex(row.entry.status) >= 2" [class.current]="row.entry.status === 'hosted'">
+          <mat-icon>{{ stepIndex(row.entry.status) >= 2 ? 'check_circle' : 'radio_button_unchecked' }}</mat-icon>
+          <span>Hosted</span>
+        </div>
+      </div>
+
+      <!-- Rung detail: hosted servers get the full management card -->
+      <mcp-server-management-card
+        *ngIf="row.entry.status === 'hosted' && row.hostedServer as hosted"
+        [server]="hosted"
+        (start)="startServer($event)"
+        (stop)="stopServer($event)"
+        (delete)="openDeleteConfirmation($event)"
+        (viewLogs)="openLogs($event)">
+      </mcp-server-management-card>
+
+      <!-- Rung detail: deployed (not yet hosted) -->
+      <div class="rung-detail" *ngIf="row.entry.status === 'deployed' && row.entry.deployment as deployment">
+        <div class="rung-detail-row">
+          <mat-icon>{{ deployment.type === 'repo' ? 'code' : 'description' }}</mat-icon>
+          <a [href]="deployment.url" target="_blank" rel="noopener" *ngIf="deployment.url">{{ deployment.url }}</a>
+          <span *ngIf="!deployment.url">Deployed as {{ deployment.type }}</span>
+        </div>
+      </div>
+
+      <!-- Actions available at every rung -->
+      <div class="ladder-card-actions">
+        <button mat-button (click)="openChat(row.entry.conversationId)" class="action-btn">
+          <mat-icon>chat_bubble_outline</mat-icon>
+          Open chat
+        </button>
+        <button mat-button (click)="downloadZip(row)" class="action-btn">
+          <mat-icon>download</mat-icon>
+          Download ZIP
+        </button>
+        <button
+          *ngIf="row.entry.status === 'generated'"
+          mat-button
+          (click)="openChat(row.entry.conversationId)"
+          class="action-btn">
+          <mat-icon>cloud_upload</mat-icon>
+          Deploy from chat
+        </button>
+        <button
+          *ngIf="row.entry.status === 'deployed'"
+          mat-button
+          (click)="openChat(row.entry.conversationId)"
+          class="action-btn">
+          <mat-icon>dns</mat-icon>
+          Host from chat
+        </button>
+      </div>
+    </div>
   </div>
 
   <!-- Logs Modal -->

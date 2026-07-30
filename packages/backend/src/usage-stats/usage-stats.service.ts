@@ -81,7 +81,7 @@ export class UsageStatsService {
   private async getCurrentPeriod(userId: string): Promise<UsageStatsCurrentPeriod> {
     const usage = await this.userService.getUsageStats(userId);
     return {
-      generations: usage.serversDeployedThisMonth,
+      generations: usage.generationsThisMonth,
       limit: usage.monthlyLimit,
       percentUsed: usage.percentUsed,
       periodEnd: usage.periodEnd.toISOString(),
