@@ -3,7 +3,7 @@
   display: flex;
   flex-direction: column;
   height: 100%;
-  background-color: white;
+  background-color: var(--surface-color);
   position: relative;
 }
 
@@ -36,14 +36,14 @@
   .greeting {
     font-size: 32px;
     font-weight: 600;
-    color: #1f1f1f;
+    color: var(--text-primary);
     margin: 0 0 8px 0;
     text-align: center;
   }
 
   .tagline {
     font-size: 16px;
-    color: #6b6b6b;
+    color: var(--text-secondary);
     margin: 0 0 48px 0;
     text-align: center;
   }
@@ -61,16 +61,16 @@
     align-items: flex-start;
     gap: 16px;
     padding: 20px;
-    background-color: white;
-    border: 1px solid #e5e5e5;
+    background-color: var(--surface-color);
+    border: 1px solid var(--border-medium);
     border-radius: 12px;
     cursor: pointer;
     transition: all 0.2s ease;
     text-align: left;
 
     &:hover {
-      background-color: #f9f9f9;
-      border-color: #d1d1d1;
+      background-color: var(--surface-alt);
+      border-color: var(--border-dark);
       box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
     }
 
@@ -78,7 +78,7 @@
       font-size: 24px;
       width: 24px;
       height: 24px;
-      color: #6b6b6b;
+      color: var(--text-secondary);
       flex-shrink: 0;
       margin-top: 2px;
     }
@@ -89,13 +89,13 @@
       .suggestion-title {
         font-size: 15px;
         font-weight: 600;
-        color: #1f1f1f;
+        color: var(--text-primary);
         margin-bottom: 4px;
       }
 
       .suggestion-desc {
         font-size: 13px;
-        color: #6b6b6b;
+        color: var(--text-secondary);
       }
     }
   }
@@ -114,8 +114,8 @@
   max-width: 800px;
   margin: 16px auto;
   padding: 20px;
-  background: linear-gradient(135deg, #e8f5e9 0%, #f1f8e9 100%);
-  border: 1px solid #c8e6c9;
+  background: linear-gradient(135deg, var(--success-bg) 0%, var(--success-bg-alt) 100%);
+  border: 1px solid var(--success-border);
   border-radius: 12px;
   width: calc(100% - 32px);
 
@@ -161,8 +161,8 @@
   max-width: 800px;
   margin: 16px auto;
   padding: 20px;
-  background: linear-gradient(135deg, #ffebee 0%, #fce4ec 100%);
-  border: 1px solid #ffcdd2;
+  background: linear-gradient(135deg, var(--error-bg) 0%, var(--error-bg-alt) 100%);
+  border: 1px solid var(--error-border);
   border-radius: 12px;
   width: calc(100% - 32px);
 
@@ -173,7 +173,7 @@
     margin-bottom: 12px;
     font-weight: 600;
     font-size: 16px;
-    color: #c62828;
+    color: var(--error-text);
 
     mat-icon {
       font-size: 24px;
@@ -186,8 +186,8 @@
   .error-message {
     margin: 0;
     font-size: 14px;
-    color: #b71c1c;
-    background-color: rgba(255, 255, 255, 0.5);
+    color: var(--error-text);
+    background-color: rgba(0, 0, 0, 0.06);
     padding: 12px;
     border-radius: 6px;
   }
@@ -200,23 +200,23 @@
   max-width: 800px;
   margin: 0 auto;
   width: 100%;
-  border-bottom: 1px solid #f0f0f0;
+  border-bottom: 1px solid var(--border-light);
 
   &:last-child {
     border-bottom: none;
   }
 
   &.user-message {
-    background-color: white;
+    background-color: var(--surface-color);
   }
 
   &.assistant-message {
-    background-color: #f9f9f9;
+    background-color: var(--surface-alt);
   }
 
   &.progress-message {
-    background-color: #fffbeb;
-    border-bottom-color: #fef3c7;
+    background-color: var(--warning-bg);
+    border-bottom-color: var(--warning-border);
 
     .avatar-circle {
       background-color: #fbbf24;
@@ -229,8 +229,8 @@
   }
 
   &.error-message {
-    background-color: #fef2f2;
-    border-bottom-color: #fecaca;
+    background-color: var(--error-bg);
+    border-bottom-color: var(--error-border);
 
     .avatar-circle {
       background-color: #ef4444;
@@ -249,11 +249,11 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    background-color: #6b6b6b;
+    background-color: var(--text-secondary);
     color: white;
 
     &.user-avatar {
-      background-color: #2d2d2d;
+      background-color: var(--primary-color);
     }
 
     mat-icon {
@@ -279,14 +279,14 @@
     .message-sender {
       font-size: 14px;
       font-weight: 600;
-      color: #1f1f1f;
+      color: var(--text-primary);
     }
   }
 
   .message-body {
     font-size: 15px;
     line-height: 1.6;
-    color: #1f1f1f;
+    color: var(--text-primary);
     white-space: pre-wrap;
     word-wrap: break-word;
 
@@ -299,7 +299,7 @@
     }
 
     code {
-      background-color: #f5f5f5;
+      background-color: var(--background-hover);
       padding: 2px 6px;
       border-radius: 4px;
       font-family: 'Monaco', 'Menlo', monospace;
@@ -328,7 +328,7 @@
     margin-top: 4px;
 
     .action-button {
-      color: #6b6b6b;
+      color: var(--text-secondary);
       transition: all 0.2s ease;
 
       mat-icon {
@@ -338,8 +338,8 @@
       }
 
       &:hover {
-        background-color: #e5e5e5;
-        color: #1f1f1f;
+        background-color: var(--background-hover);
+        color: var(--text-primary);
       }
     }
   }
@@ -373,16 +373,16 @@
     }
 
     .gist-button {
-      background-color: #2d2d2d;
+      background-color: var(--primary-color);
       color: white;
 
       &:hover:not(:disabled) {
-        background-color: #171717;
+        background-color: var(--primary-hover);
       }
     }
 
     .download-zip-button {
-      color: #6b6b6b;
+      color: var(--text-secondary);
 
       mat-icon {
         font-size: 18px;
@@ -392,8 +392,8 @@
       }
 
       &:hover {
-        background-color: #f5f5f5;
-        color: #1f1f1f;
+        background-color: var(--background-hover);
+        color: var(--text-primary);
       }
     }
 
@@ -419,8 +419,8 @@
   .deployment-result-card {
     margin-top: 16px;
     padding: 20px;
-    background: linear-gradient(135deg, #e8f5e9 0%, #f1f8e9 100%);
-    border: 1px solid #c8e6c9;
+    background: linear-gradient(135deg, var(--success-bg) 0%, var(--success-bg-alt) 100%);
+    border: 1px solid var(--success-border);
     border-radius: 12px;
 
     .result-header {
@@ -482,22 +482,22 @@
       background-color: rgba(255, 255, 255, 0.7);
       padding: 12px 16px;
       border-radius: 8px;
-      border: 1px solid #c8e6c9;
+      border: 1px solid var(--success-border);
 
       code {
         flex: 1;
         font-family: 'Monaco', 'Menlo', monospace;
         font-size: 13px;
-        color: #1f1f1f;
+        color: var(--text-primary);
         word-break: break-all;
       }
 
       button {
         flex-shrink: 0;
-        color: #6b6b6b;
+        color: var(--text-secondary);
 
         &:hover {
-          color: #1f1f1f;
+          color: var(--text-primary);
           background-color: rgba(0, 0, 0, 0.05);
         }
 
@@ -520,7 +520,7 @@
       padding: 12px 16px;
       background-color: rgba(255, 255, 255, 0.7);
       border-radius: 8px;
-      border: 1px solid #c8e6c9;
+      border: 1px solid var(--success-border);
 
       .validation-badge {
         display: flex;
@@ -554,7 +554,7 @@
         }
 
         &.validation-failed {
-          color: #c62828;
+          color: var(--error-text);
 
           mat-icon {
             color: #ef5350;
@@ -609,8 +609,8 @@
   .deployment-error-card {
     margin-top: 16px;
     padding: 20px;
-    background: linear-gradient(135deg, #ffebee 0%, #fce4ec 100%);
-    border: 1px solid #ffcdd2;
+    background: linear-gradient(135deg, var(--error-bg) 0%, var(--error-bg-alt) 100%);
+    border: 1px solid var(--error-border);
     border-radius: 12px;
 
     .error-header {
@@ -620,7 +620,7 @@
       margin-bottom: 12px;
       font-weight: 600;
       font-size: 16px;
-      color: #c62828;
+      color: var(--error-text);
 
       .error-icon {
         font-size: 24px;
@@ -633,8 +633,8 @@
     .error-message {
       margin: 0 0 16px 0;
       font-size: 14px;
-      color: #b71c1c;
-      background-color: rgba(255, 255, 255, 0.5);
+      color: var(--error-text);
+      background-color: rgba(0, 0, 0, 0.06);
       padding: 12px;
       border-radius: 6px;
     }
@@ -645,7 +645,7 @@
       gap: 8px;
 
       .retry-button {
-        color: #c62828;
+        color: var(--error-text);
 
         mat-icon {
           font-size: 18px;
@@ -664,8 +664,8 @@
 
 // Input Area
 .input-area {
-  border-top: 1px solid #e5e5e5;
-  background-color: white;
+  border-top: 1px solid var(--border-medium);
+  background-color: var(--surface-color);
   padding: 16px 0 24px 0;
 }
 
@@ -680,20 +680,20 @@
   display: flex;
   align-items: flex-end;
   gap: 8px;
-  background-color: white;
-  border: 1px solid #d1d1d1;
+  background-color: var(--surface-color);
+  border: 1px solid var(--border-dark);
   border-radius: 24px;
   padding: 8px 12px;
   transition: all 0.2s ease;
   box-shadow: 0 0 0 0 rgba(45, 45, 45, 0);
 
   &:focus-within {
-    border-color: #6b6b6b;
+    border-color: var(--text-secondary);
     box-shadow: 0 0 0 3px rgba(45, 45, 45, 0.1);
   }
 
   .input-icon-button {
-    color: #6b6b6b;
+    color: var(--text-secondary);
     flex-shrink: 0;
 
     mat-icon {
@@ -703,7 +703,7 @@
     }
 
     &:hover {
-      background-color: #f5f5f5;
+      background-color: var(--background-hover);
     }
   }
 
@@ -719,10 +719,10 @@
     font-family: inherit;
     line-height: 1.5;
     background: transparent;
-    color: #1f1f1f;
+    color: var(--text-primary);
 
     &::placeholder {
-      color: #8e8e8e;
+      color: var(--text-tertiary);
     }
 
     &:disabled {
@@ -732,15 +732,15 @@
   }
 
   .send-button {
-    color: #6b6b6b;
+    color: var(--text-secondary);
     flex-shrink: 0;
     transition: all 0.2s ease;
 
     &:not(:disabled) {
-      color: #1f1f1f;
+      color: var(--text-primary);
 
       &:hover {
-        background-color: #f5f5f5;
+        background-color: var(--background-hover);
       }
     }
 
@@ -781,15 +781,15 @@
   }
 
   &::-webkit-scrollbar-track {
-    background: #f9f9f9;
+    background: var(--surface-alt);
   }
 
   &::-webkit-scrollbar-thumb {
-    background: #d1d1d1;
+    background: var(--scrollbar-thumb);
     border-radius: 4px;
 
     &:hover {
-      background: #b8b8b8;
+      background: var(--scrollbar-thumb-hover);
     }
   }
 }

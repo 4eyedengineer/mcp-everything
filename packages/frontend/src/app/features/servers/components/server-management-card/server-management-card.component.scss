@@ -1,6 +1,6 @@
 .server-card {
-  background: white;
-  border: 1px solid #e5e5e5;
+  background: var(--surface-color);
+  border: 1px solid var(--border-medium);
   border-radius: 12px;
   padding: 20px;
   position: relative;
@@ -34,7 +34,7 @@
   }
 
   &.status-failed .status-indicator {
-    background-color: #c62828;
+    background-color: var(--error-text);
   }
 
   &.status-unknown .status-indicator {
@@ -73,34 +73,34 @@
       }
 
       &.status-failed {
-        color: #c62828;
+        color: var(--error-text);
       }
     }
 
     .server-id-text {
       font-family: monospace;
       font-size: 12px;
-      color: #6b6b6b;
+      color: var(--text-secondary);
     }
   }
 
   .server-name {
     font-size: 18px;
     font-weight: 600;
-    color: #1f1f1f;
+    color: var(--text-primary);
     margin: 0 0 4px 0;
   }
 
   .server-description {
     font-size: 14px;
-    color: #6b6b6b;
+    color: var(--text-secondary);
     margin: 0 0 16px 0;
     line-height: 1.4;
   }
 }
 
 .deploy-progress {
-  background: #fff8e1;
+  background: var(--warning-bg-alt);
   border-radius: 8px;
   padding: 16px;
   margin-top: 12px;
@@ -117,7 +117,7 @@
 
     ::ng-deep {
       .mdc-linear-progress__buffer {
-        background-color: #ffe0b2;
+        background-color: var(--warning-border);
       }
 
       .mdc-linear-progress__bar-inner {
@@ -141,19 +141,19 @@
   gap: 8px;
   margin: 12px 0;
   padding: 12px;
-  background: #f5f5f5;
+  background: var(--background-hover);
   border-radius: 8px;
 
   label {
     font-size: 12px;
-    color: #6b6b6b;
+    color: var(--text-secondary);
     font-weight: 500;
   }
 
   code {
     flex: 1;
     font-size: 13px;
-    color: #1f1f1f;
+    color: var(--text-primary);
     font-family: monospace;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -161,7 +161,7 @@
   }
 
   .copy-btn {
-    color: #6b6b6b;
+    color: var(--text-secondary);
     width: 32px;
     height: 32px;
 
@@ -172,7 +172,7 @@
     }
 
     &:hover {
-      color: #1f1f1f;
+      color: var(--text-primary);
     }
   }
 }
@@ -188,7 +188,7 @@
     align-items: center;
     gap: 6px;
     font-size: 13px;
-    color: #6b6b6b;
+    color: var(--text-secondary);
 
     mat-icon {
       font-size: 16px;
@@ -197,7 +197,7 @@
     }
 
     strong {
-      color: #1f1f1f;
+      color: var(--text-primary);
     }
   }
 }
@@ -208,7 +208,7 @@
   label {
     display: block;
     font-size: 12px;
-    color: #6b6b6b;
+    color: var(--text-secondary);
     font-weight: 500;
     margin-bottom: 8px;
   }
@@ -220,7 +220,7 @@
   }
 
   .tool-tag {
-    background: #e8f5e9;
+    background: var(--success-bg);
     color: #2e7d32;
     font-size: 12px;
     padding: 4px 10px;
@@ -228,8 +228,8 @@
     font-family: monospace;
 
     &.more {
-      background: #f5f5f5;
-      color: #6b6b6b;
+      background: var(--background-hover);
+      color: var(--text-secondary);
     }
   }
 }
@@ -240,7 +240,7 @@
   gap: 8px;
   margin-top: 16px;
   padding-top: 16px;
-  border-top: 1px solid #e5e5e5;
+  border-top: 1px solid var(--border-medium);
 
   .action-btn {
     flex: 1;
@@ -250,7 +250,7 @@
     justify-content: center;
     gap: 4px;
     font-size: 13px;
-    color: #6b6b6b;
+    color: var(--text-secondary);
     border-radius: 8px;
 
     mat-icon {
@@ -260,16 +260,16 @@
     }
 
     &:hover {
-      background: #f5f5f5;
-      color: #1f1f1f;
+      background: var(--background-hover);
+      color: var(--text-primary);
     }
 
     &.action-delete {
-      color: #c62828;
+      color: var(--error-text);
 
       &:hover {
-        background: #ffebee;
-        color: #c62828;
+        background: var(--error-bg);
+        color: var(--error-text);
       }
     }
   }

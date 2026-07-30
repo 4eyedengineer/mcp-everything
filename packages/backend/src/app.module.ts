@@ -21,6 +21,9 @@ import { AuthModule } from './auth/auth.module';
 import { MarketplaceModule } from './marketplace/marketplace.module';
 import { HealthModule } from './health/health.module';
 import { MetricsModule } from './metrics/metrics.module';
+import { ApiKeyModule } from './api-key/api-key.module';
+import { UsageStatsModule } from './usage-stats/usage-stats.module';
+import { GitHubModule } from './github/github.module';
 import {
   Conversation,
   PipelineRun,
@@ -31,6 +34,7 @@ import {
   HostedServer,
   ErrorLog,
   McpServer,
+  ApiKey,
 } from './database/entities';
 
 /**
@@ -74,6 +78,7 @@ export class AppController {
         HostedServer,
         ErrorLog,
         McpServer,
+        ApiKey,
       ],
       synchronize: process.env.NODE_ENV !== 'production', // Auto-sync in development
       logging: process.env.NODE_ENV === 'development',
@@ -101,6 +106,9 @@ export class AppController {
     AuthModule,
     MarketplaceModule,
     HealthModule,
+    ApiKeyModule,
+    UsageStatsModule,
+    GitHubModule,
   ],
   controllers: [AppController],
   providers: [

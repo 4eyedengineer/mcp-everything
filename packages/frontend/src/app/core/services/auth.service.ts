@@ -61,7 +61,16 @@ export class AuthService {
   constructor(
     private http: HttpClient,
     private router: Router
-  ) {
+  ) {}
+
+  /**
+   * Restore the session from a stored token. Called from an app initializer
+   * (see app.config.ts) rather than the constructor: the HTTP interceptor
+   * chain injects AuthService, so issuing an HTTP request while the
+   * constructor is still running creates a circular DI instantiation that
+   * fails synchronously and wiped the stored tokens via logout().
+   */
+  init(): void {
     this.checkStoredToken();
   }
 

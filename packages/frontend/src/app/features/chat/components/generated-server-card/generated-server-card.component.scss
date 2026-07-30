@@ -23,11 +23,11 @@
     mat-card-title {
       font-size: 18px;
       font-weight: 600;
-      color: #1f1f1f;
+      color: var(--text-primary);
     }
 
     mat-card-subtitle {
-      color: #6b6b6b;
+      color: var(--text-secondary);
       font-size: 14px;
       margin-top: 4px;
     }
@@ -45,7 +45,7 @@
 
       .tools-label {
         font-size: 14px;
-        color: #6b6b6b;
+        color: var(--text-secondary);
         font-weight: 500;
       }
 
@@ -57,8 +57,8 @@
         }
 
         .more-chip {
-          background: #e0e0e0;
-          color: #666;
+          background: var(--border-medium);
+          color: var(--text-secondary);
           font-style: italic;
         }
       }
@@ -69,7 +69,7 @@
       align-items: center;
       gap: 8px;
       padding: 8px 12px;
-      background: #fff3e0;
+      background: var(--warning-bg-alt);
       border-radius: 6px;
       font-size: 13px;
       color: #e65100;
@@ -87,7 +87,7 @@
     gap: 8px;
 
     .download-button {
-      color: #6b6b6b;
+      color: var(--text-secondary);
 
       mat-icon {
         margin-right: 4px;

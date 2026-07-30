@@ -8,7 +8,7 @@
 }
 
 .callback-card {
-  background: #fff;
+  background: var(--surface-color);
   border-radius: 16px;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
   padding: 60px 40px;
@@ -30,12 +30,12 @@
   h2 {
     font-size: 20px;
     font-weight: 600;
-    color: #1a1a2e;
+    color: var(--text-primary);
     margin: 0;
   }
 
   p {
-    color: #666;
+    color: var(--text-secondary);
     margin: 0;
     font-size: 14px;
   }
@@ -51,18 +51,18 @@
     font-size: 64px;
     width: 64px;
     height: 64px;
-    color: #c62828;
+    color: #dc2626;
   }
 
   h2 {
     font-size: 20px;
     font-weight: 600;
-    color: #1a1a2e;
+    color: var(--text-primary);
     margin: 0;
   }
 
   p {
-    color: #666;
+    color: var(--text-secondary);
     margin: 0;
     font-size: 14px;
     max-width: 280px;
@@ -90,16 +90,16 @@
 // Dark theme support
 :host-context(.dark-theme) {
   .callback-card {
-    background: #2a2a3e;
+    background: var(--surface-color);
 
     .loading-state h2,
     .error-state h2 {
-      color: #fff;
+      color: var(--text-primary);
     }
 
     .loading-state p,
     .error-state p {
-      color: #aaa;
+      color: var(--text-secondary);
     }
   }
 }

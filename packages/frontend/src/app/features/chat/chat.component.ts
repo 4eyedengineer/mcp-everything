@@ -1,4 +1,4 @@
-import { Component, OnInit, OnDestroy, signal } from '@angular/core';
+import { Component, OnInit, OnDestroy, effect, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
@@ -20,6 +20,7 @@ import { SessionService } from '../../core/services/session.service';
 import { SafeMarkdownPipe } from '../../shared/pipes/safe-markdown.pipe';
 import { DeployModalComponent, DeployModalResult } from './components/deploy-modal/deploy-modal.component';
 import { DeployProgressComponent, DeploymentCompleteEvent } from './components/deploy-progress/deploy-progress.component';
+import { RepoPickerModalComponent, RepoPickerResult } from './components/repo-picker-modal/repo-picker-modal.component';
 import { Subscription } from 'rxjs';
 import * as JSZip from 'jszip';
 
@@ -77,6 +78,23 @@ export class ChatComponent implements OnInit, OnDestroy {
   ) {
     // Generate or restore session ID
     this.sessionId = this.sessionService.getOrCreateSessionId();
+
+    // Keep the URL in sync with the active conversation. This fires the
+    // moment ChatService learns the real conversation id - either from the
+    // POST /chat/message response (as soon as the backend creates a brand
+    // new conversation) or from the SSE 'complete' event - and reflects it as
+    // /chat/:id via replaceUrl so the back button and refresh both keep
+    // working without triggering a component reload or wiping in-flight
+    // messages. Guarded so it never re-navigates when the route already
+    // matches (e.g. after the route-param subscription below reacts to a
+    // navigation that originated here).
+    effect(() => {
+      const conversationId = this.chatService.conversationId();
+      const routeConversationId = this.route.snapshot.params['conversationId'];
+      if (conversationId && conversationId !== routeConversationId) {
+        this.router.navigate(['/chat', conversationId], { replaceUrl: true });
+      }
+    });
   }
 
   ngOnInit(): void {
@@ -330,6 +348,25 @@ export class ChatComponent implements OnInit, OnDestroy {
   useSuggestion(suggestion: string): void {
     this.currentMessage.set(suggestion);
     this.sendMessage();
+  }
+
+  /**
+   * Open the repo-picker modal from the "Analyze a GitHub repository"
+   * suggestion card, instead of silently auto-sending a hardcoded repo.
+   * On selection (search result, "your repos" entry, or a pasted URL),
+   * sends the same message the pipeline already expects.
+   */
+  openRepoPickerModal(): void {
+    const dialogRef = this.dialog.open(RepoPickerModalComponent, {
+      width: '560px',
+      panelClass: 'repo-picker-modal-panel'
+    });
+
+    dialogRef.afterClosed().subscribe((result: RepoPickerResult | undefined) => {
+      if (result?.repoUrl) {
+        this.useSuggestion(`Generate an MCP server from ${result.repoUrl}`);
+      }
+    });
   }
 
   /**

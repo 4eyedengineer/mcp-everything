@@ -1,4 +1,4 @@
-import { Component, OnInit, signal } from '@angular/core';
+import { Component, OnInit, effect, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { Router, RouterModule } from '@angular/router';
 import { ViewportScroller } from '@angular/common';
@@ -46,6 +46,19 @@ export class AppComponent implements OnInit {
     // Offset scroll-to-anchor/position-restoration by the fixed header height
     // (equivalent to the old `RouterModule.forRoot(..., { scrollOffset: [0, 64] })`).
     viewportScroller.setOffset([0, 64]);
+
+    // Keep the sidebar list in sync when a conversation is created outside of
+    // the "New chat" button flow - e.g. the user types straight into a blank
+    // /chat and the backend creates the conversation on the first message.
+    // Only refetches when the id genuinely isn't in the list yet, so
+    // switching between already-known conversations doesn't cause redundant
+    // requests.
+    effect(() => {
+      const id = this.chatService.conversationId();
+      if (id && !this.conversations().some(conversation => conversation.id === id)) {
+        this.loadConversations();
+      }
+    });
   }
 
   ngOnInit(): void {
@@ -110,6 +123,45 @@ export class AppComponent implements OnInit {
         this.chatService.clearMessages();
         this.router.navigate(['/chat']);
         this.closeSidebar();
+      }
+    });
+  }
+
+  /**
+   * Delete a conversation and remove it from the sidebar. If it's the one
+   * currently open, fall back to a blank /chat rather than leaving the page
+   * pointed at a conversation that no longer exists.
+   */
+  onDeleteConversation(conversationId: string): void {
+    this.conversationService.deleteConversation(conversationId).subscribe({
+      next: () => {
+        this.conversations.update(current => current.filter(c => c.id !== conversationId));
+
+        if (this.chatService.conversationId() === conversationId) {
+          this.chatService.setConversationId(undefined);
+          this.chatService.setLatestDeployment(null);
+          this.chatService.clearMessages();
+          this.router.navigate(['/chat']);
+        }
+      },
+      error: (error) => {
+        console.error('Error deleting conversation:', error);
+      }
+    });
+  }
+
+  /**
+   * Rename a conversation's title.
+   */
+  onRenameConversation(event: { id: string; title: string }): void {
+    this.conversationService.updateConversationTitle(event.id, event.title).subscribe({
+      next: (updated) => {
+        this.conversations.update(current =>
+          current.map(c => (c.id === event.id ? { ...c, title: updated.title } : c))
+        );
+      },
+      error: (error) => {
+        console.error('Error renaming conversation:', error);
       }
     });
   }

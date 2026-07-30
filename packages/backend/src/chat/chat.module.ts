@@ -4,6 +4,7 @@ import { ChatController } from './chat.controller';
 import { ConversationController } from './conversation.controller';
 import { ConversationService } from './conversation.service';
 import { StreamTicketService } from './stream-ticket.service';
+import { PipelineStatusService } from './pipeline-status.service';
 import { GenerationPipeline } from '../orchestration/pipeline.service';
 import { CodeExecutionService } from '../orchestration/code-execution.service';
 import { GitHubAnalysisService } from '../github-analysis.service';
@@ -35,6 +36,9 @@ import { UserModule } from '../user/user.module';
     CodeExecutionService,
     // SSE stream authorization tickets
     StreamTicketService,
+    // Per-conversation "is a pipeline run executing right now" flag, shared
+    // between ChatController (sets it) and ConversationController (reads it)
+    PipelineStatusService,
     // Research inputs
     GitHubAnalysisService,
     // Conversation CRUD for the REST API

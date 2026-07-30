@@ -95,7 +95,9 @@ export class ConversationSidebarComponent implements OnInit {
 
   onDeleteConversation(event: Event, conversationId: string): void {
     event.stopPropagation();
-    this.deleteConversation.emit(conversationId);
+    if (confirm('Delete this conversation? This cannot be undone.')) {
+      this.deleteConversation.emit(conversationId);
+    }
   }
 
   onRenameConversation(event: Event, conversation: Conversation): void {

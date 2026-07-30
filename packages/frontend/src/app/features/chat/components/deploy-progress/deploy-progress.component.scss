@@ -20,18 +20,18 @@
       }
 
       &.error {
-        background: linear-gradient(135deg, #f44336 0%, #c62828 100%);
+        background: linear-gradient(135deg, #f44336 0%, var(--error-text) 100%);
       }
     }
 
     mat-card-title {
       font-size: 16px;
       font-weight: 600;
-      color: #1f1f1f;
+      color: var(--text-primary);
     }
 
     mat-card-subtitle {
-      color: #6b6b6b;
+      color: var(--text-secondary);
       font-size: 13px;
     }
   }
@@ -75,7 +75,7 @@
 
         .step-label {
           font-size: 14px;
-          color: #6b6b6b;
+          color: var(--text-secondary);
         }
 
         .step-line {
@@ -84,7 +84,7 @@
           top: 36px;
           width: 2px;
           height: 20px;
-          background: #e0e0e0;
+          background: var(--border-medium);
         }
 
         &.active {
@@ -135,9 +135,9 @@
       align-items: center;
       gap: 12px;
       padding: 16px;
-      background: #ffebee;
+      background: var(--error-bg);
       border-radius: 8px;
-      color: #c62828;
+      color: var(--error-text);
 
       mat-icon {
         font-size: 24px;
@@ -171,7 +171,7 @@
         label {
           display: block;
           font-size: 12px;
-          color: #6b6b6b;
+          color: var(--text-secondary);
           margin-bottom: 4px;
         }
 
@@ -180,8 +180,8 @@
           align-items: center;
           gap: 8px;
           padding: 8px 12px;
-          background: white;
-          border: 1px solid #e0e0e0;
+          background: var(--surface-color);
+          border: 1px solid var(--border-medium);
           border-radius: 6px;
 
           code {
@@ -202,7 +202,7 @@
         label {
           display: block;
           font-size: 12px;
-          color: #6b6b6b;
+          color: var(--text-secondary);
           margin-bottom: 4px;
         }
 

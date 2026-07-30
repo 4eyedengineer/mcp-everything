@@ -1,7 +1,7 @@
 // Server Detail Page Styles
 .server-detail-container {
   min-height: 100vh;
-  background-color: #fafafa;
+  background-color: var(--background-alt);
   padding: 24px;
 }
 
@@ -19,7 +19,7 @@
   }
 
   p {
-    color: #6b6b6b;
+    color: var(--text-secondary);
     font-size: 15px;
     margin: 0;
   }
@@ -45,12 +45,12 @@
   h3 {
     font-size: 20px;
     font-weight: 600;
-    color: #1f1f1f;
+    color: var(--text-primary);
     margin: 0 0 8px 0;
   }
 
   p {
-    color: #6b6b6b;
+    color: var(--text-secondary);
     font-size: 15px;
     margin: 0 0 24px 0;
   }
@@ -78,7 +78,7 @@
     padding: 8px 16px;
     background: transparent;
     border: none;
-    color: #6b6b6b;
+    color: var(--text-secondary);
     font-size: 14px;
     font-weight: 500;
     cursor: pointer;
@@ -86,8 +86,8 @@
     transition: all 0.2s ease;
 
     &:hover {
-      background-color: #f0f0f0;
-      color: #1f1f1f;
+      background-color: var(--border-light);
+      color: var(--text-primary);
     }
 
     mat-icon {
@@ -100,8 +100,8 @@
 
 // Header Section
 .server-header {
-  background-color: white;
-  border: 1px solid #e5e5e5;
+  background-color: var(--surface-color);
+  border: 1px solid var(--border-medium);
   border-radius: 12px;
   padding: 24px;
   margin-bottom: 24px;
@@ -116,7 +116,7 @@
     width: 64px;
     height: 64px;
     border-radius: 12px;
-    background-color: #f5f5f5;
+    background-color: var(--background-hover);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -126,7 +126,7 @@
       font-size: 32px;
       width: 32px;
       height: 32px;
-      color: #6b6b6b;
+      color: var(--text-secondary);
     }
   }
 
@@ -143,13 +143,13 @@
       h1 {
         font-size: 28px;
         font-weight: 700;
-        color: #1f1f1f;
+        color: var(--text-primary);
         margin: 0;
         line-height: 1.2;
       }
 
       .featured-badge {
-        background-color: #fef3c7;
+        background-color: var(--warning-border);
         color: #92400e;
         font-size: 11px;
         font-weight: 600;
@@ -162,7 +162,7 @@
 
     .server-description {
       font-size: 16px;
-      color: #404040;
+      color: var(--warn-color);
       line-height: 1.6;
       margin: 0 0 16px 0;
     }
@@ -177,13 +177,13 @@
         align-items: center;
         gap: 6px;
         font-size: 14px;
-        color: #6b6b6b;
+        color: var(--text-secondary);
 
         mat-icon {
           font-size: 18px;
           width: 18px;
           height: 18px;
-          color: #8e8e8e;
+          color: var(--text-tertiary);
         }
       }
     }
@@ -193,7 +193,7 @@
     display: flex;
     gap: 12px;
     padding-top: 20px;
-    border-top: 1px solid #f0f0f0;
+    border-top: 1px solid var(--border-light);
   }
 }
 
@@ -205,8 +205,8 @@
   margin-bottom: 24px;
 
   .stat-card {
-    background-color: white;
-    border: 1px solid #e5e5e5;
+    background-color: var(--surface-color);
+    border: 1px solid var(--border-medium);
     border-radius: 12px;
     padding: 20px;
     display: flex;
@@ -217,7 +217,7 @@
       font-size: 28px;
       width: 28px;
       height: 28px;
-      color: #6b6b6b;
+      color: var(--text-secondary);
     }
 
     .stat-info {
@@ -227,12 +227,12 @@
       .stat-value {
         font-size: 20px;
         font-weight: 600;
-        color: #1f1f1f;
+        color: var(--text-primary);
       }
 
       .stat-label {
         font-size: 13px;
-        color: #6b6b6b;
+        color: var(--text-secondary);
       }
     }
   }
@@ -240,8 +240,8 @@
 
 // Tags Section
 .tags-section {
-  background-color: white;
-  border: 1px solid #e5e5e5;
+  background-color: var(--surface-color);
+  border: 1px solid var(--border-medium);
   border-radius: 12px;
   padding: 20px;
   margin-bottom: 24px;
@@ -249,22 +249,22 @@
   h3 {
     font-size: 16px;
     font-weight: 600;
-    color: #1f1f1f;
+    color: var(--text-primary);
     margin: 0 0 16px 0;
   }
 
   mat-chip-set {
     mat-chip {
-      background-color: #f5f5f5;
-      color: #404040;
+      background-color: var(--background-hover);
+      color: var(--warn-color);
     }
   }
 }
 
 // Installation Section
 .installation-section {
-  background-color: white;
-  border: 1px solid #e5e5e5;
+  background-color: var(--surface-color);
+  border: 1px solid var(--border-medium);
   border-radius: 12px;
   padding: 20px;
   margin-bottom: 24px;
@@ -272,7 +272,7 @@
   h3 {
     font-size: 16px;
     font-weight: 600;
-    color: #1f1f1f;
+    color: var(--text-primary);
     margin: 0 0 16px 0;
   }
 
@@ -280,7 +280,7 @@
     .install-command {
       display: flex;
       align-items: center;
-      background-color: #1f1f1f;
+      background-color: var(--text-primary);
       border-radius: 8px;
       padding: 16px;
       gap: 12px;
@@ -296,7 +296,7 @@
       .copy-button {
         background: transparent;
         border: none;
-        color: #8e8e8e;
+        color: var(--text-tertiary);
         cursor: pointer;
         padding: 8px;
         border-radius: 6px;
@@ -305,7 +305,7 @@
 
         &:hover {
           background-color: rgba(255, 255, 255, 0.1);
-          color: white;
+          color: var(--text-inverse);
         }
 
         mat-icon {
@@ -318,7 +318,7 @@
 
     .install-note {
       font-size: 13px;
-      color: #6b6b6b;
+      color: var(--text-secondary);
       margin: 12px 0 0 0;
     }
   }
@@ -326,8 +326,8 @@
 
 // Description Section
 .description-section {
-  background-color: white;
-  border: 1px solid #e5e5e5;
+  background-color: var(--surface-color);
+  border: 1px solid var(--border-medium);
   border-radius: 12px;
   padding: 20px;
   margin-bottom: 24px;
@@ -335,13 +335,13 @@
   h3 {
     font-size: 16px;
     font-weight: 600;
-    color: #1f1f1f;
+    color: var(--text-primary);
     margin: 0 0 16px 0;
   }
 
   .long-description {
     font-size: 15px;
-    color: #404040;
+    color: var(--warn-color);
     line-height: 1.7;
     white-space: pre-wrap;
   }
@@ -349,8 +349,8 @@
 
 // Tools Section
 .tools-section {
-  background-color: white;
-  border: 1px solid #e5e5e5;
+  background-color: var(--surface-color);
+  border: 1px solid var(--border-medium);
   border-radius: 12px;
   padding: 20px;
   margin-bottom: 24px;
@@ -361,14 +361,14 @@
     gap: 8px;
     font-size: 16px;
     font-weight: 600;
-    color: #1f1f1f;
+    color: var(--text-primary);
     margin: 0 0 16px 0;
 
     mat-icon {
       font-size: 20px;
       width: 20px;
       height: 20px;
-      color: #6b6b6b;
+      color: var(--text-secondary);
     }
   }
 
@@ -376,7 +376,7 @@
     margin-bottom: 8px;
     border-radius: 8px !important;
     box-shadow: none !important;
-    border: 1px solid #e5e5e5;
+    border: 1px solid var(--border-medium);
 
     &:last-child {
       margin-bottom: 0;
@@ -392,18 +392,18 @@
     align-items: center;
     gap: 8px;
     font-weight: 600;
-    color: #1f1f1f;
+    color: var(--text-primary);
 
     .tool-icon {
       font-size: 18px;
       width: 18px;
       height: 18px;
-      color: #6b6b6b;
+      color: var(--text-secondary);
     }
   }
 
   mat-panel-description {
-    color: #6b6b6b;
+    color: var(--text-secondary);
     font-size: 13px;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -416,7 +416,7 @@
     h4 {
       font-size: 13px;
       font-weight: 600;
-      color: #6b6b6b;
+      color: var(--text-secondary);
       text-transform: uppercase;
       letter-spacing: 0.5px;
       margin: 0 0 8px 0;
@@ -424,7 +424,7 @@
 
     p {
       font-size: 14px;
-      color: #404040;
+      color: var(--warn-color);
       line-height: 1.6;
       margin: 0 0 16px 0;
     }
@@ -434,12 +434,12 @@
     }
 
     .schema-code {
-      background-color: #f5f5f5;
+      background-color: var(--background-hover);
       border-radius: 8px;
       padding: 16px;
       font-family: 'Fira Code', 'Monaco', monospace;
       font-size: 13px;
-      color: #1f1f1f;
+      color: var(--text-primary);
       overflow-x: auto;
       margin: 0;
     }
@@ -448,8 +448,8 @@
 
 // Resources Section
 .resources-section {
-  background-color: white;
-  border: 1px solid #e5e5e5;
+  background-color: var(--surface-color);
+  border: 1px solid var(--border-medium);
   border-radius: 12px;
   padding: 20px;
   margin-bottom: 24px;
@@ -460,14 +460,14 @@
     gap: 8px;
     font-size: 16px;
     font-weight: 600;
-    color: #1f1f1f;
+    color: var(--text-primary);
     margin: 0 0 16px 0;
 
     mat-icon {
       font-size: 20px;
       width: 20px;
       height: 20px;
-      color: #6b6b6b;
+      color: var(--text-secondary);
     }
   }
 
@@ -478,8 +478,8 @@
   }
 
   .resource-card {
-    background-color: #f9f9f9;
-    border: 1px solid #e5e5e5;
+    background-color: var(--surface-alt);
+    border: 1px solid var(--border-medium);
     border-radius: 8px;
     padding: 16px;
 
@@ -493,18 +493,18 @@
         font-size: 18px;
         width: 18px;
         height: 18px;
-        color: #6b6b6b;
+        color: var(--text-secondary);
       }
 
       .resource-name {
         font-weight: 600;
-        color: #1f1f1f;
+        color: var(--text-primary);
       }
     }
 
     .resource-description {
       font-size: 14px;
-      color: #6b6b6b;
+      color: var(--text-secondary);
       margin: 0 0 12px 0;
       line-height: 1.5;
     }
@@ -523,8 +523,8 @@
 
 // Environment Variables Section
 .env-vars-section {
-  background-color: white;
-  border: 1px solid #e5e5e5;
+  background-color: var(--surface-color);
+  border: 1px solid var(--border-medium);
   border-radius: 12px;
   padding: 20px;
   margin-bottom: 24px;
@@ -535,14 +535,14 @@
     gap: 8px;
     font-size: 16px;
     font-weight: 600;
-    color: #1f1f1f;
+    color: var(--text-primary);
     margin: 0 0 16px 0;
 
     mat-icon {
       font-size: 20px;
       width: 20px;
       height: 20px;
-      color: #6b6b6b;
+      color: var(--text-secondary);
     }
   }
 
@@ -559,7 +559,7 @@
       font-family: 'Fira Code', 'Monaco', monospace;
       font-size: 13px;
       color: #dc2626;
-      background-color: #fef2f2;
+      background-color: var(--error-bg);
       padding: 6px 12px;
       border-radius: 6px;
     }
@@ -567,15 +567,15 @@
 
   .env-note {
     font-size: 13px;
-    color: #6b6b6b;
+    color: var(--text-secondary);
     margin: 0;
   }
 }
 
 // Links Section
 .links-section {
-  background-color: white;
-  border: 1px solid #e5e5e5;
+  background-color: var(--surface-color);
+  border: 1px solid var(--border-medium);
   border-radius: 12px;
   padding: 20px;
   margin-bottom: 24px;
@@ -586,14 +586,14 @@
     gap: 8px;
     font-size: 16px;
     font-weight: 600;
-    color: #1f1f1f;
+    color: var(--text-primary);
     margin: 0 0 16px 0;
 
     mat-icon {
       font-size: 20px;
       width: 20px;
       height: 20px;
-      color: #6b6b6b;
+      color: var(--text-secondary);
     }
   }
 
@@ -608,23 +608,23 @@
     align-items: center;
     gap: 12px;
     padding: 12px 16px;
-    background-color: #f9f9f9;
-    border: 1px solid #e5e5e5;
+    background-color: var(--surface-alt);
+    border: 1px solid var(--border-medium);
     border-radius: 8px;
     text-decoration: none;
-    color: #1f1f1f;
+    color: var(--text-primary);
     transition: all 0.2s ease;
 
     &:hover {
-      background-color: #f0f0f0;
-      border-color: #d1d1d1;
+      background-color: var(--border-light);
+      border-color: var(--border-dark);
     }
 
     mat-icon {
       font-size: 20px;
       width: 20px;
       height: 20px;
-      color: #6b6b6b;
+      color: var(--text-secondary);
     }
 
     span {
@@ -636,7 +636,7 @@
       font-size: 16px;
       width: 16px;
       height: 16px;
-      color: #8e8e8e;
+      color: var(--text-tertiary);
     }
   }
 }
@@ -664,11 +664,11 @@
 }
 
 .primary-button {
-  background-color: #2d2d2d;
-  color: white;
+  background-color: var(--primary-color);
+  color: var(--text-inverse);
 
   &:hover {
-    background-color: #171717;
+    background-color: var(--primary-hover);
   }
 
   &:active {
@@ -677,13 +677,13 @@
 }
 
 .secondary-button {
-  background-color: white;
-  color: #1f1f1f;
-  border: 1px solid #e5e5e5;
+  background-color: var(--surface-color);
+  color: var(--text-primary);
+  border: 1px solid var(--border-medium);
 
   &:hover {
-    background-color: #f9f9f9;
-    border-color: #d1d1d1;
+    background-color: var(--surface-alt);
+    border-color: var(--border-dark);
   }
 
   &:active {

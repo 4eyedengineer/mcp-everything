@@ -8,6 +8,9 @@ import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { Observable, Subscription } from 'rxjs';
 import { SubscriptionService, TierInfo, SubscriptionInfo, UsageInfo } from '../../core/services/subscription.service';
 import { AuthService, User } from '../../core/services/auth.service';
+import { ApiKeySectionComponent } from './sections/api-key-section/api-key-section.component';
+import { UsageStatsSectionComponent } from './sections/usage-stats-section/usage-stats-section.component';
+import { ThemeToggleComponent } from '../../shared/components/theme-toggle/theme-toggle.component';
 
 interface Settings {
   emailNotifications: boolean;
@@ -23,7 +26,10 @@ interface Settings {
     FormsModule,
     MatIconModule,
     MatTooltipModule,
-    MatSnackBarModule
+    MatSnackBarModule,
+    ApiKeySectionComponent,
+    UsageStatsSectionComponent,
+    ThemeToggleComponent
   ],
   templateUrl: './account.component.html',
   styleUrls: ['./account.component.scss']

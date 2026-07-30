@@ -13,6 +13,7 @@ import { DeploymentService } from '../database/services/deployment.service';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { User } from '../database/entities/user.entity';
 import { Conversation } from '../database/entities/conversation.entity';
+import { PipelineStatusService } from './pipeline-status.service';
 // Note: All routes protected by global JWT guard - user authenticated automatically
 
 interface CreateConversationDto {
@@ -28,6 +29,7 @@ export class ConversationController {
   constructor(
     private conversationService: ConversationService,
     private deploymentService: DeploymentService,
+    private pipelineStatus: PipelineStatusService,
   ) {}
 
   /**
@@ -58,6 +60,11 @@ export class ConversationController {
         sessionId: conv.sessionId,
         createdAt: conv.createdAt,
         updatedAt: conv.updatedAt,
+        // Lets the sidebar/chat page know whether a pipeline run is still
+        // executing (real-time, this process) or paused awaiting the user's
+        // next message (durable, survives restarts) without fetching history.
+        isGenerating: this.pipelineStatus.isExecuting(conv.id),
+        awaitingClarification: this.isAwaitingClarification(conv),
       })),
     };
   }
@@ -80,6 +87,13 @@ export class ConversationController {
         updatedAt: conversation.updatedAt,
         // FIX #130: Include state for generatedCode access
         state: conversation.state,
+        // Whether the pipeline is actively streaming right now vs paused
+        // waiting on the user - lets the frontend restore the correct UI
+        // (processing spinner + SSE reconnect vs a normal idle conversation)
+        // when the user returns to /chat/:id mid-generation or after a
+        // refresh.
+        isGenerating: this.pipelineStatus.isExecuting(conversation.id),
+        awaitingClarification: this.isAwaitingClarification(conversation),
       },
     };
   }
@@ -203,6 +217,16 @@ export class ConversationController {
         updatedAt: conversation.updatedAt,
       },
     };
+  }
+
+  /**
+   * Whether the conversation has a saved, resumable pipeline state (i.e. it
+   * paused awaiting a clarification reply rather than finishing normally).
+   * Persisted on the conversation row by GenerationPipeline.saveState/
+   * clearSavedState, so this survives server restarts unlike `isGenerating`.
+   */
+  private isAwaitingClarification(conversation: Conversation): boolean {
+    return Boolean(conversation.state?.pipeline?.awaitingClarification);
   }
 
   /**

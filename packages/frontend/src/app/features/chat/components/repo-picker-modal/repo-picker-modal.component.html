@@ -1,0 +1,111 @@
+<div class="repo-picker-modal">
+  <h2 mat-dialog-title>
+    <mat-icon>code</mat-icon>
+    Analyze a GitHub Repository
+  </h2>
+
+  <mat-dialog-content>
+    <!-- Paste a URL directly -->
+    <form [formGroup]="urlForm" (ngSubmit)="submitUrl()" class="url-form">
+      <mat-form-field appearance="outline" class="full-width">
+        <mat-label>GitHub repository URL</mat-label>
+        <input
+          matInput
+          formControlName="url"
+          placeholder="https://github.com/owner/repo"
+          autocomplete="off"
+        />
+        <mat-error *ngIf="urlForm.get('url')?.hasError('required')">
+          Enter a GitHub repository URL
+        </mat-error>
+        <mat-error *ngIf="urlForm.get('url')?.hasError('invalidGithubUrl')">
+          Must look like github.com/owner/repo
+        </mat-error>
+      </mat-form-field>
+      <button
+        mat-raised-button
+        color="primary"
+        type="submit"
+        [disabled]="urlForm.invalid"
+        class="use-url-button"
+      >
+        Use this repo
+      </button>
+    </form>
+
+    <div class="divider"><span>or search</span></div>
+
+    <!-- Public repo search -->
+    <mat-form-field appearance="outline" class="full-width search-field">
+      <mat-label>Search public repositories</mat-label>
+      <mat-icon matPrefix>search</mat-icon>
+      <input
+        matInput
+        [value]="searchQuery()"
+        (input)="onSearchInput($event)"
+        placeholder="e.g. jsonplaceholder"
+        autocomplete="off"
+      />
+      <mat-spinner *ngIf="isSearching()" matSuffix diameter="18"></mat-spinner>
+    </mat-form-field>
+
+    <div class="search-error" *ngIf="searchError()">
+      <mat-icon>info</mat-icon>
+      {{ searchError() }}
+    </div>
+
+    <div class="repo-list" *ngIf="searchResults().length > 0">
+      <button
+        *ngFor="let repo of searchResults()"
+        type="button"
+        class="repo-item"
+        (click)="selectRepo(repo)"
+      >
+        <div class="repo-item-main">
+          <span class="repo-name">{{ repo.fullName }}</span>
+          <span class="repo-stars" *ngIf="repo.stars">
+            <mat-icon>star</mat-icon>{{ repo.stars }}
+          </span>
+        </div>
+        <div class="repo-description" *ngIf="repo.description">{{ repo.description }}</div>
+        <div class="repo-language" *ngIf="repo.language">{{ repo.language }}</div>
+      </button>
+    </div>
+
+    <div class="empty-state" *ngIf="hasSearched() && !isSearching() && searchResults().length === 0 && !searchError()">
+      No repositories found. Try a different search term or paste a URL above.
+    </div>
+
+    <!-- Your repositories (only when GitHub is configured server-side) -->
+    <ng-container *ngIf="githubConfigured() && myRepos().length > 0">
+      <div class="divider"><span>your repositories</span></div>
+      <div class="repo-list">
+        <button
+          *ngFor="let repo of myRepos()"
+          type="button"
+          class="repo-item"
+          (click)="selectRepo(repo)"
+        >
+          <div class="repo-item-main">
+            <span class="repo-name">{{ repo.fullName }}</span>
+            <span class="repo-stars" *ngIf="repo.stars">
+              <mat-icon>star</mat-icon>{{ repo.stars }}
+            </span>
+          </div>
+          <div class="repo-description" *ngIf="repo.description">{{ repo.description }}</div>
+          <div class="repo-language" *ngIf="repo.language">{{ repo.language }}</div>
+        </button>
+      </div>
+    </ng-container>
+
+    <!-- Subtle hint when no personal token is configured -->
+    <div class="connect-note" *ngIf="!isLoadingMyRepos() && !githubConfigured()">
+      <mat-icon>info_outline</mat-icon>
+      Connecting a GitHub account/token enables listing your own repositories here.
+    </div>
+  </mat-dialog-content>
+
+  <mat-dialog-actions align="end">
+    <button mat-button (click)="cancel()">Cancel</button>
+  </mat-dialog-actions>
+</div>

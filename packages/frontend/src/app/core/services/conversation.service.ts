@@ -40,6 +40,19 @@ export interface Conversation {
   updatedAt?: Date;
   // FIX #130: Include state for generatedCode access after refresh
   state?: ConversationState;
+  /**
+   * True while a pipeline run for this conversation is actively streaming on
+   * the server right now. Backed by an in-process flag (chat/pipeline-status.service.ts),
+   * so it is only meaningful as a live/real-time signal - a server restart
+   * naturally resets it, since there is no run left to be executing.
+   */
+  isGenerating?: boolean;
+  /**
+   * True when the conversation is paused awaiting the user's reply to a
+   * clarification question. Persisted on the conversation row, so this
+   * survives refreshes/restarts unlike `isGenerating`.
+   */
+  awaitingClarification?: boolean;
 }
 
 export interface ConversationMessage {

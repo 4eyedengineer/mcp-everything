@@ -84,43 +84,11 @@
       </ng-template>
     </div>
 
-    <!-- API Key Section (coming soon - not yet backed by an API) -->
-    <div class="settings-section">
-      <div class="section-header">
-        <div class="section-icon">
-          <mat-icon>vpn_key</mat-icon>
-        </div>
-        <div class="section-title">
-          <h2>API Key <span class="coming-soon-badge">Coming soon</span></h2>
-          <p>Programmatic access to your account is not available yet</p>
-        </div>
-      </div>
+    <!-- API Keys -->
+    <mcp-api-key-section></mcp-api-key-section>
 
-      <div class="section-content">
-        <p class="coming-soon-note">
-          API keys for programmatic access are not available yet. Check back in a future release.
-        </p>
-      </div>
-    </div>
-
-    <!-- Usage Statistics (coming soon - not yet backed by an API; see Subscription section below for real usage data) -->
-    <div class="settings-section">
-      <div class="section-header">
-        <div class="section-icon">
-          <mat-icon>bar_chart</mat-icon>
-        </div>
-        <div class="section-title">
-          <h2>Usage Statistics <span class="coming-soon-badge">Coming soon</span></h2>
-          <p>Detailed account activity and storage usage are not available yet</p>
-        </div>
-      </div>
-
-      <div class="section-content">
-        <p class="coming-soon-note">
-          Detailed usage statistics are not available yet. See the Subscription section below for your current monthly server usage.
-        </p>
-      </div>
-    </div>
+    <!-- Usage Statistics -->
+    <mcp-usage-stats-section></mcp-usage-stats-section>
 
     <!-- Subscription & Tier Section -->
     <div class="settings-section" *ngIf="tierInfo$ | async as tierInfo">
@@ -363,19 +331,13 @@
             </div>
           </div>
 
-          <div class="preference-item disabled">
+          <div class="preference-item">
             <div class="preference-info">
-              <div class="preference-label">Dark Mode</div>
-              <div class="preference-description">Use a dark color scheme (coming soon)</div>
+              <div class="preference-label">Theme</div>
+              <div class="preference-description">Choose a light or dark color scheme, or follow your system setting</div>
             </div>
             <div class="preference-control">
-              <label class="toggle-switch">
-                <input
-                  type="checkbox"
-                  [(ngModel)]="settings.darkMode"
-                  disabled>
-                <span class="toggle-slider"></span>
-              </label>
+              <mcp-theme-toggle></mcp-theme-toggle>
             </div>
           </div>
         </div>

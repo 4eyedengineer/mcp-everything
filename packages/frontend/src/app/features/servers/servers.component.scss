@@ -11,12 +11,12 @@
   align-items: center;
   margin-bottom: 24px;
   padding-bottom: 16px;
-  border-bottom: 1px solid #e5e5e5;
+  border-bottom: 1px solid var(--border-medium);
 
   h1 {
     font-size: 24px;
     font-weight: 600;
-    color: #1f1f1f;
+    color: var(--text-primary);
     margin: 0;
   }
 
@@ -27,16 +27,16 @@
   }
 
   .refresh-button {
-    color: #6b6b6b;
+    color: var(--text-secondary);
 
     &:hover {
-      color: #1f1f1f;
+      color: var(--text-primary);
     }
   }
 
   .btn-primary {
-    background-color: #2d2d2d;
-    color: white;
+    background-color: var(--primary-color);
+    color: var(--text-inverse);
     border-radius: 8px;
     padding: 8px 16px;
     display: flex;
@@ -50,7 +50,7 @@
     }
 
     &:hover {
-      background-color: #1a1a1a;
+      background-color: var(--primary-hover);
     }
   }
 }
@@ -69,12 +69,12 @@
     font-size: 64px;
     width: 64px;
     height: 64px;
-    color: #6b6b6b;
+    color: var(--text-secondary);
     margin-bottom: 16px;
   }
 
   p {
-    color: #6b6b6b;
+    color: var(--text-secondary);
     font-size: 14px;
     margin: 4px 0;
     max-width: 400px;
@@ -89,12 +89,12 @@
 
 .error-state {
   mat-icon {
-    color: #c62828;
+    color: var(--error-text);
   }
 
   button {
     margin-top: 16px;
-    color: #2d2d2d;
+    color: var(--primary-color);
   }
 }
 
@@ -103,20 +103,20 @@
     font-size: 80px;
     width: 80px;
     height: 80px;
-    color: #e5e5e5;
+    color: var(--border-medium);
   }
 
   h2 {
     font-size: 20px;
     font-weight: 600;
-    color: #1f1f1f;
+    color: var(--text-primary);
     margin: 0 0 8px 0;
   }
 
   .btn-primary {
     margin-top: 24px;
-    background-color: #2d2d2d;
-    color: white;
+    background-color: var(--primary-color);
+    color: var(--text-inverse);
     border-radius: 8px;
     padding: 12px 24px;
     display: flex;
@@ -124,7 +124,7 @@
     gap: 8px;
 
     &:hover {
-      background-color: #1a1a1a;
+      background-color: var(--primary-hover);
     }
   }
 }

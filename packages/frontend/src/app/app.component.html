@@ -6,7 +6,9 @@
     [conversations]="conversations()"
     (close)="closeSidebar()"
     (newChat)="onNewChat()"
-    (selectConversation)="onSelectConversation($event)">
+    (selectConversation)="onSelectConversation($event)"
+    (deleteConversation)="onDeleteConversation($event)"
+    (renameConversation)="onRenameConversation($event)">
   </mcp-conversation-sidebar>
 
   <!-- Main Content Area -->

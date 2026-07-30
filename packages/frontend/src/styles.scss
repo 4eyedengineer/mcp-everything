@@ -21,6 +21,24 @@ $mcp-theme: mat.m2-define-light-theme((
 
 @include mat.all-component-themes($mcp-theme);
 
+// Dark variant of the same palettes - typography/density are already
+// applied above via all-component-themes, so the dark theme only needs to
+// re-apply *colors*, scoped under the `.dark-theme` class that ThemeService
+// toggles on <html>. Because that class lives on documentElement, this also
+// covers Material CDK overlays (dialogs, menus, snackbars, autocomplete
+// panes) which are appended as descendants of <body>.
+$mcp-dark-theme: mat.m2-define-dark-theme((
+  color: (
+    primary: $mcp-primary,
+    accent: $mcp-accent,
+    warn: $mcp-warn,
+  ),
+));
+
+.dark-theme {
+  @include mat.all-component-colors($mcp-dark-theme);
+}
+
 /* Global Typography */
 * {
   box-sizing: border-box;
@@ -31,13 +49,14 @@ html, body {
   margin: 0;
   padding: 0;
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', sans-serif;
-  background-color: #ffffff;
-  color: #1f1f1f;
+  background-color: var(--background-main);
+  color: var(--text-primary);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  transition: background-color var(--transition-normal), color var(--transition-normal);
 }
 
-/* Monochromatic Variables */
+/* Monochromatic Variables (light theme - default) */
 :root {
   // Colors - Monochromatic palette (blacks, grays, whites only)
   --primary-color: #2d2d2d;
@@ -46,9 +65,16 @@ html, body {
   --accent-hover: #171717;
   --warn-color: #404040;
 
+  // Fixed - text placed on top of colored/gradient surfaces (buttons,
+  // gradient cards) that don't invert between themes.
+  --text-inverse: #ffffff;
+
   --background-main: #ffffff;
   --background-alt: #fafafa;
+  --background-hover: #f5f5f5;
   --surface-color: #ffffff;
+  --surface-alt: #f9f9f9;
+  --overlay-color: rgba(0, 0, 0, 0.5);
 
   --text-primary: #1f1f1f;
   --text-secondary: #6b6b6b;
@@ -58,6 +84,32 @@ html, body {
   --border-light: #f0f0f0;
   --border-medium: #e5e5e5;
   --border-dark: #d1d1d1;
+
+  --scrollbar-thumb: #d1d1d1;
+  --scrollbar-thumb-hover: #b8b8b8;
+
+  // Auth pages use a navy brand accent for links/icons (on the auth-card
+  // surface) and a light red error banner - these need theme-aware
+  // variants since the literal navy/pink values are unreadable on a dark
+  // card surface.
+  --link-color: #0f3460;
+  --link-hover: #16213e;
+  --error-bg: #ffebee;
+  --error-text: #c62828;
+
+  // Pale status-card washes (success/warning banners) - only the light
+  // background/border wash flips between themes; the semantic
+  // green/amber/red accent text and status-dot fills stay fixed.
+  --success-bg: #e8f5e9;
+  --success-bg-alt: #f1f8e9;
+  --success-border: #c8e6c9;
+  --success-text: #15803d;
+  --warning-bg: #fffbeb;
+  --warning-bg-alt: #fff3e0;
+  --warning-border: #fef3c7;
+  --error-border: #f0d5d5;
+  --error-border-hover: #e8b4b4;
+  --error-bg-alt: #fce4ec;
 
   // Layout
   --sidebar-width: 280px;
@@ -87,6 +139,60 @@ html, body {
   --transition-fast: 0.15s ease;
   --transition-normal: 0.2s ease;
   --transition-slow: 0.3s ease;
+}
+
+/* Dark theme overrides - applied via .dark-theme class on <html>,
+   toggled by ThemeService. Only palette values change; layout, spacing,
+   radius, and transition tokens are shared. */
+.dark-theme {
+  --primary-color: #4a4a4a;
+  --primary-hover: #5e5e5e;
+  --accent-color: #4a4a4a;
+  --accent-hover: #5e5e5e;
+  --warn-color: #8a8a8a;
+
+  --text-inverse: #ffffff;
+
+  --background-main: #121212;
+  --background-alt: #1a1a1a;
+  --background-hover: #262626;
+  --surface-color: #1e1e1e;
+  --surface-alt: #242424;
+  --overlay-color: rgba(0, 0, 0, 0.7);
+
+  --text-primary: #f0f0f0;
+  --text-secondary: #a8a8a8;
+  --text-tertiary: #8a8a8a;
+  --text-disabled: #5c5c5c;
+
+  --border-light: #2a2a2a;
+  --border-medium: #363636;
+  --border-dark: #4a4a4a;
+
+  --scrollbar-thumb: #4a4a4a;
+  --scrollbar-thumb-hover: #5e5e5e;
+
+  --link-color: #64b5f6;
+  --link-hover: #90caf9;
+  --error-bg: #3f1d1d;
+  --error-text: #f87171;
+
+  --success-bg: #1b3a1f;
+  --success-bg-alt: #1f4024;
+  --success-border: #2d5233;
+  --success-text: #4ade80;
+  --warning-bg: #3a2f14;
+  --warning-bg-alt: #3a2c14;
+  --warning-border: #4a3a1a;
+  --error-border: #5a2e2e;
+  --error-border-hover: #6e3838;
+  --error-bg-alt: #2a1616;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 4px 16px rgba(0, 0, 0, 0.5);
+
+  color-scheme: dark;
 }
 
 /* Utility Classes */
@@ -219,27 +325,28 @@ html, body {
   letter-spacing: 0.5px;
 
   &.status-active {
-    background-color: #e5e5e5;
-    color: #1f1f1f;
+    background-color: var(--border-medium);
+    color: var(--text-primary);
   }
 
   &.status-building {
-    background-color: #fafafa;
-    color: #6b6b6b;
+    background-color: var(--background-alt);
+    color: var(--text-secondary);
   }
 
   &.status-error {
-    background-color: #f0f0f0;
-    color: #404040;
+    background-color: var(--border-light);
+    color: var(--warn-color);
   }
 
   &.status-draft {
-    background-color: #f5f5f5;
-    color: #8e8e8e;
+    background-color: var(--background-hover);
+    color: var(--text-tertiary);
   }
 }
 
-/* Code Syntax Highlighting */
+/* Code Syntax Highlighting - intentionally fixed dark regardless of theme
+   (matches typical code-block conventions), so no variable swap here. */
 .code-block {
   background-color: #2d3748;
   color: #e2e8f0;
@@ -262,7 +369,7 @@ html, body {
 }
 
 .loading-skeleton {
-  background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+  background: linear-gradient(90deg, var(--border-light) 25%, var(--border-medium) 50%, var(--border-light) 75%);
   background-size: 200% 100%;
   animation: loading 1.5s infinite;
   border-radius: var(--border-radius-sm);
@@ -289,19 +396,19 @@ html, body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #d1d1d1;
+  background: var(--scrollbar-thumb);
   border-radius: 4px;
   transition: background var(--transition-fast);
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #b8b8b8;
+  background: var(--scrollbar-thumb-hover);
 }
 
 // Firefox scrollbar
 * {
   scrollbar-width: thin;
-  scrollbar-color: #d1d1d1 transparent;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
 }
 
 /* Material Design Overrides - LibreChat Style */

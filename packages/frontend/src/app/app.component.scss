@@ -10,7 +10,7 @@
   height: 100%;
   width: 100%;
   position: relative;
-  background-color: white;
+  background-color: var(--background-main);
 }
 
 .main-container {
@@ -24,7 +24,7 @@
 .content-area {
   flex: 1;
   overflow: hidden;
-  background-color: white;
+  background-color: var(--background-main);
   position: relative;
 }
 

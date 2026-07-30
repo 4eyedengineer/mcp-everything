@@ -14,11 +14,15 @@ import { GitHubAuthGuard } from './guards/github-auth.guard';
 import { GoogleAuthGuard } from './guards/google-auth.guard';
 import { UserModule } from '../user/user.module';
 import { EmailModule } from '../email/email.module';
+import { ApiKeyModule } from '../api-key/api-key.module';
 
 @Module({
   imports: [
     UserModule,
     EmailModule,
+    // JwtAuthGuard (provided below) needs ApiKeyService to authenticate
+    // requests that present an X-API-Key / Bearer mcpe_... key instead of a JWT.
+    ApiKeyModule,
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({
       imports: [ConfigModule],

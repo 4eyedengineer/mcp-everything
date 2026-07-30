@@ -4,7 +4,7 @@
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--overlay-color);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -13,7 +13,7 @@
 }
 
 .modal-content.logs-modal {
-  background: white;
+  background: var(--surface-color);
   border-radius: 12px;
   width: 100%;
   max-width: 900px;
@@ -28,7 +28,7 @@
   justify-content: space-between;
   align-items: center;
   padding: 16px 20px;
-  border-bottom: 1px solid #e5e5e5;
+  border-bottom: 1px solid var(--border-medium);
 
   .header-title {
     display: flex;
@@ -39,22 +39,22 @@
       font-size: 24px;
       width: 24px;
       height: 24px;
-      color: #6b6b6b;
+      color: var(--text-secondary);
     }
 
     h2 {
       font-size: 18px;
       font-weight: 600;
-      color: #1f1f1f;
+      color: var(--text-primary);
       margin: 0;
     }
   }
 
   .close-btn {
-    color: #6b6b6b;
+    color: var(--text-secondary);
 
     &:hover {
-      color: #1f1f1f;
+      color: var(--text-primary);
     }
   }
 }
@@ -79,12 +79,12 @@
     font-size: 48px;
     width: 48px;
     height: 48px;
-    color: #6b6b6b;
+    color: var(--text-secondary);
     margin-bottom: 16px;
   }
 
   p {
-    color: #6b6b6b;
+    color: var(--text-secondary);
     font-size: 14px;
     margin: 8px 0 0;
   }
@@ -92,7 +92,7 @@
 
 .error-state {
   mat-icon {
-    color: #c62828;
+    color: var(--error-text);
   }
 }
 
@@ -107,8 +107,8 @@
     align-items: center;
     gap: 8px;
     padding: 12px 20px;
-    background: #fff8e1;
-    border-bottom: 1px solid #ffe0b2;
+    background: var(--warning-bg-alt);
+    border-bottom: 1px solid var(--warning-border);
 
     mat-icon {
       font-size: 18px;
@@ -135,12 +135,12 @@
       font-size: 48px;
       width: 48px;
       height: 48px;
-      color: #e5e5e5;
+      color: var(--border-medium);
       margin-bottom: 16px;
     }
 
     p {
-      color: #6b6b6b;
+      color: var(--text-secondary);
       font-size: 14px;
       margin: 0;
     }
@@ -166,8 +166,8 @@
   justify-content: space-between;
   align-items: center;
   padding: 12px 20px;
-  border-top: 1px solid #e5e5e5;
-  background: #f5f5f5;
+  border-top: 1px solid var(--border-medium);
+  background: var(--background-hover);
 
   .line-count-select {
     width: 160px;
@@ -179,7 +179,7 @@
 
       .mat-mdc-text-field-wrapper {
         padding: 0 8px;
-        background: white;
+        background: var(--surface-color);
       }
 
       .mat-mdc-form-field-infix {
@@ -198,7 +198,7 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    color: #6b6b6b;
+    color: var(--text-secondary);
     border-radius: 8px;
 
     mat-icon {
@@ -208,8 +208,8 @@
     }
 
     &:hover {
-      background: #e5e5e5;
-      color: #1f1f1f;
+      background: var(--border-medium);
+      color: var(--text-primary);
     }
 
     &:disabled {

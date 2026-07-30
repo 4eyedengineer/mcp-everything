@@ -22,6 +22,7 @@ import { User } from '../database/entities/user.entity';
 import { StreamTicketService } from './stream-ticket.service';
 import { CreateStreamTicketDto, StreamTicketResponseDto } from './dto/stream-ticket.dto';
 import { SendMessageDto } from './dto/send-message.dto';
+import { PipelineStatusService } from './pipeline-status.service';
 
 interface StreamUpdate {
   type: 'progress' | 'result' | 'error' | 'complete';
@@ -29,6 +30,15 @@ interface StreamUpdate {
   message?: string;
   data?: any;
   timestamp: Date;
+  /**
+   * Conversation this update belongs to. A single browser session id can
+   * span multiple conversations (e.g. "New chat" started while a previous
+   * one is still generating), and both share one SSE stream keyed by
+   * sessionId - tagging every update lets the frontend drop updates that
+   * belong to a conversation it isn't currently displaying instead of
+   * leaking them into whatever conversation happens to be on screen.
+   */
+  conversationId?: string;
 }
 
 interface BufferedUpdate {
@@ -61,6 +71,7 @@ export class ChatController implements OnModuleDestroy {
   constructor(
     private pipeline: GenerationPipeline,
     private streamTicketService: StreamTicketService,
+    private pipelineStatus: PipelineStatusService,
   ) {
     // Start automatic cleanup timer
     this.startCleanupTimer();
@@ -204,6 +215,7 @@ export class ChatController implements OnModuleDestroy {
     // Mark the pipeline as executing
     session.isPipelineExecuting = true;
     session.lastActivityAt = new Date();
+    this.pipelineStatus.markExecuting(resolvedConversationId);
 
     // Execute the pipeline in background and stream updates
     this.executeAndStream(sessionId, message, resolvedConversationId, user.id)
@@ -212,6 +224,7 @@ export class ChatController implements OnModuleDestroy {
         this.sendStreamUpdate(sessionId, {
           type: 'error',
           message: error.message,
+          conversationId: resolvedConversationId,
           timestamp: new Date(),
         });
       })
@@ -222,6 +235,7 @@ export class ChatController implements OnModuleDestroy {
           currentSession.lastActivityAt = new Date();
           this.logger.log(`Pipeline execution finished for session: ${sessionId}`);
         }
+        this.pipelineStatus.markIdle(resolvedConversationId);
       });
 
     return {
@@ -261,6 +275,7 @@ export class ChatController implements OnModuleDestroy {
             type: 'progress',
             node: entry.node,
             message: entry.message,
+            conversationId: update.conversationId,
             timestamp: entry.timestamp,
           });
         }
@@ -270,6 +285,7 @@ export class ChatController implements OnModuleDestroy {
           this.sendStreamUpdate(sessionId, {
             type: 'complete',
             message: update.response,
+            conversationId: update.conversationId,
             data: {
               conversationId: update.conversationId,
               generatedCode: update.generatedCode,
@@ -291,6 +307,7 @@ export class ChatController implements OnModuleDestroy {
           this.sendStreamUpdate(sessionId, {
             type: 'result',
             message: update.clarificationNeeded.question,
+            conversationId: update.conversationId,
             data: {
               options: update.clarificationNeeded.options,
             },
@@ -308,6 +325,7 @@ export class ChatController implements OnModuleDestroy {
       this.sendStreamUpdate(sessionId, {
         type: 'error',
         message: `Execution failed: ${error.message}`,
+        conversationId,
         timestamp: new Date(),
       });
     }
