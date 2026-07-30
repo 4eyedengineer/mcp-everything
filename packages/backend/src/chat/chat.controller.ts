@@ -15,7 +15,7 @@ import {
 import { SkipThrottle } from '@nestjs/throttler';
 import { Observable, Subject } from 'rxjs';
 import { map } from 'rxjs/operators';
-import { GraphOrchestrationService } from '../orchestration/graph.service';
+import { GenerationPipeline } from '../orchestration/pipeline.service';
 import { Public } from '../auth/decorators/public.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { User } from '../database/entities/user.entity';
@@ -41,7 +41,7 @@ interface StreamSession {
   buffer: BufferedUpdate[];
   createdAt: Date;
   lastActivityAt: Date;
-  isGraphExecuting: boolean;
+  isPipelineExecuting: boolean;
   /** Owner of this session - set on first authenticated interaction */
   userId?: string;
 }
@@ -59,7 +59,7 @@ export class ChatController implements OnModuleDestroy {
   private cleanupTimer: NodeJS.Timeout;
 
   constructor(
-    private graphService: GraphOrchestrationService,
+    private pipeline: GenerationPipeline,
     private streamTicketService: StreamTicketService,
   ) {
     // Start automatic cleanup timer
@@ -168,7 +168,7 @@ export class ChatController implements OnModuleDestroy {
   }
 
   /**
-   * POST endpoint to send message and trigger graph execution
+   * POST endpoint to send message and trigger pipeline execution
    *
    * Resolves (or creates) the conversation up front so the real conversation
    * UUID can be returned to the caller instead of the placeholder 'new'.
@@ -183,7 +183,7 @@ export class ChatController implements OnModuleDestroy {
       `Message received for session: ${sessionId}, conversationId: ${conversationId || 'new'}`,
     );
 
-    // Create session immediately before graph execution
+    // Create session immediately before pipeline execution
     this.ensureSessionExists(sessionId, user.id);
 
     const session = this.streamSessions.get(sessionId);
@@ -195,20 +195,20 @@ export class ChatController implements OnModuleDestroy {
 
     // Resolve the conversation now so the caller receives the real UUID.
     // Also enforces conversation ownership for existing conversations.
-    const resolvedConversationId = await this.graphService.ensureConversation(
+    const resolvedConversationId = await this.pipeline.ensureConversation(
       sessionId,
       conversationId,
       user.id,
     );
 
-    // Mark graph as executing
-    session.isGraphExecuting = true;
+    // Mark the pipeline as executing
+    session.isPipelineExecuting = true;
     session.lastActivityAt = new Date();
 
-    // Execute graph in background and stream updates
+    // Execute the pipeline in background and stream updates
     this.executeAndStream(sessionId, message, resolvedConversationId, user.id)
       .catch((error) => {
-        this.logger.error(`Graph execution error for session ${sessionId}: ${error.message}`);
+        this.logger.error(`Pipeline execution error for session ${sessionId}: ${error.message}`);
         this.sendStreamUpdate(sessionId, {
           type: 'error',
           message: error.message,
@@ -218,9 +218,9 @@ export class ChatController implements OnModuleDestroy {
       .finally(() => {
         const currentSession = this.streamSessions.get(sessionId);
         if (currentSession) {
-          currentSession.isGraphExecuting = false;
+          currentSession.isPipelineExecuting = false;
           currentSession.lastActivityAt = new Date();
-          this.logger.log(`Graph execution finished for session: ${sessionId}`);
+          this.logger.log(`Pipeline execution finished for session: ${sessionId}`);
         }
       });
 
@@ -231,7 +231,7 @@ export class ChatController implements OnModuleDestroy {
   }
 
   /**
-   * Execute graph and stream updates with buffering support
+   * Execute the generation pipeline and stream updates with buffering support
    */
   private async executeAndStream(
     sessionId: string,
@@ -239,29 +239,29 @@ export class ChatController implements OnModuleDestroy {
     conversationId?: string,
     userId?: string,
   ): Promise<void> {
-    this.logger.log(`Starting graph execution for session: ${sessionId}`);
+    this.logger.log(`Starting pipeline execution for session: ${sessionId}`);
 
     try {
-      // Get stream generator from graph execution
-      const streamGenerator = await this.graphService.executeGraph(
+      const streamGenerator = await this.pipeline.execute(
         sessionId,
         userInput,
         conversationId,
         userId,
       );
 
-      // Process each update from the graph
+      // Process each update from the pipeline
       for await (const update of streamGenerator) {
-        this.logger.debug(`Graph update received from node: ${update.currentNode}`);
+        this.logger.debug(`Pipeline update received from step: ${update.currentStep}`);
 
-        // Send progress updates
-        if (update.streamingUpdates) {
-          const latestUpdate = update.streamingUpdates[update.streamingUpdates.length - 1];
+        // Send EVERY new progress entry, not just the most recent one - the
+        // previous implementation dropped intermediate messages whenever a step
+        // emitted more than one.
+        for (const entry of update.streamingUpdates || []) {
           this.sendStreamUpdate(sessionId, {
             type: 'progress',
-            node: latestUpdate.node,
-            message: latestUpdate.message,
-            timestamp: latestUpdate.timestamp,
+            node: entry.node,
+            message: entry.message,
+            timestamp: entry.timestamp,
           });
         }
 
@@ -279,8 +279,15 @@ export class ChatController implements OnModuleDestroy {
           });
         }
 
-        // Send clarification request
-        if (update.needsUserInput && update.clarificationNeeded) {
+        // Send clarification request. Skipped when the `complete` event above
+        // already carried the same question as its message - the pipeline sets
+        // `response` to the question when it pauses, and emitting both put the
+        // question on screen twice.
+        if (
+          update.needsUserInput &&
+          update.clarificationNeeded &&
+          update.response !== update.clarificationNeeded.question
+        ) {
           this.sendStreamUpdate(sessionId, {
             type: 'result',
             message: update.clarificationNeeded.question,
@@ -292,10 +299,10 @@ export class ChatController implements OnModuleDestroy {
         }
       }
 
-      this.logger.log(`Graph execution completed successfully for session: ${sessionId}`);
+      this.logger.log(`Pipeline execution completed successfully for session: ${sessionId}`);
     } catch (error) {
       this.logger.error(
-        `Graph execution failed for session ${sessionId}: ${error.message}`,
+        `Pipeline execution failed for session ${sessionId}: ${error.message}`,
         error.stack,
       );
       this.sendStreamUpdate(sessionId, {
@@ -353,7 +360,7 @@ export class ChatController implements OnModuleDestroy {
         buffer: [],
         createdAt: new Date(),
         lastActivityAt: new Date(),
-        isGraphExecuting: false,
+        isPipelineExecuting: false,
         userId,
       });
     }
@@ -374,7 +381,7 @@ export class ChatController implements OnModuleDestroy {
 
   /**
    * Cleanup stale sessions that have been inactive
-   * Does NOT cleanup sessions with active graph execution
+   * Does NOT cleanup sessions with an active pipeline execution
    */
   private cleanupStaleSessions(): void {
     const now = new Date();
@@ -383,8 +390,8 @@ export class ChatController implements OnModuleDestroy {
     for (const [sessionId, session] of this.streamSessions.entries()) {
       const inactiveMs = now.getTime() - session.lastActivityAt.getTime();
 
-      // Don't cleanup sessions with active graph execution
-      if (session.isGraphExecuting) {
+      // Don't cleanup sessions with an active pipeline execution
+      if (session.isPipelineExecuting) {
         continue;
       }
 

@@ -2,9 +2,8 @@ import { Injectable, Logger } from '@nestjs/common';
 import * as z from 'zod/v4';
 import { GitHubAnalysisService } from '../github-analysis.service';
 import axios from 'axios';
-// import { ResearchCacheService } from '../database/services/research-cache.service'; // TODO: Implement caching
 import {
-  GraphState,
+  PipelineState,
   WebSearchFindings,
   DeepGitHubAnalysis,
   ApiDocAnalysis,
@@ -138,7 +137,6 @@ export class ResearchService {
   constructor(
     private readonly githubAnalysisService: GitHubAnalysisService,
     private readonly anthropic: AnthropicService,
-    // private readonly researchCacheService: ResearchCacheService, // TODO: Implement caching
   ) {}
 
   /**
@@ -164,7 +162,7 @@ export class ResearchService {
    * console.log(research.researchConfidence); // 0.85
    * console.log(research.synthesizedPlan.keyInsights); // ["REST API", "OAuth 2.0", ...]
    */
-  async conductResearch(state: GraphState): Promise<GraphState['researchPhase']> {
+  async conductResearch(state: PipelineState): Promise<PipelineState['researchPhase']> {
     const userInput = state.userInput;
     this.logger.log(`Starting input-agnostic research for: "${userInput}"`);
 
@@ -196,7 +194,10 @@ export class ResearchService {
    * @param state - Graph state for additional context
    * @returns Input classification with confidence score
    */
-  private async classifyInput(userInput: string, _state: GraphState): Promise<InputClassification> {
+  private async classifyInput(
+    userInput: string,
+    _state: PipelineState,
+  ): Promise<InputClassification> {
     // Quick pattern matching for URLs
     const githubUrlMatch = userInput.match(/github\.com\/([^\/]+)\/([^\/\s]+)/);
     if (githubUrlMatch) {
@@ -307,11 +308,11 @@ Provide:
    */
   private async routeResearchStrategy(
     classification: InputClassification,
-    state: GraphState,
-  ): Promise<GraphState['researchPhase']> {
+    state: PipelineState,
+  ): Promise<PipelineState['researchPhase']> {
     const startTime = Date.now();
 
-    let researchPhase: GraphState['researchPhase'];
+    let researchPhase: PipelineState['researchPhase'];
 
     switch (classification.type) {
       case InputType.GITHUB_URL:
@@ -345,8 +346,8 @@ Provide:
    */
   private async researchFromGitHub(
     classification: InputClassification,
-    state: GraphState,
-  ): Promise<GraphState['researchPhase']> {
+    state: PipelineState,
+  ): Promise<PipelineState['researchPhase']> {
     const githubUrl = classification.extractedInfo.url!;
     this.logger.log(`Strategy: GitHub research for ${githubUrl}`);
 
@@ -382,8 +383,8 @@ Provide:
    */
   private async researchFromWebsite(
     classification: InputClassification,
-    state: GraphState,
-  ): Promise<GraphState['researchPhase']> {
+    state: PipelineState,
+  ): Promise<PipelineState['researchPhase']> {
     const url = classification.extractedInfo.url!;
     this.logger.log(`Strategy: Website research for ${url}`);
 
@@ -434,8 +435,8 @@ Provide:
    */
   private async researchFromServiceName(
     classification: InputClassification,
-    state: GraphState,
-  ): Promise<GraphState['researchPhase']> {
+    state: PipelineState,
+  ): Promise<PipelineState['researchPhase']> {
     const serviceName = classification.extractedInfo.serviceName!;
     this.logger.log(`Strategy: Service name research for "${serviceName}"`);
 
@@ -491,8 +492,8 @@ Provide:
    */
   private async researchFromIntent(
     classification: InputClassification,
-    state: GraphState,
-  ): Promise<GraphState['researchPhase']> {
+    state: PipelineState,
+  ): Promise<PipelineState['researchPhase']> {
     const intent = classification.extractedInfo.intent!;
     const keywords = classification.extractedInfo.keywords!;
     this.logger.log(`Strategy: Intent-based research for "${intent}"`);
@@ -547,7 +548,7 @@ Provide:
    * @returns Web search findings with patterns and best practices
    */
   private async webSearchAgent(
-    state: GraphState,
+    state: PipelineState,
     serviceName?: string,
   ): Promise<WebSearchFindings> {
     const targetName = serviceName || state.extractedData?.repositoryName || 'API';

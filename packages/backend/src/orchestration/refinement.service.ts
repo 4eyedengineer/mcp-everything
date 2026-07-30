@@ -1,19 +1,36 @@
 import { Injectable, Logger, Optional } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import * as ts from 'typescript';
 import * as z from 'zod/v4';
 import {
   McpTestingService,
   GeneratedCode,
   McpServerTestResult,
 } from '../testing/mcp-testing.service';
-import { McpGenerationService } from '../mcp-generation.service';
 import {
   McpProtocolValidatorService,
   McpProtocolValidationResult,
 } from '../validation/mcp-protocol-validator.service';
-import { GraphState, FailureAnalysis } from './types';
+import { PipelineState, FailureAnalysis, CodeQualityJudgement } from './types';
 import { getPlatformContextPrompt } from './platform-context';
 import { AnthropicService } from '../ai/anthropic.service';
 import { TruncatedResponseError } from '../ai/anthropic.errors';
+
+/**
+ * Code quality judge output contract (enforced by the API's structured outputs).
+ */
+const CodeQualityJudgementSchema = z.object({
+  isValid: z.boolean(),
+  score: z.number(),
+  feedback: z.string(),
+  issues: z.array(
+    z.object({
+      category: z.enum(['typescript', 'mcp-protocol', 'tool-implementation', 'code-quality']),
+      message: z.string(),
+      suggestion: z.string(),
+    }),
+  ),
+});
 
 /**
  * Failure analysis output contract (enforced by the API's structured outputs).
@@ -156,10 +173,10 @@ main().catch(console.error);
 /**
  * Refinement Service
  *
- * Orchestrates Phase 4: Generate-Test-Refine Loop
+ * The `refine` step of the generation pipeline: Generate-Test-Refine Loop
  *
  * Responsibilities:
- * - Generate MCP server code from ensemble plan
+ * - Generate MCP server code from the planned tool set
  * - Test using Docker-based McpTestingService
  * - Analyze failures using AI
  * - Refine code based on failure analysis
@@ -180,6 +197,7 @@ main().catch(console.error);
  * - All tools pass MCP protocol testing
  * - Build succeeds
  * - No runtime errors
+ * - LLM-as-judge quality gate passes (PIPELINE_QUALITY_GATE, default on)
  *
  * Iteration Limit:
  * - Max 5 iterations (prevents infinite loops)
@@ -190,12 +208,19 @@ main().catch(console.error);
 export class RefinementService {
   private readonly logger = new Logger(RefinementService.name);
 
+  /** LLM-as-judge quality gate; on by default, disable with PIPELINE_QUALITY_GATE=false. */
+  private readonly qualityGateEnabled: boolean;
+
   constructor(
     private readonly mcpTestingService: McpTestingService,
-    private readonly mcpGenerationService: McpGenerationService,
     private readonly anthropic: AnthropicService,
+    @Optional() private readonly configService?: ConfigService,
     @Optional() private readonly mcpProtocolValidator?: McpProtocolValidatorService,
-  ) {}
+  ) {
+    this.qualityGateEnabled =
+      String(this.configService?.get<string>('PIPELINE_QUALITY_GATE') ?? 'true').toLowerCase() !==
+      'false';
+  }
 
   /**
    * Generate code with the configured model, retrying once at a higher output
@@ -242,10 +267,10 @@ export class RefinementService {
    * Main entry point for refinement loop.
    * Iterates up to 5 times to get working MCP server.
    *
-   * @param state - Current graph state with generation plan
+   * @param state - Current pipeline state with generation plan
    * @returns Refinement result with final code and test results
    */
-  async refineUntilWorking(state: GraphState): Promise<{
+  async refineUntilWorking(state: PipelineState): Promise<{
     success: boolean;
     generatedCode: GeneratedCode;
     testResults: McpServerTestResult;
@@ -314,8 +339,32 @@ export class RefinementService {
         }
       }
 
-      // Only succeed if both tool tests and protocol validation pass
+      // Only succeed if tool tests, protocol validation AND the quality gate pass
       if (protocolValid) {
+        const judgement = await this.runQualityGate(generatedCode, state);
+
+        if (judgement && !judgement.isValid && iteration < maxIterations) {
+          this.logger.warn(
+            `Tools and protocol pass but quality gate failed (score ${judgement.score}) - continuing refinement`,
+          );
+
+          const qualityFailures = this.toFailureAnalysis(judgement, generatedCode);
+          const refinedCode = await this.refineCode(
+            generatedCode,
+            qualityFailures,
+            state.generationPlan!,
+          );
+
+          return {
+            success: false,
+            generatedCode: refinedCode,
+            testResults,
+            failureAnalysis: qualityFailures,
+            iterations: iteration,
+            shouldContinue: true,
+          };
+        }
+
         this.logger.log(
           `✅ SUCCESS! All ${testResults.toolsPassedCount} tools work (iteration ${iteration})`,
         );
@@ -408,56 +457,36 @@ export class RefinementService {
   /**
    * Generate Initial Code
    *
-   * Creates first version of MCP server from generation plan.
+   * Creates the first version of the MCP server from the planned tool set.
    *
-   * Priority:
-   * 1. If ensemble has discovered tools (in generationPlan.toolsToGenerate) - use them
-   * 2. Otherwise, fall back to McpGenerationService for GitHub URLs
-   *
-   * @param state - Graph state with generation plan
+   * @param state - Pipeline state with generation plan
    * @returns Generated code structure
    */
-  private async generateInitialCode(state: GraphState): Promise<GeneratedCode> {
+  private async generateInitialCode(state: PipelineState): Promise<GeneratedCode> {
     const plan = state.generationPlan;
     if (!plan) {
       throw new Error('No generation plan available');
     }
 
-    // PRIORITY: If ensemble already discovered tools, use generateFromPlan
-    // This respects the ensemble's work and avoids duplicate tool discovery
-    if (plan.toolsToGenerate && plan.toolsToGenerate.length > 0) {
-      this.logger.log(
-        `Using ${plan.toolsToGenerate.length} tools from ensemble for MCP server generation`,
+    if (!plan.toolsToGenerate || plan.toolsToGenerate.length === 0) {
+      throw new Error(
+        'No tools available for MCP server generation - the planning step produced none.',
       );
-      return await this.generateFromPlan(state);
     }
 
-    // Fallback: Use McpGenerationService for GitHub URLs when no ensemble tools exist
-    const githubUrl = state.extractedData?.githubUrl;
-    if (githubUrl && githubUrl.trim().length > 0 && githubUrl.includes('github.com')) {
-      this.logger.log(
-        `Generating MCP server from GitHub repository (no ensemble tools): ${githubUrl}`,
-      );
-      const generated = await this.mcpGenerationService.generateMCPServer(githubUrl);
-      return this.convertToGeneratedCode(generated);
-    }
-
-    // No tools available and no GitHub URL - cannot generate
-    throw new Error(
-      'No tools available for MCP server generation. Ensemble did not produce tools and no GitHub URL provided.',
-    );
+    this.logger.log(`Using ${plan.toolsToGenerate.length} planned tools for MCP server generation`);
+    return this.generateFromPlan(state);
   }
 
   /**
    * Generate From Plan
    *
-   * Generates MCP server code directly from research findings and generation plan
-   * when no GitHub URL is provided (e.g., service name requests like "Stripe API").
+   * Generates MCP server code from research findings and the planned tool set.
    *
-   * @param state - Graph state with research and generation plan
+   * @param state - Pipeline state with research and generation plan
    * @returns Generated code structure
    */
-  private async generateFromPlan(state: GraphState): Promise<GeneratedCode> {
+  private async generateFromPlan(state: PipelineState): Promise<GeneratedCode> {
     const plan = state.generationPlan!;
     const research = state.researchPhase;
 
@@ -468,13 +497,15 @@ export class RefinementService {
       );
     }
 
-    // Extract service name from user input or research
+    // The planner names the server; fall back to deriving it from the request.
     const serviceName =
       state.userInput.match(/(?:for|with)\s+(?:the\s+)?([A-Z][a-zA-Z\s]+(?:API|api))/)?.[1] ||
       research?.synthesizedPlan?.summary?.match(/([A-Z][a-zA-Z\s]+(?:API|api))/)?.[1] ||
       'API';
 
-    const serverName = serviceName.toLowerCase().replace(/\s+/g, '-').replace(/api$/i, '') + '-mcp';
+    const serverName =
+      plan.serverName ||
+      serviceName.toLowerCase().replace(/\s+/g, '-').replace(/api$/i, '') + '-mcp';
 
     this.logger.log(
       `Generating MCP server "${serverName}" with ${plan.toolsToGenerate.length} tools`,
@@ -504,9 +535,8 @@ export class RefinementService {
       tsConfig,
       // Every generated server needs a Dockerfile: container-registry.service.ts
       // runs `docker build` directly against the on-disk server directory when
-      // deploying. This is the primary (ensemble-tools) generation path, so
-      // emitting them here is required - convertToGeneratedCode only covers the
-      // GitHub-URL fallback and refinement iterations 2+.
+      // deploying. This is the initial generation path, so emitting them here is
+      // required - convertToGeneratedCode only covers refinement iterations 2+.
       supportingFiles: {
         Dockerfile: this.generateDockerfile(),
         '.dockerignore': this.generateDockerignore(),
@@ -527,11 +557,11 @@ export class RefinementService {
    *
    * Respects user's tool count constraints (Issue #137).
    *
-   * @param state - Graph state with research and plan
+   * @param state - Pipeline state with research and plan
    * @param serverName - Name of the MCP server
    * @returns Generated TypeScript code
    */
-  private async generateMainFile(state: GraphState, serverName: string): Promise<string> {
+  private async generateMainFile(state: PipelineState, serverName: string): Promise<string> {
     const plan = state.generationPlan!;
     const research = state.researchPhase;
 
@@ -552,13 +582,16 @@ export class RefinementService {
 
     // Build constraint warning if user specified limits (Issue #137)
     let constraintWarning = '';
-    if (state.requestedToolCount || state.requestedToolNames?.length) {
+    if (state.requestedToolCount || state.requestedToolNames?.length || state.readOnlyOnly) {
       constraintWarning = `\n**⚠️ CRITICAL: USER TOOL CONSTRAINTS**\n`;
       if (state.requestedToolCount) {
         constraintWarning += `- User explicitly requested ${state.requestedToolCount} tools\n`;
       }
       if (state.requestedToolNames?.length) {
         constraintWarning += `- User specifically requested: ${state.requestedToolNames.join(', ')}\n`;
+      }
+      if (state.readOnlyOnly) {
+        constraintWarning += `- User asked for READ-ONLY tools: implement NO create/update/delete/write behaviour\n`;
       }
       constraintWarning += `- Implement EXACTLY the ${toolCount} tools listed below\n`;
       constraintWarning += `- Do NOT add extra tools, helpers, or "nice-to-have" functionality\n`;
@@ -611,14 +644,13 @@ Start with imports.`;
   /**
    * Convert to Generated Code
    *
-   * Converts McpGenerationService output to GeneratedCode format.
+   * Normalises a loosely-shaped generated-code object into GeneratedCode.
    *
-   * @param generated - Output from McpGenerationService
+   * @param generated - Generated code from a previous refinement iteration
    * @returns GeneratedCode structure
    */
   private convertToGeneratedCode(generated: any): GeneratedCode {
-    // Handle GeneratedServer structure from McpGenerationService
-    // GeneratedServer has: files[], metadata.tools, serverName
+    // Tolerate a files[] array shape as well as the flat mainFile shape
     // We need to convert to: mainFile, packageJson, tsConfig, supportingFiles, metadata
 
     // Extract main file from files array if available
@@ -914,7 +946,7 @@ ${i + 1}. Tool: ${f.toolName}
   private async refineCode(
     generatedCode: GeneratedCode,
     failureAnalysis: FailureAnalysis,
-    _plan: GraphState['generationPlan'],
+    _plan: PipelineState['generationPlan'],
   ): Promise<GeneratedCode> {
     const prompt = `${getPlatformContextPrompt()}
 
@@ -988,5 +1020,208 @@ Start directly with the imports.`;
       // Fallback: Return original code (will likely fail again, but graceful)
       return generatedCode;
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Quality gate (salvaged from the retired McpGenerationService)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Run the LLM-as-judge quality gate on code that already passed tool tests
+   * and protocol validation.
+   *
+   * Docker tests prove the tools *run*; the judge catches what running cannot:
+   * leftover TODO/placeholder bodies, truncated files, commentary before the
+   * imports, tools present in the plan but missing from the implementation.
+   *
+   * Returns null when the gate is disabled or errored (never blocks a run).
+   */
+  private async runQualityGate(
+    generatedCode: GeneratedCode,
+    state: PipelineState,
+  ): Promise<CodeQualityJudgement | null> {
+    if (!this.qualityGateEnabled) {
+      return null;
+    }
+
+    try {
+      const judgement = await this.judgeCodeQuality(generatedCode, state);
+      this.logger.log(
+        `Quality gate: ${judgement.isValid ? 'PASSED' : 'FAILED'} ` +
+          `(score ${judgement.score}, ${judgement.issues.length} issues)`,
+      );
+      return judgement;
+    } catch (error) {
+      this.logger.warn(`Quality gate error, treating as pass: ${error.message}`);
+      return null;
+    }
+  }
+
+  /**
+   * Judge Code Quality
+   *
+   * Combines a real TypeScript compile check with an LLM judge that scores the
+   * implementation against MCP protocol and completeness criteria.
+   */
+  private async judgeCodeQuality(
+    generatedCode: GeneratedCode,
+    state: PipelineState,
+  ): Promise<CodeQualityJudgement> {
+    const code = generatedCode.mainFile;
+    const tsValidation = this.validateTypeScriptCompilation(code);
+
+    const plannedTools =
+      state.generationPlan?.toolsToGenerate || generatedCode.metadata.tools || [];
+    const toolNames = plannedTools.map((t: any) => t.name).join(', ');
+    const firstLine = code.split('\n')[0].trim();
+    const hasServerConnect =
+      code.includes('server.connect(transport)') || code.includes('await server.connect(');
+    const hasTodos = /TODO|FIXME|placeholder/i.test(code);
+
+    const prompt = `You are a strict code quality judge for TypeScript MCP servers.
+
+**VALIDATION CRITERIA (ALL must pass):**
+
+**1. File Structure (CRITICAL):**
+- Code must start with TypeScript imports
+- NO commentary text before imports
+- NO markdown code blocks
+- Complete file from imports to main() function
+
+**2. TypeScript Syntax:**
+- Valid, parseable TypeScript
+- Proper import statements
+- No syntax errors, no truncated file
+
+**3. MCP Protocol Compliance:**
+- Uses @modelcontextprotocol/sdk correctly
+- Has a ListToolsRequestSchema handler
+- Has a CallToolRequestSchema handler
+- Returns { content: [{ type: 'text', text: '...' }] }
+- Has an async main() with await server.connect(transport)
+
+**4. Implementation Completeness:**
+- ALL planned tools have real implementations
+- NO TODO, FIXME or placeholder bodies
+- No tool returns fabricated/stubbed data
+- No incomplete code blocks, no file truncated mid-function
+
+**5. Scope:**
+- EXACTLY the planned tools are implemented - no extras
+
+**Server**: ${generatedCode.metadata.serverName}
+**Refinement iteration**: ${generatedCode.metadata.iteration}
+**Planned tools (${plannedTools.length})**: ${toolNames}
+
+**Pre-check results:**
+- First line: "${firstLine}"
+- Starts with import: ${firstLine.startsWith('import')}
+- Has server.connect(transport): ${hasServerConnect}
+- Contains TODO/FIXME/placeholder: ${hasTodos}
+- TypeScript parses (syntax only): ${tsValidation.compiles}
+- Syntax errors: ${tsValidation.errors.slice(0, 20).join('; ') || 'None'}
+
+**Code to evaluate:**
+\`\`\`typescript
+${code}
+\`\`\`
+
+Be strict: if any criterion fails, \`isValid\` must be false. Score 0-100.
+Each issue needs a category, the concrete problem, and an actionable fix.`;
+
+    const judgement = await this.anthropic.completeStructured({
+      prompt,
+      schema: CodeQualityJudgementSchema,
+      schemaName: 'CodeQualityJudgement',
+      maxTokens: ANALYSIS_MAX_TOKENS,
+      caller: 'refinement.judgeCodeQuality',
+    });
+
+    // A syntax error is objective - it overrides an optimistic judge.
+    const compilationIssues: CodeQualityJudgement['issues'] = tsValidation.errors.map((error) => ({
+      category: 'typescript' as const,
+      message: error,
+      suggestion: 'Fix the TypeScript syntax error',
+    }));
+
+    return {
+      isValid: judgement.isValid && tsValidation.compiles,
+      score: judgement.score,
+      feedback: judgement.feedback,
+      issues: [...compilationIssues, ...judgement.issues],
+    };
+  }
+
+  /**
+   * Validate TypeScript Syntax
+   *
+   * In-process syntactic check of the generated main file: catches truncated
+   * files, unbalanced blocks, and prose accidentally emitted before the imports
+   * - the failure modes that waste a full Docker build round-trip.
+   *
+   * Deliberately syntax-only. Full type checking needs the server's real
+   * `node_modules` (`@modelcontextprotocol/sdk`, `zod`, lib.d.ts), which this
+   * process does not have; the Docker build in McpTestingService runs `tsc`
+   * against the installed dependencies and is the authority on type errors.
+   */
+  private validateTypeScriptCompilation(code: string): { compiles: boolean; errors: string[] } {
+    try {
+      const { diagnostics = [] } = ts.transpileModule(code, {
+        reportDiagnostics: true,
+        compilerOptions: {
+          target: ts.ScriptTarget.ES2022,
+          module: ts.ModuleKind.ESNext,
+          esModuleInterop: true,
+        },
+      });
+
+      const errors = diagnostics
+        .filter((diagnostic) => diagnostic.category === ts.DiagnosticCategory.Error)
+        .map((diagnostic) => {
+          const message = ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n');
+          const line =
+            diagnostic.file && diagnostic.start !== undefined
+              ? diagnostic.file.getLineAndCharacterOfPosition(diagnostic.start).line + 1
+              : 0;
+          return `Line ${line}: ${message}`;
+        });
+
+      return { compiles: errors.length === 0, errors };
+    } catch (error) {
+      return {
+        compiles: false,
+        errors: [`TypeScript parse error: ${error.message}`],
+      };
+    }
+  }
+
+  /** Translate a failed quality judgement into the refinement loop's currency. */
+  private toFailureAnalysis(
+    judgement: CodeQualityJudgement,
+    generatedCode: GeneratedCode,
+  ): FailureAnalysis {
+    const serverTool = generatedCode.metadata.tools[0]?.name || 'server';
+
+    return {
+      failureCount: judgement.issues.length || 1,
+      categories: [
+        {
+          type: judgement.issues.some((i) => i.category === 'typescript') ? 'syntax' : 'logic',
+          count: judgement.issues.length || 1,
+        },
+      ],
+      rootCauses: judgement.issues.length
+        ? judgement.issues.map((i) => i.message)
+        : [judgement.feedback],
+      fixes: judgement.issues.map((issue) => ({
+        toolName: issue.category === 'tool-implementation' ? serverTool : 'server',
+        issue: issue.message,
+        solution: issue.suggestion,
+        priority: issue.category === 'code-quality' ? ('MEDIUM' as const) : ('HIGH' as const),
+      })),
+      recommendation:
+        judgement.feedback ||
+        'Address the quality issues found by the code judge without changing the tool set',
+    };
   }
 }

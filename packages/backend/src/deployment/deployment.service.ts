@@ -60,9 +60,9 @@ export class DeploymentOrchestratorService {
     private readonly validationService: ValidationService,
     private readonly configService: ConfigService,
   ) {
-    // Must match GraphOrchestrationService's resolution of this same
-    // directory (see graph.service.ts) so deployment can find the files
-    // that generation wrote to disk.
+    // Must match GenerationPipeline's resolution of this same directory
+    // (see orchestration/pipeline.service.ts) so deployment can find the
+    // files that generation wrote to disk.
     this.generatedServersDir = this.configService.get<string>(
       'GENERATED_SERVERS_DIR',
       join(process.cwd(), 'generated-servers'),

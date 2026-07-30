@@ -31,8 +31,9 @@ export class LocalDockerValidatorProvider {
     private readonly mcpTestingService: McpTestingService,
     private readonly configService: ConfigService,
   ) {
-    // Must resolve to the same directory as GraphOrchestrationService (see
-    // graph.service.ts) so validation can find the files generation wrote.
+    // Must resolve to the same directory as GenerationPipeline (see
+    // orchestration/pipeline.service.ts) so validation can find the files
+    // generation wrote.
     this.generatedServersDir = this.configService.get<string>(
       'GENERATED_SERVERS_DIR',
       join(process.cwd(), 'generated-servers'),

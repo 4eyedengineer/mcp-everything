@@ -7,10 +7,34 @@ export type { McpServerTestResult, ToolTestResult };
 export type { RequiredEnvVar, CollectedEnvVar };
 
 /**
- * LangGraph State Definition
- * Represents the complete state of a conversation/generation workflow
+ * The ordered steps of the generation pipeline.
+ *
+ * `provideHelp` and `handleError` are terminal steps that replace a full run.
  */
-export interface GraphState {
+export const PIPELINE_STEPS = [
+  'analyzeIntent',
+  'research',
+  'planTools',
+  'clarify',
+  'refine',
+  'persist',
+  'provideHelp',
+  'handleError',
+] as const;
+
+export type PipelineStepName = (typeof PIPELINE_STEPS)[number];
+
+export type PipelineStepStatus = 'running' | 'succeeded' | 'failed';
+
+/**
+ * Pipeline State
+ *
+ * The single mutable object threaded through the generation pipeline. It is
+ * persisted (JSON-serialised) into `conversations.state.pipeline` whenever the
+ * pipeline pauses for clarification, which is what makes a run resumable on the
+ * user's next message.
+ */
+export interface PipelineState {
   // Conversation context
   sessionId: string;
   conversationId?: string;
@@ -39,26 +63,34 @@ export interface GraphState {
     targetFramework?: string;
   };
 
-  // Research and context gathering
-  researchResults?: {
-    githubAnalysis?: any;
-    documentationContent?: string;
-    codePatterns?: any[];
-    apiEndpoints?: any[];
+  // Step: research
+  researchPhase?: {
+    webSearchFindings?: WebSearchFindings; // Optional: may not have web search results
+    githubDeepDive?: DeepGitHubAnalysis; // Optional: not all inputs are GitHub repos
+    apiDocumentation?: ApiDocAnalysis; // Optional: may not have API docs
+    synthesizedPlan: SynthesizedPlan; // Always required
+    researchConfidence: number; // 0-1, always required
+    researchIterations: number; // Always required
   };
 
-  // Generation workflow
+  // Step: planTools - the plan the refinement loop generates code from
   generationPlan?: {
     steps: string[];
     toolsToGenerate: Array<{
       name: string;
       description: string;
       parameters: any;
+      readOnly?: boolean;
     }>;
     estimatedComplexity: 'simple' | 'moderate' | 'complex';
+    serverName?: string;
+    /** Why these tools and no others - surfaced in logs and PipelineRun rows. */
+    rationale?: string;
+    /** How the user's stated scope constrained the plan. */
+    scopeNotes?: string;
   };
 
-  // Code generation
+  // Step: refine - generated code
   generatedCode?: {
     mainFile: string;
     packageJson?: string;
@@ -77,7 +109,10 @@ export interface GraphState {
     };
   };
 
-  // Execution and validation
+  /**
+   * Reserved for per-step execution output surfaced over SSE
+   * (`data.executionResults`). Kept for the streaming contract.
+   */
   executionResults?: Array<{
     step: string;
     success: boolean;
@@ -96,58 +131,41 @@ export interface GraphState {
   // Final response
   response?: string;
 
-  // ===== USER TOOL COUNT CONSTRAINTS (Issue #137) =====
+  // ===== USER TOOL SCOPE CONSTRAINTS (Issue #137) =====
 
-  // Explicit tool count/names from user's request
-  // If set, the pipeline MUST respect these constraints
-  requestedToolCount?: number; // e.g., "with 2 tools" → 2
-  requestedToolNames?: string[]; // e.g., "add and multiply" → ["add", "multiply"]
-  maxToolCount?: number; // requestedToolCount + small buffer (e.g., +2)
+  // Explicit tool count/names the user asked for, derived semantically by the
+  // intent step (never by regex). If set, the pipeline MUST respect them.
+  requestedToolCount?: number; // e.g. "with 2 tools" -> 2
+  requestedToolNames?: string[]; // e.g. "add and multiply" -> ["add", "multiply"]
+  maxToolCount?: number; // hard cap handed to the planner
+  /** True when the user asked for read-only/non-mutating tools. */
+  readOnlyOnly?: boolean;
+  /** Verbatim scope wording from the user, forwarded to the planner prompt. */
+  scopeConstraint?: string;
 
   // Metadata
-  currentNode: string;
-  executedNodes: string[];
+  currentStep: PipelineStepName;
+  executedSteps: PipelineStepName[];
   needsUserInput: boolean;
   isComplete: boolean;
   error?: string;
 
-  // Streaming updates
+  // Streaming updates (cumulative on the state; yielded as deltas)
   streamingUpdates?: Array<{
     node: string;
     message: string;
     timestamp: Date;
   }>;
 
-  // ===== ENSEMBLE ARCHITECTURE FIELDS =====
-
-  // Phase 1: Research & Planning (Input-Agnostic)
-  researchPhase?: {
-    webSearchFindings?: WebSearchFindings; // Optional: May not have web search results
-    githubDeepDive?: DeepGitHubAnalysis; // Optional: Not all inputs are GitHub repos
-    apiDocumentation?: ApiDocAnalysis; // Optional: May not have API docs
-    synthesizedPlan: SynthesizedPlan; // Always required
-    researchConfidence: number; // 0-1, always required
-    researchIterations: number; // Always required
-  };
-
-  // Phase 2: Ensemble Reasoning
-  ensembleResults?: {
-    agentPerspectives: AgentPerspective[];
-    consensusScore: number; // 0-1
-    conflictsResolved: boolean;
-    votingDetails: VotingDetails;
-  };
-
-  // Phase 3: Clarification
+  // Step: clarify
   clarificationHistory?: Array<{
     gaps: KnowledgeGap[];
     questions: ClarificationQuestion[];
     userResponses?: string;
     timestamp: Date;
   }>;
-  clarificationComplete?: boolean;
 
-  // Phase 4: Refinement Loop
+  // Step: refine
   refinementIteration?: number;
   refinementHistory?: Array<{
     iteration: number;
@@ -166,18 +184,6 @@ export interface GraphState {
 
   // Whether env var collection is complete
   envVarCollectionComplete?: boolean;
-}
-
-/**
- * Node execution result
- */
-export interface NodeResult {
-  state: Partial<GraphState>;
-  nextNode?: string | string[];
-  shouldStream?: {
-    message: string;
-    type: 'progress' | 'result' | 'error' | 'clarification';
-  };
 }
 
 /**
@@ -201,10 +207,8 @@ export interface CodeExecutionResult {
   memoryUsed?: number;
 }
 
-// ===== ENSEMBLE ARCHITECTURE TYPES =====
-
 /**
- * Phase 1: Research Types
+ * Step: research
  */
 export interface WebSearchFindings {
   queries: string[];
@@ -274,50 +278,7 @@ export interface SynthesizedPlan {
 }
 
 /**
- * Phase 2: Ensemble Types
- */
-export interface AgentPerspective {
-  agentName: 'architect' | 'security' | 'performance' | 'mcpSpecialist';
-  recommendations: {
-    tools: ToolRecommendation[];
-    reasoning: string;
-    concerns: string[];
-  };
-  confidence: number; // 0-1
-  weight: number;
-  timestamp: Date;
-}
-
-export interface ToolRecommendation {
-  name: string;
-  description: string;
-  inputSchema: any;
-  outputFormat: string;
-  priority: 'high' | 'medium' | 'low';
-  estimatedComplexity: 'simple' | 'moderate' | 'complex';
-}
-
-export interface VotingDetails {
-  totalVotes: number;
-  toolVotes: Map<string, Vote[]>;
-  consensusReached: boolean;
-  conflictingRecommendations?: Array<{
-    tool: string;
-    conflict: string;
-    resolution: string;
-  }>;
-}
-
-export interface Vote {
-  agent: string;
-  toolName: string;
-  confidence: number;
-  weight: number;
-  recommendation: ToolRecommendation;
-}
-
-/**
- * Phase 3: Clarification Types
+ * Step: clarify
  */
 export interface KnowledgeGap {
   issue: string;
@@ -334,12 +295,11 @@ export interface ClarificationQuestion {
 }
 
 /**
- * Phase 4: Refinement Types
+ * Step: refine
  *
- * Note: McpServerTestResult and ToolTestResult are imported at the top of this file
- * from ../testing/mcp-testing.service to avoid duplicate definitions
+ * Note: McpServerTestResult and ToolTestResult are imported at the top of this
+ * file from ../testing/mcp-testing.service to avoid duplicate definitions.
  */
-
 export interface FailureAnalysis {
   failureCount: number;
   categories: Array<{
@@ -358,15 +318,17 @@ export interface FailureAnalysis {
 }
 
 /**
- * Research Cache Types
+ * LLM-as-judge quality gate result (see RefinementService.judgeCodeQuality).
  */
-export interface CachedResearch {
-  githubUrl: string;
-  researchPhase: GraphState['researchPhase'];
-  cachedAt: Date;
-  expiresAt: Date;
-  embedding?: number[]; // Vector embedding for semantic search
-  accessCount: number;
+export interface CodeQualityJudgement {
+  isValid: boolean;
+  score: number; // 0-100
+  feedback: string;
+  issues: Array<{
+    category: 'typescript' | 'mcp-protocol' | 'tool-implementation' | 'code-quality';
+    message: string;
+    suggestion: string;
+  }>;
 }
 
 /**

@@ -16,7 +16,6 @@ export { TestingModule } from './testing.module';
 export { TestingController } from './testing.controller';
 export type { TestMcpServerRequest, TestMcpServerResponse } from './testing.controller';
 
-export { TestDrivenRefinementService } from './testing.integration.example';
 export {
   FIXTURE_SIMPLE_WORKING_SERVER,
   FIXTURE_BUILD_ERROR_SERVER,

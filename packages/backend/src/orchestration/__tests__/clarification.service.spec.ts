@@ -5,7 +5,7 @@ import { EnvVariableService } from '../../env-variable.service';
 import {
   createTestState,
   createResearchedState,
-  createEnsembledState,
+  createPlannedState,
 } from './__mocks__/test-utils';
 import {
   createMockAnthropicService,
@@ -76,7 +76,7 @@ describe('ClarificationService', () => {
 
   describe('orchestrateClarification', () => {
     it('should return complete when no gaps detected', async () => {
-      const state = createEnsembledState();
+      const state = createPlannedState();
 
       const result = await service.orchestrateClarification(state);
 
@@ -99,7 +99,7 @@ describe('ClarificationService', () => {
         }),
       });
 
-      const state = createEnsembledState();
+      const state = createPlannedState();
 
       const result = await service.orchestrateClarification(state);
 
@@ -124,7 +124,7 @@ describe('ClarificationService', () => {
         }),
       });
 
-      const state = createEnsembledState();
+      const state = createPlannedState();
 
       const result = await service.orchestrateClarification(state);
 
@@ -146,7 +146,7 @@ describe('ClarificationService', () => {
         }),
       });
 
-      const state = createEnsembledState();
+      const state = createPlannedState();
 
       const result = await service.orchestrateClarification(state);
 
@@ -169,7 +169,7 @@ describe('ClarificationService', () => {
         }),
       });
 
-      const state = createEnsembledState({
+      const state = createPlannedState({
         clarificationHistory: [
           { gaps: [], questions: [], userResponses: 'A1', timestamp: new Date() },
           { gaps: [], questions: [], userResponses: 'A2', timestamp: new Date() },
@@ -195,7 +195,7 @@ describe('ClarificationService', () => {
         }),
       });
 
-      const state = createEnsembledState();
+      const state = createPlannedState();
 
       const result = await service.orchestrateClarification(state);
 
@@ -206,7 +206,7 @@ describe('ClarificationService', () => {
     it('should handle LLM errors gracefully', async () => {
       mockLlmInvoke.mockRejectedValue(new Error('LLM API failed'));
 
-      const state = createEnsembledState();
+      const state = createPlannedState();
 
       const result = await service.orchestrateClarification(state);
 
@@ -220,7 +220,7 @@ describe('ClarificationService', () => {
         content: 'This is not valid JSON',
       });
 
-      const state = createEnsembledState();
+      const state = createPlannedState();
 
       const result = await service.orchestrateClarification(state);
 
@@ -240,7 +240,7 @@ describe('ClarificationService', () => {
         }),
       });
 
-      const state = createEnsembledState();
+      const state = createPlannedState();
 
       const result = await service.orchestrateClarification(state);
 
@@ -262,7 +262,7 @@ describe('ClarificationService', () => {
         }),
       });
 
-      const state = createEnsembledState();
+      const state = createPlannedState();
 
       const result = await service.orchestrateClarification(state);
 
@@ -285,7 +285,7 @@ describe('ClarificationService', () => {
         }),
       });
 
-      const state = createEnsembledState();
+      const state = createPlannedState();
 
       const result = await service.orchestrateClarification(state);
 
@@ -302,7 +302,7 @@ describe('ClarificationService', () => {
         }),
       });
 
-      const state = createEnsembledState();
+      const state = createPlannedState();
 
       const result = await service.orchestrateClarification(state);
 
@@ -318,7 +318,7 @@ describe('ClarificationService', () => {
         }),
       });
 
-      const state = createEnsembledState();
+      const state = createPlannedState();
 
       const result = await service.orchestrateClarification(state);
 
@@ -328,7 +328,7 @@ describe('ClarificationService', () => {
 
   describe('environment variable collection', () => {
     it('should detect when env var collection is needed', () => {
-      const state = createEnsembledState({
+      const state = createPlannedState({
         detectedEnvVars: [
           { name: 'API_KEY', required: true, description: 'API key' } as RequiredEnvVar,
         ],
@@ -341,7 +341,7 @@ describe('ClarificationService', () => {
     });
 
     it('should return false when all env vars collected', () => {
-      const state = createEnsembledState({
+      const state = createPlannedState({
         detectedEnvVars: [
           { name: 'API_KEY', required: true, description: 'API key' } as RequiredEnvVar,
         ],
@@ -356,7 +356,7 @@ describe('ClarificationService', () => {
     });
 
     it('should return false when no env vars detected', () => {
-      const state = createEnsembledState({
+      const state = createPlannedState({
         detectedEnvVars: [],
         collectedEnvVars: [],
       });
@@ -367,7 +367,7 @@ describe('ClarificationService', () => {
     });
 
     it('should only check required env vars', () => {
-      const state = createEnsembledState({
+      const state = createPlannedState({
         detectedEnvVars: [
           { name: 'OPTIONAL_KEY', required: false, description: 'Optional' } as RequiredEnvVar,
         ],
@@ -382,7 +382,7 @@ describe('ClarificationService', () => {
 
   describe('generateEnvVarQuestions', () => {
     it('should generate questions for uncollected env vars', async () => {
-      const state = createEnsembledState({
+      const state = createPlannedState({
         detectedEnvVars: [
           { name: 'API_KEY', required: true, description: 'API key' } as RequiredEnvVar,
         ],
@@ -398,7 +398,7 @@ describe('ClarificationService', () => {
     });
 
     it('should return complete when all env vars collected', async () => {
-      const state = createEnsembledState({
+      const state = createPlannedState({
         detectedEnvVars: [
           { name: 'API_KEY', required: true, description: 'API key' } as RequiredEnvVar,
         ],
@@ -421,7 +421,7 @@ describe('ClarificationService', () => {
         { envVarName: 'VAR3', question: 'Q3?', context: 'C3' },
       ]);
 
-      const state = createEnsembledState({
+      const state = createPlannedState({
         detectedEnvVars: [
           { name: 'VAR1', required: true, description: 'Var 1' } as RequiredEnvVar,
           { name: 'VAR2', required: true, description: 'Var 2' } as RequiredEnvVar,
@@ -437,7 +437,7 @@ describe('ClarificationService', () => {
     });
 
     it('should include env var names in response', async () => {
-      const state = createEnsembledState({
+      const state = createPlannedState({
         detectedEnvVars: [
           { name: 'API_KEY', required: true, description: 'API key' } as RequiredEnvVar,
         ],
@@ -452,7 +452,7 @@ describe('ClarificationService', () => {
 
   describe('processEnvVarResponse', () => {
     it('should validate and store env var value', () => {
-      const state = createEnsembledState({
+      const state = createPlannedState({
         collectedEnvVars: [],
       });
 
@@ -469,7 +469,7 @@ describe('ClarificationService', () => {
     });
 
     it('should handle skipped env vars', () => {
-      const state = createEnsembledState({
+      const state = createPlannedState({
         collectedEnvVars: [],
       });
 
@@ -480,7 +480,7 @@ describe('ClarificationService', () => {
     });
 
     it('should handle empty value as skipped', () => {
-      const state = createEnsembledState({
+      const state = createPlannedState({
         collectedEnvVars: [],
       });
 
@@ -495,7 +495,7 @@ describe('ClarificationService', () => {
         errorMessage: 'Invalid API key format',
       });
 
-      const state = createEnsembledState({
+      const state = createPlannedState({
         collectedEnvVars: [],
       });
 
@@ -506,7 +506,7 @@ describe('ClarificationService', () => {
     });
 
     it('should append to existing collected vars', () => {
-      const state = createEnsembledState({
+      const state = createPlannedState({
         collectedEnvVars: [
           { name: 'EXISTING', value: 'value', validated: true, skipped: false },
         ],
@@ -577,7 +577,7 @@ describe('ClarificationService', () => {
 
   describe('gap detection prompt', () => {
     it('should include platform context in prompt', async () => {
-      const state = createEnsembledState();
+      const state = createPlannedState();
 
       await service.orchestrateClarification(state);
 
@@ -587,7 +587,7 @@ describe('ClarificationService', () => {
     });
 
     it('should include research findings in prompt', async () => {
-      const state = createEnsembledState();
+      const state = createPlannedState();
       state.researchPhase!.synthesizedPlan!.summary = 'Test API research summary';
 
       await service.orchestrateClarification(state);
@@ -596,18 +596,19 @@ describe('ClarificationService', () => {
       expect(prompt).toContain('Test API research summary');
     });
 
-    it('should include ensemble results in prompt', async () => {
-      const state = createEnsembledState();
-      state.ensembleResults!.consensusScore = 0.75;
+    it('should include the planned tool set in prompt', async () => {
+      const state = createPlannedState();
 
       await service.orchestrateClarification(state);
 
       const prompt = mockLlmInvoke.mock.calls[0][0];
-      expect(prompt).toContain('0.75');
+      expect(prompt).toContain('get_users');
+      expect(prompt).toContain('create_user');
+      expect(prompt).toContain('Planner Rationale');
     });
 
     it('should include clarification history count in prompt', async () => {
-      const state = createEnsembledState({
+      const state = createPlannedState({
         clarificationHistory: [
           { gaps: [], questions: [], userResponses: 'A1', timestamp: new Date() },
         ],

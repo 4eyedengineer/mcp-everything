@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import * as z from 'zod/v4';
-import { GraphState, KnowledgeGap, ClarificationQuestion, RequiredEnvVar } from './types';
+import { PipelineState, KnowledgeGap, ClarificationQuestion, RequiredEnvVar } from './types';
 import { getPlatformContextPrompt, getClarificationThresholdPrompt } from './platform-context';
 import { EnvVariableService } from '../env-variable.service';
 import { CollectedEnvVar } from '../types/env-variable.types';
@@ -32,7 +32,7 @@ const GapDetectionSchema = z.object({
  * - Determine when enough information is gathered
  *
  * Flow:
- * 1. Analyze user input, research, and ensemble results
+ * 1. Analyze user input, research findings, and the planned tool set
  * 2. AI detects gaps (HIGH, MEDIUM, LOW priority)
  * 3. Formulate 1-2 specific questions
  * 4. Pause execution (needsUserInput = true)
@@ -65,7 +65,7 @@ export class ClarificationService {
    * @param state - Current graph state
    * @returns Clarification result with questions or completion status
    */
-  async orchestrateClarification(state: GraphState): Promise<{
+  async orchestrateClarification(state: PipelineState): Promise<{
     complete: boolean;
     gaps: KnowledgeGap[];
     questions?: ClarificationQuestion[];
@@ -112,13 +112,13 @@ export class ClarificationService {
    * Analysis considers:
    * - User input clarity
    * - Research completeness
-   * - Ensemble consensus quality
+   * - The planned tool set
    * - Technical detail availability
    *
-   * @param state - Current graph state
+   * @param state - Current pipeline state
    * @returns Array of knowledge gaps with priority
    */
-  private async detectGaps(state: GraphState): Promise<KnowledgeGap[]> {
+  private async detectGaps(state: PipelineState): Promise<KnowledgeGap[]> {
     const prompt = this.buildGapDetectionPrompt(state);
 
     try {
@@ -152,11 +152,10 @@ export class ClarificationService {
    * @param state - Graph state
    * @returns Formatted prompt
    */
-  private buildGapDetectionPrompt(state: GraphState): string {
+  private buildGapDetectionPrompt(state: PipelineState): string {
     const userInput = state.userInput;
     const research = state.researchPhase;
-    const ensemble = state.ensembleResults;
-    const consensusScore = ensemble?.consensusScore || 0;
+    const plan = state.generationPlan;
 
     return `${getPlatformContextPrompt()}
 
@@ -181,10 +180,11 @@ ${research?.webSearchFindings?.results?.map((r: any) => `- ${r.title}: ${r.snipp
 **Best Practices from Research**:
 ${research?.webSearchFindings?.bestPractices?.join('\n- ') || 'None'}
 
-**Ensemble Results**:
-- Consensus Score: ${consensusScore.toFixed(2)}
-- Tools Recommended: ${ensemble?.agentPerspectives?.[0]?.recommendations?.tools?.length || 0}
-- Agent Concerns: ${ensemble?.agentPerspectives?.flatMap((a) => a.recommendations.concerns).join(', ') || 'None'}
+**Planned Tools** (${plan?.toolsToGenerate?.length || 0}):
+${plan?.toolsToGenerate?.map((t) => `- ${t.name}: ${t.description}`).join('\n') || '- None planned yet'}
+
+**Planner Rationale**: ${plan?.rationale || 'None'}
+**Scope Notes**: ${plan?.scopeNotes || 'None'}
 
 **Previous Clarifications**: ${state.clarificationHistory?.length || 0} rounds completed
 
@@ -343,66 +343,6 @@ Return ONLY valid JSON with detected gaps.`;
     return questions;
   }
 
-  /**
-   * Validate User Response
-   *
-   * Checks if user response adequately addresses the gap.
-   * (Future enhancement for intelligent validation)
-   *
-   * @param gap - Original knowledge gap
-   * @param response - User's response
-   * @returns Validation result
-   */
-  private async validateResponse(
-    gap: KnowledgeGap,
-    response: string,
-  ): Promise<{ valid: boolean; reason?: string }> {
-    // Basic validation: non-empty response
-    if (!response || response.trim().length < 5) {
-      return { valid: false, reason: 'Response too short' };
-    }
-
-    // TODO: Use AI to validate response quality
-    // For now, accept any reasonable response
-    return { valid: true };
-  }
-
-  /**
-   * Extract Information from Response
-   *
-   * Parses user response to extract structured information.
-   * (Future enhancement for automatic information extraction)
-   *
-   * @param response - User's response
-   * @returns Extracted structured data
-   */
-  private async extractInformation(response: string): Promise<Record<string, any>> {
-    // TODO: Use AI to extract structured information from free-text response
-    // For MVP, return raw response
-    return { rawResponse: response };
-  }
-
-  /**
-   * Calculate Clarification Confidence
-   *
-   * Estimates how much the clarification improved generation readiness.
-   *
-   * @param before - State before clarification
-   * @param after - State after clarification
-   * @returns Confidence improvement score 0-1
-   */
-  private calculateConfidenceImprovement(before: GraphState, after: GraphState): number {
-    // Simple heuristic: if gaps reduced, confidence improved
-    const gapsBefore = before.clarificationHistory?.length || 0;
-    const gapsAfter = after.clarificationHistory?.length || 0;
-
-    if (gapsAfter <= gapsBefore) {
-      return 0.2; // Some improvement
-    }
-
-    return 0; // No improvement
-  }
-
   // ===== ENVIRONMENT VARIABLE COLLECTION =====
 
   /**
@@ -414,7 +354,7 @@ Return ONLY valid JSON with detected gaps.`;
    * @param state - Current graph state with detected env vars
    * @returns Whether env var collection is needed
    */
-  needsEnvVarCollection(state: GraphState): boolean {
+  needsEnvVarCollection(state: PipelineState): boolean {
     const detectedVars = state.detectedEnvVars || [];
     const collectedVars = state.collectedEnvVars || [];
 
@@ -436,7 +376,7 @@ Return ONLY valid JSON with detected gaps.`;
    * @param state - Current graph state
    * @returns Clarification result with env var questions
    */
-  async generateEnvVarQuestions(state: GraphState): Promise<{
+  async generateEnvVarQuestions(state: PipelineState): Promise<{
     complete: boolean;
     questions: ClarificationQuestion[];
     needsUserInput: boolean;
@@ -490,7 +430,7 @@ Return ONLY valid JSON with detected gaps.`;
   processEnvVarResponse(
     envVarName: string,
     value: string,
-    state: GraphState,
+    state: PipelineState,
   ): {
     collectedEnvVars: CollectedEnvVar[];
     validationResult: { isValid: boolean; errorMessage?: string };

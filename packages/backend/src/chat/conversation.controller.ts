@@ -8,7 +8,7 @@ import {
   Param,
   NotFoundException,
 } from '@nestjs/common';
-import { ConversationService } from '../conversation.service';
+import { ConversationService } from './conversation.service';
 import { DeploymentService } from '../database/services/deployment.service';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { User } from '../database/entities/user.entity';

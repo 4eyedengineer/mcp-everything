@@ -1,13 +1,13 @@
 /// <reference types="jest" />
 import { Test, TestingModule } from '@nestjs/testing';
 import { RefinementService } from '../refinement.service';
+import { ConfigService } from '@nestjs/config';
 import { McpTestingService } from '../../testing/mcp-testing.service';
-import { McpGenerationService } from '../../mcp-generation.service';
 import { McpProtocolValidatorService } from '../../validation/mcp-protocol-validator.service';
 import { AnthropicService } from '../../ai/anthropic.service';
 import { createMockAnthropicService } from './__mocks__/anthropic.mock';
 import {
-  createEnsembledState,
+  createPlannedState,
   createGeneratedState,
   createMockTestResults,
 } from './__mocks__/test-utils';
@@ -24,8 +24,30 @@ const mockAnthropicService = createMockAnthropicService(mockLlmInvoke);
 describe('RefinementService', () => {
   let service: RefinementService;
   let mockMcpTestingService: any;
-  let mockMcpGenerationService: any;
   let mockMcpProtocolValidator: any;
+
+  /**
+   * Build the service. The LLM-as-judge quality gate is off for most tests so
+   * they exercise the test/refine loop in isolation; the gate has its own block.
+   */
+  const buildService = async (config: Record<string, string> = {}): Promise<RefinementService> => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        RefinementService,
+        { provide: McpTestingService, useValue: mockMcpTestingService },
+        { provide: McpProtocolValidatorService, useValue: mockMcpProtocolValidator },
+        { provide: AnthropicService, useValue: mockAnthropicService },
+        {
+          provide: ConfigService,
+          useValue: {
+            get: (key: string) => ({ PIPELINE_QUALITY_GATE: 'false', ...config })[key],
+          },
+        },
+      ],
+    }).compile();
+
+    return module.get<RefinementService>(RefinementService);
+  };
 
   // Store original env
   const originalEnv = process.env;
@@ -47,22 +69,6 @@ describe('RefinementService', () => {
       testMcpServer: jest.fn().mockResolvedValue(createMockTestResults(true, 2)),
     };
 
-    mockMcpGenerationService = {
-      generateMCPServer: jest.fn().mockResolvedValue({
-        files: [
-          { path: 'src/index.ts', content: mockCodeGenerationResponse() },
-          { path: 'package.json', content: '{}' },
-          { path: 'tsconfig.json', content: '{}' },
-        ],
-        metadata: {
-          tools: [
-            { name: 'test_tool', description: 'A test tool' },
-          ],
-        },
-        serverName: 'test-mcp-server',
-      }),
-    };
-
     mockMcpProtocolValidator = {
       validateServer: jest.fn().mockResolvedValue({
         valid: true,
@@ -75,29 +81,7 @@ describe('RefinementService', () => {
       }),
     };
 
-    const module: TestingModule = await Test.createTestingModule({
-      providers: [
-        RefinementService,
-        {
-          provide: McpTestingService,
-          useValue: mockMcpTestingService,
-        },
-        {
-          provide: McpGenerationService,
-          useValue: mockMcpGenerationService,
-        },
-        {
-          provide: McpProtocolValidatorService,
-          useValue: mockMcpProtocolValidator,
-        },
-        {
-          provide: AnthropicService,
-          useValue: mockAnthropicService,
-        },
-      ],
-    }).compile();
-
-    service = module.get<RefinementService>(RefinementService);
+    service = await buildService();
   });
 
   afterEach(() => {
@@ -106,7 +90,7 @@ describe('RefinementService', () => {
 
   describe('refineUntilWorking', () => {
     it('should succeed on first iteration when all tests pass', async () => {
-      const state = createEnsembledState();
+      const state = createPlannedState();
 
       const result = await service.refineUntilWorking(state);
 
@@ -119,32 +103,39 @@ describe('RefinementService', () => {
     it('should use existing generated code when available', async () => {
       const state = createGeneratedState();
 
-      const result = await service.refineUntilWorking(state);
+      await service.refineUntilWorking(state);
 
-      expect(mockMcpGenerationService.generateMCPServer).not.toHaveBeenCalled();
       expect(mockMcpTestingService.testMcpServer).toHaveBeenCalled();
     });
 
-    it('should generate code when not available', async () => {
-      const state = createEnsembledState();
+    it('should generate code from the plan when none exists yet', async () => {
+      const state = createPlannedState();
       state.extractedData = { githubUrl: 'https://github.com/test/repo' };
 
       const result = await service.refineUntilWorking(state);
 
-      // Should use ensemble tools, not fall back to McpGenerationService
       expect(result.success).toBe(true);
+      expect(result.generatedCode.metadata.tools).toHaveLength(2);
     });
 
-    it('should use McpGenerationService for GitHub URL when no ensemble tools', async () => {
-      const state = createEnsembledState();
+    it('should throw when the plan contains no tools (no second pipeline to fall back to)', async () => {
+      const state = createPlannedState();
       state.generationPlan!.toolsToGenerate = [];
       state.extractedData = { githubUrl: 'https://github.com/test/repo' };
 
-      await service.refineUntilWorking(state);
-
-      expect(mockMcpGenerationService.generateMCPServer).toHaveBeenCalledWith(
-        'https://github.com/test/repo',
+      await expect(service.refineUntilWorking(state)).rejects.toThrow(
+        /No tools available for MCP server generation/,
       );
+      expect(mockMcpTestingService.testMcpServer).not.toHaveBeenCalled();
+    });
+
+    it('should use the planner-provided server name', async () => {
+      const state = createPlannedState();
+      state.generationPlan!.serverName = 'planner-named-mcp';
+
+      const result = await service.refineUntilWorking(state);
+
+      expect(result.generatedCode.metadata.serverName).toBe('planner-named-mcp');
     });
 
     it('should analyze failures when tests fail', async () => {
@@ -154,7 +145,7 @@ describe('RefinementService', () => {
         .mockResolvedValueOnce({ content: mockFailureAnalysisResponse() })
         .mockResolvedValue({ content: mockCodeGenerationResponse() });
 
-      const state = createEnsembledState();
+      const state = createPlannedState();
 
       const result = await service.refineUntilWorking(state);
 
@@ -169,7 +160,7 @@ describe('RefinementService', () => {
         .mockResolvedValueOnce({ content: mockFailureAnalysisResponse() })
         .mockResolvedValue({ content: mockCodeGenerationResponse() });
 
-      const state = createEnsembledState();
+      const state = createPlannedState();
 
       const result = await service.refineUntilWorking(state);
 
@@ -182,7 +173,7 @@ describe('RefinementService', () => {
       mockMcpTestingService.testMcpServer.mockResolvedValue(createMockTestResults(false, 2));
       mockLlmInvoke.mockResolvedValue({ content: mockFailureAnalysisResponse() });
 
-      const state = createEnsembledState({ refinementIteration: 4 });
+      const state = createPlannedState({ refinementIteration: 4 });
 
       const result = await service.refineUntilWorking(state);
 
@@ -199,7 +190,7 @@ describe('RefinementService', () => {
       });
       mockLlmInvoke.mockResolvedValue({ content: mockFailureAnalysisResponse() });
 
-      const state = createEnsembledState({ refinementIteration: 4 });
+      const state = createPlannedState({ refinementIteration: 4 });
 
       const result = await service.refineUntilWorking(state);
 
@@ -207,7 +198,7 @@ describe('RefinementService', () => {
     });
 
     it('should run protocol validation after tests pass', async () => {
-      const state = createEnsembledState();
+      const state = createPlannedState();
 
       await service.refineUntilWorking(state);
 
@@ -226,7 +217,7 @@ describe('RefinementService', () => {
       });
       mockLlmInvoke.mockResolvedValue({ content: mockCodeGenerationResponse() });
 
-      const state = createEnsembledState();
+      const state = createPlannedState();
 
       const result = await service.refineUntilWorking(state);
 
@@ -241,7 +232,7 @@ describe('RefinementService', () => {
         new Error('Validation service error'),
       );
 
-      const state = createEnsembledState();
+      const state = createPlannedState();
 
       const result = await service.refineUntilWorking(state);
 
@@ -252,7 +243,7 @@ describe('RefinementService', () => {
 
   describe('code generation', () => {
     it('should generate MCP server from generation plan', async () => {
-      const state = createEnsembledState();
+      const state = createPlannedState();
 
       const result = await service.refineUntilWorking(state);
 
@@ -261,7 +252,7 @@ describe('RefinementService', () => {
     });
 
     it('should respect user tool constraints in generation', async () => {
-      const state = createEnsembledState({
+      const state = createPlannedState({
         requestedToolCount: 2,
         requestedToolNames: ['get_users', 'create_user'],
       });
@@ -275,7 +266,7 @@ describe('RefinementService', () => {
     });
 
     it('should extract service name from user input', async () => {
-      const state = createEnsembledState({
+      const state = createPlannedState({
         userInput: 'Create MCP server for the Stripe API',
       });
 
@@ -285,7 +276,7 @@ describe('RefinementService', () => {
     });
 
     it('should generate package.json with dependencies', async () => {
-      const state = createEnsembledState();
+      const state = createPlannedState();
 
       const result = await service.refineUntilWorking(state);
 
@@ -297,7 +288,7 @@ describe('RefinementService', () => {
     });
 
     it('should generate tsconfig.json', async () => {
-      const state = createEnsembledState();
+      const state = createPlannedState();
 
       const result = await service.refineUntilWorking(state);
 
@@ -308,7 +299,7 @@ describe('RefinementService', () => {
     });
 
     it('should throw error when no tools in generation plan', async () => {
-      const state = createEnsembledState();
+      const state = createPlannedState();
       state.generationPlan!.toolsToGenerate = [];
       state.extractedData = {};
 
@@ -337,7 +328,7 @@ describe('RefinementService', () => {
         })
         .mockResolvedValue({ content: mockCodeGenerationResponse() });
 
-      const state = createEnsembledState();
+      const state = createPlannedState();
 
       const result = await service.refineUntilWorking(state);
 
@@ -369,7 +360,7 @@ describe('RefinementService', () => {
         })
         .mockResolvedValue({ content: mockCodeGenerationResponse() });
 
-      const state = createEnsembledState();
+      const state = createPlannedState();
 
       const result = await service.refineUntilWorking(state);
 
@@ -388,7 +379,7 @@ describe('RefinementService', () => {
         .mockResolvedValueOnce({ content: mockFailureAnalysisResponse() })
         .mockResolvedValue({ content: mockCodeGenerationResponse() });
 
-      const state = createEnsembledState();
+      const state = createPlannedState();
 
       await service.refineUntilWorking(state);
 
@@ -408,7 +399,7 @@ describe('RefinementService', () => {
         .mockRejectedValueOnce(new Error('LLM API failed'))
         .mockResolvedValue({ content: mockCodeGenerationResponse() });
 
-      const state = createEnsembledState();
+      const state = createPlannedState();
 
       const result = await service.refineUntilWorking(state);
 
@@ -426,7 +417,7 @@ describe('RefinementService', () => {
         .mockResolvedValueOnce({ content: mockFailureAnalysisResponse() })
         .mockResolvedValueOnce({ content: 'const refined = "code";' });
 
-      const state = createEnsembledState();
+      const state = createPlannedState();
 
       const result = await service.refineUntilWorking(state);
 
@@ -438,7 +429,7 @@ describe('RefinementService', () => {
       mockMcpTestingService.testMcpServer.mockResolvedValue(createMockTestResults(false, 1));
       mockLlmInvoke.mockResolvedValue({ content: mockCodeGenerationResponse() });
 
-      const state = createEnsembledState({ refinementIteration: 0 });
+      const state = createPlannedState({ refinementIteration: 0 });
 
       const result = await service.refineUntilWorking(state);
 
@@ -454,7 +445,7 @@ describe('RefinementService', () => {
         .mockResolvedValueOnce({ content: mockFailureAnalysisResponse() })
         .mockRejectedValueOnce(new Error('Refinement LLM failed'));
 
-      const state = createEnsembledState();
+      const state = createPlannedState();
 
       const result = await service.refineUntilWorking(state);
 
@@ -471,7 +462,7 @@ describe('RefinementService', () => {
           content: '```typescript\nconst code = "clean";\n```',
         });
 
-      const state = createEnsembledState();
+      const state = createPlannedState();
 
       const result = await service.refineUntilWorking(state);
 
@@ -500,7 +491,7 @@ async function main() {
   await server.connect(transport`,  // Truncated - missing closing
       });
 
-      const state = createEnsembledState();
+      const state = createPlannedState();
 
       const result = await service.refineUntilWorking(state);
 
@@ -519,7 +510,7 @@ function test() {
   `,  // Truncated - missing closing braces
       });
 
-      const state = createEnsembledState();
+      const state = createPlannedState();
 
       const result = await service.refineUntilWorking(state);
 
@@ -532,7 +523,7 @@ function test() {
 const value = 1 +`,  // Truncated - ends with operator
       });
 
-      const state = createEnsembledState();
+      const state = createPlannedState();
 
       const result = await service.refineUntilWorking(state);
 
@@ -550,7 +541,7 @@ async function main() {
 }`,  // Missing main() call at end
       });
 
-      const state = createEnsembledState();
+      const state = createPlannedState();
 
       const result = await service.refineUntilWorking(state);
 
@@ -562,23 +553,19 @@ async function main() {
   });
 
   describe('GeneratedCode conversion', () => {
-    it('should convert McpGenerationService output format', async () => {
-      mockMcpGenerationService.generateMCPServer.mockResolvedValue({
-        files: [
-          { path: 'src/index.ts', content: 'main file content' },
-          { path: 'package.json', content: '{"name": "test"}' },
-          { path: 'tsconfig.json', content: '{}' },
-          { path: 'src/utils.ts', content: 'utils content' },
-        ],
-        metadata: {
-          tools: [{ name: 'tool1' }, { name: 'tool2' }],
-        },
-        serverName: 'converted-server',
+    it('should convert a files[] shaped generatedCode from a previous iteration', async () => {
+      const state = createPlannedState({
+        generatedCode: {
+          files: [
+            { path: 'src/index.ts', content: 'main file content' },
+            { path: 'package.json', content: '{"name": "test"}' },
+            { path: 'tsconfig.json', content: '{}' },
+            { path: 'src/utils.ts', content: 'utils content' },
+          ],
+          metadata: { tools: [{ name: 'tool1' }, { name: 'tool2' }] },
+          serverName: 'converted-server',
+        } as any,
       });
-
-      const state = createEnsembledState();
-      state.generationPlan!.toolsToGenerate = [];
-      state.extractedData = { githubUrl: 'https://github.com/test/repo' };
 
       const result = await service.refineUntilWorking(state);
 
@@ -588,28 +575,95 @@ async function main() {
       expect(result.generatedCode.supportingFiles['src/utils.ts']).toBe('utils content');
     });
 
-    it('should handle missing files in conversion', async () => {
-      mockMcpGenerationService.generateMCPServer.mockResolvedValue({
-        files: [],
-        metadata: { tools: [] },
-        serverName: 'empty-server',
+    it('should fill in defaults for missing files', async () => {
+      const state = createPlannedState({
+        generatedCode: {
+          files: [],
+          metadata: { tools: [] },
+          serverName: 'empty-server',
+        } as any,
       });
-
-      const state = createEnsembledState();
-      state.generationPlan!.toolsToGenerate = [];
-      state.extractedData = { githubUrl: 'https://github.com/test/repo' };
 
       const result = await service.refineUntilWorking(state);
 
       expect(result.generatedCode.mainFile).toBe('');
       expect(result.generatedCode.packageJson).toBeDefined();
       expect(result.generatedCode.tsConfig).toBeDefined();
+      expect(result.generatedCode.supportingFiles['Dockerfile']).toBeDefined();
+    });
+  });
+
+  describe('quality gate (LLM-as-judge)', () => {
+    const judgeResponse = (isValid: boolean, issues: any[] = []) =>
+      JSON.stringify({
+        isValid,
+        score: isValid ? 95 : 40,
+        feedback: isValid ? 'Looks complete' : 'Tool bodies are placeholders',
+        issues,
+      });
+
+    it('should not run when disabled', async () => {
+      service = await buildService({ PIPELINE_QUALITY_GATE: 'false' });
+      const state = createPlannedState();
+
+      const result = await service.refineUntilWorking(state);
+
+      expect(result.success).toBe(true);
+      // generate only - no judge call
+      expect(mockLlmInvoke).toHaveBeenCalledTimes(1);
+    });
+
+    it('should pass a clean server through when enabled', async () => {
+      service = await buildService({ PIPELINE_QUALITY_GATE: 'true' });
+      mockLlmInvoke
+        .mockResolvedValueOnce({ content: mockCodeGenerationResponse() })
+        .mockResolvedValueOnce({ content: judgeResponse(true) });
+
+      const result = await service.refineUntilWorking(createPlannedState());
+
+      expect(result.success).toBe(true);
+      expect(mockLlmInvoke).toHaveBeenCalledTimes(2); // generate + judge
+    });
+
+    it('should send passing-but-poor code back for another refinement round', async () => {
+      service = await buildService({ PIPELINE_QUALITY_GATE: 'true' });
+      mockLlmInvoke
+        .mockResolvedValueOnce({ content: mockCodeGenerationResponse() })
+        .mockResolvedValueOnce({
+          content: judgeResponse(false, [
+            {
+              category: 'tool-implementation',
+              message: 'create_user body is a TODO placeholder',
+              suggestion: 'Implement the POST /users call',
+            },
+          ]),
+        })
+        .mockResolvedValue({ content: mockCodeGenerationResponse() });
+
+      const result = await service.refineUntilWorking(createPlannedState());
+
+      expect(result.success).toBe(false);
+      expect(result.shouldContinue).toBe(true);
+      expect(result.failureAnalysis?.rootCauses).toContain(
+        'create_user body is a TODO placeholder',
+      );
+    });
+
+    it('should treat a judge error as a pass rather than blocking the run', async () => {
+      service = await buildService({ PIPELINE_QUALITY_GATE: 'true' });
+      mockLlmInvoke
+        .mockResolvedValueOnce({ content: mockCodeGenerationResponse() })
+        .mockRejectedValueOnce(new Error('judge unavailable'));
+
+      const result = await service.refineUntilWorking(createPlannedState());
+
+      expect(result.success).toBe(true);
     });
   });
 
   describe('Docker testing options', () => {
     it('should pass correct options to McpTestingService', async () => {
-      const state = createEnsembledState();
+      const state = createPlannedState();
 
       await service.refineUntilWorking(state);
 

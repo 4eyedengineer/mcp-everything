@@ -7,11 +7,7 @@ import { Controller, Get } from '@nestjs/common';
 import { ThrottlerModule, ThrottlerGuard, SkipThrottle } from '@nestjs/throttler';
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
 import { Public } from './auth/decorators/public.decorator';
-import { ConversationService } from './conversation.service';
 import { GitHubAnalysisService } from './github-analysis.service';
-import { ToolDiscoveryService } from './tool-discovery.service';
-import { McpGenerationService } from './mcp-generation.service';
-import { EnvVariableService } from './env-variable.service';
 import { AiModule } from './ai/ai.module';
 import { ChatModule } from './chat/chat.module';
 import { DeploymentModule } from './deployment/deployment.module';
@@ -27,7 +23,7 @@ import { HealthModule } from './health/health.module';
 import { MetricsModule } from './metrics/metrics.module';
 import {
   Conversation,
-  ConversationMemory,
+  PipelineRun,
   Deployment,
   User,
   Subscription,
@@ -70,7 +66,7 @@ export class AppController {
       database: process.env.DATABASE_NAME || 'mcp_everything',
       entities: [
         Conversation,
-        ConversationMemory,
+        PipelineRun,
         Deployment,
         User,
         Subscription,
@@ -82,7 +78,7 @@ export class AppController {
       synchronize: process.env.NODE_ENV !== 'production', // Auto-sync in development
       logging: process.env.NODE_ENV === 'development',
     }),
-    TypeOrmModule.forFeature([Conversation, ConversationMemory, Deployment]),
+    TypeOrmModule.forFeature([Conversation, PipelineRun, Deployment]),
     // Global rate limiting defaults (ThrottlerModule is @Global()).
     // Stricter route/controller level limits are applied with @Throttle(),
     // and @SkipThrottle() is used for SSE/health/metrics endpoints.
@@ -121,10 +117,6 @@ export class AppController {
       useClass: JwtAuthGuard,
     },
     GitHubAnalysisService,
-    ConversationService,
-    ToolDiscoveryService,
-    McpGenerationService,
-    EnvVariableService,
   ],
 })
 export class AppModule {}
