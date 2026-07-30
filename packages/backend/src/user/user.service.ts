@@ -4,7 +4,7 @@ import { Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import { User } from '../database/entities/user.entity';
 import { UsageRecord } from '../database/entities/usage.entity';
-import { UserTier, TIER_CONFIG } from '../subscription/tier-config';
+import { UserTier, TIER_CONFIG, TIER_DISPLAY_NAMES } from '../subscription/tier-config';
 import { CreateUserDto, UpdateUserDto } from './dto/user.dto';
 
 @Injectable()
@@ -192,6 +192,51 @@ export class UserService {
       return {
         allowed: false,
         reason: `You have reached your monthly limit of ${tierConfig.monthlyServerLimit} servers. Upgrade to Pro for unlimited deployments.`,
+        usage,
+      };
+    }
+
+    return { allowed: true, usage };
+  }
+
+  /**
+   * Quota gate for MCP server *generation* - the expensive code path (research,
+   * planning, and the Docker-backed generate-test-refine loop).
+   *
+   * Countable unit decision: a successful *generation* is what consumes quota
+   * (see `incrementUsage` call sites), not a deployment. Generation is where the
+   * cost is actually incurred (LLM calls, web research, sandboxed test runs);
+   * publishing an already-generated server to a gist/repo is comparatively
+   * cheap and does not represent a *new* server. Reusing `serversDeployedThisMonth`
+   * / `monthlyLimit` here (rather than adding a parallel counter) keeps a single
+   * source of truth for "how many servers this account has produced this
+   * month" - the same number `SubscriptionController` already reports back to
+   * the user as their usage against the tier's `monthlyServerLimit`.
+   */
+  async checkCanGenerate(
+    userId: string,
+  ): Promise<{ allowed: boolean; reason?: string; usage?: UsageRecord }> {
+    const user = await this.findById(userId);
+    if (!user) {
+      return { allowed: false, reason: 'User not found' };
+    }
+
+    const tier = (user.tier as UserTier) || UserTier.FREE;
+    const tierConfig = TIER_CONFIG[tier];
+    const usage = await this.getCurrentUsage(userId);
+
+    // Pro and Enterprise generate without limit
+    if (tierConfig.monthlyServerLimit === Infinity) {
+      return { allowed: true, usage };
+    }
+
+    if (usage.serversDeployedThisMonth >= tierConfig.monthlyServerLimit) {
+      return {
+        allowed: false,
+        reason:
+          `You've reached your ${TIER_DISPLAY_NAMES[tier]} tier limit of ` +
+          `${tierConfig.monthlyServerLimit} MCP server generations this month. ` +
+          'Upgrade to Pro for unlimited generations.',
         usage,
       };
     }

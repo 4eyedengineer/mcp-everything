@@ -71,6 +71,14 @@ const ANALYSIS_MAX_TOKENS = 16000;
  * This reference code is included in prompts to ensure the LLM uses correct
  * library APIs for @modelcontextprotocol/sdk and zod v3.
  *
+ * Re-verified 2026-07 against @modelcontextprotocol/sdk 1.x (npm latest:
+ * 1.30.0): Server + setRequestHandler, no-arg StdioServerTransport, and the
+ * ListToolsRequestSchema/CallToolRequestSchema low-level handler pattern are
+ * all unchanged from the 0.x line this reference was written against. Only
+ * declares the `tools` server capability, which remains correct - `roots`,
+ * `sampling`, and `logging` as *server* capabilities were deprecated in the
+ * 2026-07-28 MCP spec revision.
+ *
  * Common API mistakes this prevents:
  * 1. StdioServerTransport({ stdin, stdout }) - WRONG, use StdioServerTransport()
  * 2. error.errors - WRONG, Zod v3 uses error.issues
@@ -89,6 +97,9 @@ import {
 import { z } from "zod";
 
 // 1. Server initialization (correct pattern)
+// Only declare capabilities this server actually implements. Declare
+// \`tools\` here; do NOT declare \`roots\`, \`sampling\`, or \`logging\` as
+// *server* capabilities - those were deprecated in the MCP spec.
 const server = new Server(
   { name: "my-server", version: "1.0.0" },
   { capabilities: { tools: {} } }
@@ -722,7 +733,12 @@ Start with imports.`;
           start: 'node dist/index.js',
         },
         dependencies: {
-          '@modelcontextprotocol/sdk': '^0.5.0',
+          // Current major as of 2026-07 (verified against npm registry: latest
+          // is 1.30.0). The reference implementation below uses only APIs
+          // (Server + setRequestHandler, StdioServerTransport with no
+          // arguments, ListToolsRequestSchema/CallToolRequestSchema, zod v3
+          // .issues) confirmed unchanged across the 1.x line.
+          '@modelcontextprotocol/sdk': '^1.0.0',
           zod: '^3.23.0',
           axios: '^1.7.0',
         },

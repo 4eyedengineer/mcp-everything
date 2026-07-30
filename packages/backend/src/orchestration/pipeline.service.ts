@@ -14,6 +14,7 @@ import { getPlatformContextPrompt } from './platform-context';
 import { ErrorLoggingService } from '../logging/error-logging.service';
 import { StructuredLoggerService } from '../logging/structured-logger.service';
 import { AnthropicService } from '../ai/anthropic.service';
+import { UserService } from '../user/user.service';
 
 /**
  * Intent analysis output contract (enforced by the API's structured outputs).
@@ -123,6 +124,8 @@ export class GenerationPipeline {
     private readonly researchService: ResearchService,
     private readonly clarificationService: ClarificationService,
     private readonly refinementService: RefinementService,
+    // Quota enforcement/recording for the generation entry (see `run()`)
+    private readonly userService: UserService,
     // Single AI seam (models, retries, timeouts, telemetry)
     private readonly anthropic: AnthropicService,
     structuredLogger: StructuredLoggerService,
@@ -200,6 +203,7 @@ export class GenerationPipeline {
             ...saved,
             sessionId,
             conversationId: conversation.id,
+            userId,
             messages: updated?.messages || [],
             userInput,
             needsUserInput: false,
@@ -215,6 +219,7 @@ export class GenerationPipeline {
         : {
             sessionId,
             conversationId: conversation.id,
+            userId,
             messages: updated?.messages || [],
             userInput,
             currentStep: 'analyzeIntent',
@@ -277,6 +282,24 @@ export class GenerationPipeline {
           state.response = state.clarificationNeeded?.question || 'Could you provide more details?';
           state.needsUserInput = true;
           yield* this.pause(state);
+          return;
+        }
+
+        // --- Quota gate ------------------------------------------------------
+        // Deliberately placed here: after `analyzeIntent` (a single small-model
+        // classification call - cheap) and before `research` (the first
+        // expensive step - web search, GitHub API calls, and further LLM
+        // calls through `planTools`/`refine`). Help and clarification-needed
+        // replies above never reach this check, so they are never blocked by
+        // quota. Silent (no pipeline_runs row, no progress message) when the
+        // user is within quota so the normal path is unaffected; only the
+        // denial is user-visible, delivered as a normal assistant response
+        // through the same SSE `complete` event every other reply uses.
+        const quota = await this.checkGenerationQuota(state);
+        if (!quota.allowed) {
+          state.response = quota.reason!;
+          this.push(state, 'analyzeIntent', quota.reason!);
+          yield* this.finish(state);
           return;
         }
 
@@ -450,6 +473,52 @@ Do NOT invent constraints the user did not express, and do NOT drop constraints 
     this.push(state, 'analyzeIntent', message);
 
     return message;
+  }
+
+  /**
+   * Quota gate: does this user have monthly generation quota left?
+   *
+   * `state.userId` is unset when a caller runs the pipeline without an
+   * authenticated user (only possible outside the production HTTP entry
+   * point, which always supplies one via `@CurrentUser`) - treated as
+   * allowed rather than failing closed against a user that cannot be looked
+   * up.
+   */
+  private async checkGenerationQuota(
+    state: PipelineState,
+  ): Promise<{ allowed: boolean; reason?: string }> {
+    if (!state.userId) {
+      return { allowed: true };
+    }
+
+    try {
+      return await this.userService.checkCanGenerate(state.userId);
+    } catch (error) {
+      // Quota lookup failing must never itself block generation.
+      this.logger.warn(`Quota check failed for user ${state.userId}: ${error.message}`);
+      return { allowed: true };
+    }
+  }
+
+  /**
+   * Record one unit of monthly quota usage for a successful generation.
+   *
+   * Called exactly once, from the `refine()` success branch - i.e. on
+   * completion, never on attempt. Best-effort: a failure to record usage must
+   * not turn an otherwise-successful generation into an error for the user.
+   */
+  private async recordSuccessfulGeneration(state: PipelineState): Promise<void> {
+    if (!state.userId) {
+      return;
+    }
+
+    try {
+      await this.userService.incrementUsage(state.userId);
+    } catch (error) {
+      this.logger.warn(
+        `Failed to record generation usage for user ${state.userId}: ${error.message}`,
+      );
+    }
   }
 
   /** Step: research - multi-source research via ResearchService. */
@@ -686,6 +755,12 @@ ${clarifications ? `**Clarifications the user already answered** (these override
 - Runtime: ✓ No errors
 
 Iterations needed: ${result.iterations}/${MAX_REFINEMENT_ITERATIONS}`;
+
+        // Countable unit: a *successful* generation (not a bare attempt, and
+        // not partial success below) consumes one unit of the user's monthly
+        // server quota. See UserService.checkCanGenerate for the rationale.
+        await this.recordSuccessfulGeneration(state);
+
         yield this.snapshot(state);
         return;
       }

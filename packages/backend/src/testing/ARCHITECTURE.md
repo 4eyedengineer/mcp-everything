@@ -293,36 +293,44 @@ Time: ~5 tools / 2 parallel = ~3s
 
 ## Integration Points
 
-### With McpGenerationService
+### With RefinementService
+
+`McpGenerationService` was deleted; code generation is now a single structured Claude call made directly inside `RefinementService` (`packages/backend/src/orchestration/refinement.service.ts`), which owns the Generate → Test → Refine loop (max 5 iterations):
 
 ```typescript
-// Generation → Testing Loop
-const generatedCode = await generationService.generateMCPServer(...);
-const testResult = await testingService.testMcpServer(generatedCode);
+// Generation -> Testing loop, inside RefinementService.refineOnce()
+const generatedCode = state.generatedCode
+  ? this.convertToGeneratedCode(state.generatedCode)
+  : await this.generateInitialCode(state); // single structured AnthropicService call
+
+const testResult = await this.mcpTestingService.testMcpServer(generatedCode, { ... });
 
 if (!testResult.overallSuccess) {
-  // Regenerate with feedback
-  const feedback = analyzeFailures(testResult);
-  const regenerated = await generationService.regenerateWithFeedback(feedback);
-  const retestResult = await testingService.testMcpServer(regenerated);
+  // Failure details are fed back into the next iteration's generation prompt
+  // rather than a separate `regenerateWithFeedback` call.
 }
 ```
 
-### With Orchestration (LangGraph)
+### With the Generation Pipeline
+
+There is no graph library involved — `RefinementService.refineOnce()` (called in a loop, max 5 iterations, by `GenerationPipeline`'s `refine` step) calls `McpTestingService` directly:
 
 ```typescript
-// Refinement Node in Graph
-nodes['refine_generated_code'] = async (state) => {
-  const testResult = await mcpTestingService.testMcpServer(
-    state.generatedCode
-  );
+// packages/backend/src/orchestration/refinement.service.ts
+const testResults = await this.mcpTestingService.testMcpServer(generatedCode, {
+  cpuLimit: '0.5',
+  memoryLimit: '512m',
+  timeout: 30,
+  toolTimeout: 5,
+  networkMode: 'none',
+  cleanup: true,
+});
 
-  if (testResult.overallSuccess) {
-    return { ...state, isComplete: true };
-  } else {
-    return { ...state, needsRegeneration: true };
-  }
-};
+if (testResults.overallSuccess && testResults.toolsPassedCount === testResults.toolsFound) {
+  // also run MCP protocol compliance validation, then mark complete
+} else {
+  // feed failures back into the next generation attempt
+}
 ```
 
 ### With Chat Controller (SSE Streaming)

@@ -15,6 +15,7 @@ import { ClarificationService } from '../orchestration/clarification.service';
 import { RefinementService } from '../orchestration/refinement.service';
 import { DeploymentService } from '../database/services/deployment.service';
 import { TestingModule } from '../testing/testing.module';
+import { UserModule } from '../user/user.module';
 
 @Module({
   imports: [
@@ -23,6 +24,9 @@ import { TestingModule } from '../testing/testing.module';
     // containers map); it must be a single shared instance, not
     // independently provided per module. See TestingModule.
     TestingModule,
+    // UserService: quota enforcement/recording at the generation entry
+    // (GenerationPipeline.checkGenerationQuota / recordSuccessfulGeneration)
+    UserModule,
   ],
   controllers: [ChatController, ConversationController],
   providers: [

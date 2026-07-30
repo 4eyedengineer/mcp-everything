@@ -88,7 +88,8 @@ kubectl exec -n mcp-everything deployment/mcp-backend -- \
      -d '{"email": "you@example.com", "password": "..."}' | jq -r '.accessToken')
 
    # 2. Send a chat message describing what to generate — this triggers the
-   #    same LangGraph state machine that manual generation used to hit
+   #    same GenerationPipeline (analyzeIntent -> research -> planTools ->
+   #    clarify -> refine -> persist) that manual generation used to hit
    #    directly.
    curl -X POST http://localhost:3000/api/chat/message \
      -H "Content-Type: application/json" \

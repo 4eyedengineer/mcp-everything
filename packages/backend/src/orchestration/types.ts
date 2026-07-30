@@ -38,6 +38,8 @@ export interface PipelineState {
   // Conversation context
   sessionId: string;
   conversationId?: string;
+  /** Owner of the conversation, when known - used for quota enforcement. */
+  userId?: string;
   messages: Array<{
     role: 'user' | 'assistant' | 'system';
     content: string;

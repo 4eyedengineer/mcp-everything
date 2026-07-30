@@ -11,6 +11,7 @@ import { GenerationPipeline, PipelineUpdate } from '../pipeline.service';
 import { ResearchService } from '../research.service';
 import { ClarificationService } from '../clarification.service';
 import { RefinementService } from '../refinement.service';
+import { UserService } from '../../user/user.service';
 import { AnthropicService } from '../../ai/anthropic.service';
 import { StructuredLoggerService } from '../../logging/structured-logger.service';
 import { Conversation, PipelineRun } from '../../database/entities';
@@ -175,6 +176,7 @@ describe('GenerationPipeline', () => {
   let researchService: any;
   let clarificationService: any;
   let refinementService: any;
+  let userService: any;
   let errorLoggingService: any;
   let mockLlmInvoke: jest.Mock;
   let generatedDir: string;
@@ -201,6 +203,7 @@ describe('GenerationPipeline', () => {
         { provide: ResearchService, useValue: researchService },
         { provide: ClarificationService, useValue: clarificationService },
         { provide: RefinementService, useValue: refinementService },
+        { provide: UserService, useValue: userService },
         { provide: AnthropicService, useValue: createMockAnthropicService(mockLlmInvoke) },
         { provide: StructuredLoggerService, useValue: createMockLogger() },
         {
@@ -247,6 +250,11 @@ describe('GenerationPipeline', () => {
       }),
     };
     errorLoggingService = { logError: jest.fn() };
+
+    userService = {
+      checkCanGenerate: jest.fn().mockResolvedValue({ allowed: true }),
+      incrementUsage: jest.fn().mockResolvedValue({}),
+    };
 
     respondWith({});
     service = await build();
@@ -746,6 +754,124 @@ describe('GenerationPipeline', () => {
       expect(refinementService.refineUntilWorking).toHaveBeenCalledTimes(2);
       expect(progressMessages(updates)).toContain('Refining code based on 1 fixes...');
       expect(updates[updates.length - 1].response).toContain('Successfully generated');
+    });
+  });
+
+  // -------------------------------------------------------------------------
+
+  describe('quota enforcement', () => {
+    it('blocks generation before research when the monthly quota is exhausted', async () => {
+      userService.checkCanGenerate.mockResolvedValue({
+        allowed: false,
+        reason:
+          "You've reached your Free tier limit of 5 MCP server generations this month. " +
+          'Upgrade to Pro for unlimited generations.',
+      });
+
+      const updates = await collect(
+        await service.execute(SESSION_ID, 'MCP server for JSONPlaceholder', CONVERSATION_ID, USER_ID),
+      );
+
+      const final = updates[updates.length - 1];
+      expect(final.isComplete).toBe(true);
+      expect(final.response).toContain('Free tier limit of 5 MCP server generations');
+      expect(
+        progressMessages(updates).some((m) =>
+          m.includes('Free tier limit of 5 MCP server generations'),
+        ),
+      ).toBe(true);
+
+      // No expensive work started
+      expect(researchService.conductResearch).not.toHaveBeenCalled();
+      expect(refinementService.refineUntilWorking).not.toHaveBeenCalled();
+
+      // The response is persisted like any other assistant reply
+      expect(conversationRepo.row.messages.map((m: any) => m.role)).toEqual(['user', 'assistant']);
+
+      expect(userService.checkCanGenerate).toHaveBeenCalledWith(USER_ID);
+    });
+
+    it('never blocks a help request even when quota is exhausted', async () => {
+      userService.checkCanGenerate.mockResolvedValue({
+        allowed: false,
+        reason: 'quota exhausted',
+      });
+      respondWith({ intent: intentResponse({ intent: 'help' }) });
+
+      const updates = await collect(
+        await service.execute(SESSION_ID, 'what can you do?', CONVERSATION_ID, USER_ID),
+      );
+
+      const final = updates[updates.length - 1];
+      expect(final.isComplete).toBe(true);
+      expect(final.response).toContain('MCP Everything');
+      expect(userService.checkCanGenerate).not.toHaveBeenCalled();
+    });
+
+    it('never blocks a clarification-needed reply even when quota is exhausted', async () => {
+      userService.checkCanGenerate.mockResolvedValue({
+        allowed: false,
+        reason: 'quota exhausted',
+      });
+      respondWith({
+        intent: intentResponse({ intent: 'unknown', missingInfo: ['which service'] }),
+      });
+
+      const updates = await collect(
+        await service.execute(SESSION_ID, 'make me a thing', CONVERSATION_ID, USER_ID),
+      );
+
+      const final = updates[updates.length - 1];
+      expect(final.needsUserInput).toBe(true);
+      expect(final.response).toContain('which service');
+      expect(userService.checkCanGenerate).not.toHaveBeenCalled();
+    });
+
+    it('records usage exactly once when a generation completes successfully', async () => {
+      await collect(
+        await service.execute(SESSION_ID, 'MCP server for JSONPlaceholder', CONVERSATION_ID, USER_ID),
+      );
+
+      expect(userService.incrementUsage).toHaveBeenCalledTimes(1);
+      expect(userService.incrementUsage).toHaveBeenCalledWith(USER_ID);
+    });
+
+    it('does not record usage on a bare attempt (quota exceeded before any work runs)', async () => {
+      userService.checkCanGenerate.mockResolvedValue({ allowed: false, reason: 'no quota' });
+
+      await collect(
+        await service.execute(SESSION_ID, 'MCP server for JSONPlaceholder', CONVERSATION_ID, USER_ID),
+      );
+
+      expect(userService.incrementUsage).not.toHaveBeenCalled();
+    });
+
+    it('does not record usage when refinement only reaches partial success', async () => {
+      refinementService.refineUntilWorking.mockResolvedValue({
+        success: false,
+        generatedCode: generatedCode(),
+        testResults: { ...createMockTestResults(false, 3), toolsPassedCount: 2 },
+        failureAnalysis: { fixes: [] },
+        iterations: 5,
+        shouldContinue: false,
+        error: 'Failed to converge after 5 iterations.',
+      });
+
+      await collect(
+        await service.execute(SESSION_ID, 'MCP server for JSONPlaceholder', CONVERSATION_ID, USER_ID),
+      );
+
+      expect(userService.incrementUsage).not.toHaveBeenCalled();
+    });
+
+    it('is a no-op (fails open) when the pipeline runs without a known user', async () => {
+      const updates = await collect(
+        await service.execute(SESSION_ID, 'MCP server for JSONPlaceholder', CONVERSATION_ID, undefined),
+      );
+
+      expect(updates[updates.length - 1].isComplete).toBe(true);
+      expect(userService.checkCanGenerate).not.toHaveBeenCalled();
+      expect(userService.incrementUsage).not.toHaveBeenCalled();
     });
   });
 

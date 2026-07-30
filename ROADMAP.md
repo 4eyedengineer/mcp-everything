@@ -1,15 +1,19 @@
 # MCP Everything - Roadmap & Vision Alignment
 
-**Last Updated**: January 2025
-**Vision Alignment**: 60% Complete
+**Last Updated**: July 2026 (post rework/2026-07-review)
+**Vision Alignment**: Core generator validated end-to-end; most business infrastructure now built. Remaining: quota enforcement (in progress), payments, and a real cloud/k8s deploy exercise.
 
 ---
 
 ## Executive Summary
 
-MCP Everything has **excellent technical implementation** of the AI-powered MCP server generation engine, but is **missing critical business infrastructure** needed to become a SaaS platform. The LangGraph orchestration, GitHub analysis, and generation pipeline are well-architected and ready for validation. What's missing: user authentication, payment system, hosting infrastructure, and marketplace backend.
+The 8-node LangGraph state machine and 4-agent ensemble described below have been **deleted** and replaced by `GenerationPipeline`, an explicit orchestration service (analyzeIntent → research → planTools → clarify → refine → persist). On 2026-07-29 the pipeline generated two working MCP servers end-to-end (JSONPlaceholder: 7/7 and 10/10 tools passing), independently verified via stdio JSON-RPC — the "never run end-to-end" gap called out throughout this document is closed.
 
-**Analogy**: We built a sophisticated Ferrari engine, but there's no chassis, wheels, payment system, or dealership.
+Since then, authentication (global JWT guard + ownership checks), a real marketplace backend (seeded with 6 servers), and a hosting/deployment pathway (Dockerfile generation, CI image publishing) have also been built. What remains: finishing quota/usage-limit enforcement, adding payments, and exercising the cloud hosting/Kubernetes deploy path end-to-end (the manifests exist but are untested).
+
+The sections below are preserved largely as originally written, with status notes added where the rework changed the picture — treat percentages/estimates as historical unless a note says otherwise.
+
+**Analogy**: We built a sophisticated Ferrari engine, and have since bolted on a chassis, wheels, and most of a dealership — payment system and a real test drive around the block are still missing.
 
 ---
 
@@ -30,30 +34,21 @@ MCP Everything has **excellent technical implementation** of the AI-powered MCP 
 
 ---
 
-#### 2. AI-Powered MCP Generation ✅ 90%
+#### 2. AI-Powered MCP Generation ✅ 90% (historical estimate — see 2026-07 update)
 **Original Vision**: "AI Research engine + MCP Server builder powered by AI (many LLMs/sub-task agents)"
 
-**Current State**:
+**Current State (as originally written)**:
 - ✅ LangGraph state machine with 8 specialized nodes
 - ✅ Claude Haiku 3.5 integration (cost-optimized at $0.001/turn)
-- ✅ Multi-agent architecture:
-  - Intent analysis agent
-  - Context gathering agent
-  - Planning agent
-  - Code generation agent
-  - Validation agent
+- ✅ Multi-agent architecture (intent, context, planning, code generation, validation agents)
 - ✅ GitHub repository analysis ([GitHubAnalysisService](packages/backend/src/github-analysis.service.ts))
 - ✅ Intelligent tool discovery ([ToolDiscoveryService](packages/backend/src/tool-discovery.service.ts))
 - ✅ Code generation ([McpGenerationService](packages/backend/src/mcp-generation.service.ts))
 - ✅ Secure validation with isolated-vm ([CodeExecutionService](packages/backend/src/orchestration/code-execution.service.ts))
 
-**Gap**: Never run end-to-end with real repositories ⚠️
+**Gap (as originally written)**: Never run end-to-end with real repositories ⚠️
 
-**Next Steps**:
-1. Initialize database
-2. Start services
-3. Generate first real MCP server
-4. Fix bugs discovered in practice
+> **2026-07 update**: The LangGraph state machine, its multi-agent architecture, `ToolDiscoveryService`, and `McpGenerationService` have all been **deleted** and replaced by `GenerationPipeline` (analyzeIntent → research → planTools → clarify → refine → persist), a single explicit orchestration service. The "never run end-to-end" gap is **closed**: on 2026-07-29 the pipeline generated two working MCP servers (JSONPlaceholder, 7/7 and 10/10 tools passing), independently verified via stdio JSON-RPC. AI now runs through a single `AnthropicService` (claude-sonnet-5 default / claude-haiku-4-5 small tier) with token/cost telemetry — ~$0.22 tracked cost observed per full generation, not $0.001/turn.
 
 ---
 
@@ -74,7 +69,7 @@ MCP Everything has **excellent technical implementation** of the AI-powered MCP 
 
 ---
 
-#### 4. GitHub Repository Integration ✅ 85%
+#### 4. GitHub Repository Integration ✅ 85% (historical estimate — gap closed, see below)
 **Original Vision**: "Dropping in GitHub repo link, crawl, understand, provide MCP Server"
 
 **Current State**:
@@ -85,18 +80,18 @@ MCP Everything has **excellent technical implementation** of the AI-powered MCP 
 - ✅ API pattern detection
 - ✅ Language/framework identification
 
-**Gap**: Never actually generated a working MCP server ⚠️
+**Gap (as originally written)**: Never actually generated a working MCP server ⚠️
 
-**Next Steps**: Validate with real repositories (Express.js, React, TypeScript, etc.)
+> **2026-07 update**: The pipeline as a whole is now proven end-to-end (2026-07-29, JSONPlaceholder REST API input, 7/7 and 10/10 tools passing across two runs). Note the validated run was a service-name/API input, not a `github.com/...` URL specifically — GitHub-URL-triggered generation shares the same `research`/`planTools`/`refine` steps but has not been separately confirmed with a real repository since the rework.
 
 ---
 
 ### ⚠️ PARTIALLY IMPLEMENTED (20-40% Complete)
 
-#### 5. Marketplace/Discovery ⚠️ 20%
+#### 5. Marketplace/Discovery ⚠️ 20% (historical estimate — now largely built, see below)
 **Original Vision**: "Discovery marketplace of available MCP Servers to consume/search"
 
-**Current State**:
+**Current State (as originally written)**:
 - ✅ Explore component UI ([explore.component.ts](packages/frontend/src/app/features/explore/explore.component.ts))
 - ✅ Placeholder data with mock servers
 - ✅ Basic card-based display
@@ -104,6 +99,8 @@ MCP Everything has **excellent technical implementation** of the AI-powered MCP 
 - ❌ No database schema for hosted servers
 - ❌ No actual search functionality
 - ❌ No server upload/storage system
+
+> **2026-07 update**: A real marketplace backend now exists (`packages/backend/src/marketplace/`), seeded with 6 servers, with an interim `AdminGuard` gated by an `ADMIN_USER_EMAILS` env var. The frontend Explore page consumes the real API — the "placeholder data" gap is closed.
 
 **Gap Analysis**:
 ```
@@ -134,10 +131,10 @@ Missing Frontend Components:
 
 ---
 
-#### 6. Containerization ⚠️ 30%
+#### 6. Containerization ⚠️ 30% (historical estimate — manifests now exist, untested)
 **Original Vision**: "Built for Docker/Kubernetes, scalable and highly available"
 
-**Current State**:
+**Current State (as originally written)**:
 - ✅ Docker dependencies installed (dockerode)
 - ✅ Docker base configurations ([docker/](docker/))
 - ✅ Dockerfile templates for MCP servers
@@ -145,6 +142,8 @@ Missing Frontend Components:
 - ❌ No container orchestration
 - ❌ No auto-scaling configuration
 - ❌ No health checks/readiness probes
+
+> **2026-07 update**: Kubernetes manifests now exist under `k8s/` (base + production/development overlays, HPA, ingress, cert-manager, monitoring namespace with Prometheus/Grafana), and `.github/workflows/deploy.yml` builds and pushes `:latest` images on every push to `main`. **This has not been exercised end-to-end** — no real cluster deploy has been run and verified.
 
 **Gap Analysis**:
 ```
@@ -170,10 +169,10 @@ Missing Infrastructure:
 
 ---
 
-#### 7. Testing & Documentation ⚠️ 40%
+#### 7. Testing & Documentation ⚠️ 40% (historical estimate — CI/CD now exists)
 **Original Vision**: "Complete with passing tests/documentation"
 
-**Current State**:
+**Current State (as originally written)**:
 - ✅ 80+ E2E Playwright tests written ([e2e/](packages/frontend/e2e/))
 - ✅ Test infrastructure complete
 - ✅ Comprehensive documentation (README, ARCHITECTURE, DEVELOPMENT)
@@ -181,6 +180,8 @@ Missing Infrastructure:
 - ❌ No integration tests run
 - ❌ Generated servers have no tests
 - ❌ No CI/CD pipeline configured
+
+> **2026-07 update**: `.github/workflows/ci.yml`, `e2e.yml`, and `deploy.yml` now exist. Backend unit test coverage has grown substantially with the rework (orchestration, pipeline, deployment provider specs). Generated-server validation tests run as part of the Docker-sandboxed refine loop rather than a separate suite.
 
 **Gap Analysis**:
 ```
@@ -212,10 +213,12 @@ Missing CI/CD:
 
 ### ❌ NOT IMPLEMENTED (Critical Gaps)
 
-#### 8. Hosting & Revenue Model ❌ 0%
+#### 8. Hosting & Revenue Model ❌ 0% (historical — auth and hosting are no longer missing; payments still are)
 **Original Vision**: "1-click hosting, Stripe payment collection, hosting as main revenue"
 
-**Current State**: **COMPLETELY MISSING**
+**Current State (as originally written)**: **COMPLETELY MISSING**
+
+> **2026-07 update**: User authentication (email/password, password reset, Google/GitHub OAuth strategies, global JWT guard + ownership checks) and a hosting/deployment pathway (Dockerfile generation, `Deployment`/`HostedServer` entities, deployment providers for gist/devcontainer/CI-workflow/local-Docker, `deploy.yml` publishing images) are now built. Tier-based quota enforcement (monthly usage limits, `UsageRecord`) is in progress. **Still missing**: Stripe/payment integration and a real end-to-end cloud/k8s deploy exercise.
 
 **Required Components**:
 ```
@@ -329,14 +332,16 @@ Generated Server Integration:
 
 ---
 
-#### 10. GitHub Gist/Repo Publishing ❌ 10%
+#### 10. GitHub Gist/Repo Publishing ❌ 10% (historical — now implemented)
 **Original Vision**: "Provide GitHub link for free, users can host elsewhere"
 
-**Current State**:
+**Current State (as originally written)**:
 - ✅ GitHub token configured
 - ❌ No gist creation logic
 - ❌ No repository creation
 - ❌ No automated publishing
+
+> **2026-07 update**: `packages/backend/src/deployment/providers/` now includes `gist.provider.ts`, `github-repo.provider.ts`, `devcontainer.provider.ts`, and `ci-workflow.provider.ts` — gist and repository publishing exist as deployment providers alongside local Docker deployment.
 
 **Required Components**:
 ```
@@ -469,11 +474,11 @@ A2A/AP2 Integration:
 
 ## Implementation Roadmap
 
-### Phase 1: Validate Core (Weeks 1-2) 🎯 **START HERE**
+### Phase 1: Validate Core (Weeks 1-2) 🎯 ✅ **DONE (2026-07-29)**
 
 **Goal**: Prove the generation engine works
 
-**Tasks**:
+**Tasks (as originally written)**:
 - [ ] Initialize PostgreSQL database
 - [ ] Start backend and frontend services
 - [ ] Generate first real MCP server (test with Express.js)
@@ -482,78 +487,83 @@ A2A/AP2 Integration:
 - [ ] Validate LangGraph workflow
 - [ ] Test with 5+ real repositories
 
-**Success Criteria**:
+**Success Criteria (as originally written)**:
 - Generate working MCP server for at least 3 different repositories
 - All 8 LangGraph nodes execute successfully
 - Generated code compiles without errors
 - MCP protocol compliance verified
 
-**Risk**: High - If generation doesn't work, everything else is moot
+> **2026-07 update**: The LangGraph workflow itself was deleted and replaced by `GenerationPipeline` as part of this validation effort. The pipeline generated two working MCP servers (JSONPlaceholder, 7/7 and 10/10 tools passing), independently verified via stdio JSON-RPC — proving the core generation engine works, though not against 3+ *different* repositories as originally scoped, and not specifically against a GitHub-URL input.
+
+**Risk**: Resolved — the core generator works.
 
 ---
 
-### Phase 2: Business Foundation (Weeks 3-6) 💰 **CRITICAL**
+### Phase 2: Business Foundation (Weeks 3-6) 💰 **CRITICAL** — Largely done, payments still missing
 
 **Goal**: Enable revenue generation
 
-**Week 3: Authentication**
-- [ ] User registration (email + password)
-- [ ] OAuth integration (Google, GitHub)
-- [ ] Session management
-- [ ] Password reset flow
+**Week 3: Authentication** ✅ Done
+- [x] User registration (email + password)
+- [x] OAuth integration (Google, GitHub)
+- [x] Session management
+- [x] Password reset flow
 - [ ] User profile pages
 
-**Week 4: Stripe Integration**
+**Week 4: Stripe Integration** ❌ Not started
 - [ ] Stripe account setup
 - [ ] Subscription plans (Free, Pro, Team)
 - [ ] Payment method management
 - [ ] Webhook handlers
 - [ ] Billing dashboard
 
-**Week 5-6: Hosting Infrastructure**
-- [ ] Server deployment system
+**Week 5-6: Hosting Infrastructure** ⚠️ Mostly done, cloud path unverified
+- [x] Server deployment system (local Docker, gist, GitHub repo, devcontainer, CI-workflow providers)
 - [ ] DNS/SSL automation
-- [ ] Resource monitoring
-- [ ] Server management API
-- [ ] Admin dashboard
+- [x] Resource monitoring (Prometheus/Grafana)
+- [x] Server management API
+- [ ] Admin dashboard (interim `AdminGuard` via `ADMIN_USER_EMAILS` only)
+- [ ] Tier-based quota enforcement — in progress
 
-**Success Criteria**:
+**Success Criteria (as originally written)**:
 - Users can sign up and pay
 - MCP servers can be hosted with custom domains
 - Revenue can be collected
+
+> **2026-07 update**: Users can sign up (including OAuth). MCP servers can be deployed locally/via gist/repo, but hosting with custom domains and revenue collection are still not in place.
 
 **Risk**: Medium - Complex but well-documented patterns
 
 ---
 
-### Phase 3: Marketplace (Weeks 7-9) 🛒
+### Phase 3: Marketplace (Weeks 7-9) 🛒 ✅ **Backend and frontend done**
 
 **Goal**: Enable discovery and sharing
 
-**Week 7: Backend**
-- [ ] Marketplace database schema
-- [ ] CRUD API for MCP servers
-- [ ] Text-based search
-- [ ] Tagging/categorization
-- [ ] Upload endpoint
+**Week 7: Backend** ✅ Done
+- [x] Marketplace database schema
+- [x] CRUD API for MCP servers
+- [x] Text-based search
+- [x] Tagging/categorization
+- [ ] Upload endpoint (seeded, not yet user-uploadable)
 
-**Week 8: Frontend**
-- [ ] Connect Explore page to real backend
-- [ ] Search with filters
-- [ ] Server detail pages
+**Week 8: Frontend** ✅ Done
+- [x] Connect Explore page to real backend
+- [x] Search with filters
+- [x] Server detail pages
 - [ ] Installation instructions
 - [ ] Usage examples
 
-**Week 9: Polish**
+**Week 9: Polish** — Not yet done
 - [ ] Featured servers
 - [ ] Trending servers
 - [ ] User ratings/reviews
 - [ ] Download analytics
 
 **Success Criteria**:
-- Users can browse generated servers
-- Search works for basic queries
-- Servers can be downloaded/deployed
+- Users can browse generated servers ✅
+- Search works for basic queries ✅
+- Servers can be downloaded/deployed ✅ (via deployment providers)
 
 **Risk**: Low - Standard CRUD application
 
@@ -618,14 +628,18 @@ A2A/AP2 Integration:
 
 ## Feature Alignment Score by Phase
 
+Original percentages, preserved for history:
+
 | Phase | Features Addressed | Alignment After |
 |-------|-------------------|-----------------|
-| **Current** | Core generator | 60% |
+| **Current (Jan 2025)** | Core generator | 60% |
 | **Phase 1** | Validation | 65% |
 | **Phase 2** | Auth + Payments + Hosting | 80% |
 | **Phase 3** | Marketplace | 85% |
 | **Phase 4** | Advanced features | 95% |
 | **Phase 5** | Scale + Polish | 100% |
+
+**2026-07 status**: Phase 1 (validation) is done. Phase 2 is done except payments. Phase 3 is done except upload/polish. Phases 4-5 remain largely unstarted (no vector search, auth passthrough, agent-first APIs, or verified k8s scaling). We are not assigning a new single percentage here — the phases don't map cleanly onto what actually got built (e.g., k8s manifests exist per Phase 5 but are untested, while marketplace per Phase 3 is functionally done) — but the practical state is closer to "Phase 3 done, Phase 2 payments outstanding" than a 60% snapshot suggests.
 
 ---
 
@@ -662,19 +676,19 @@ A2A/AP2 Integration:
 ### Infrastructure Requirements
 - [x] PostgreSQL database
 - [ ] Redis (for sessions, caching)
-- [ ] Kubernetes cluster (GKE, EKS, or local)
-- [ ] Docker registry
+- [ ] Kubernetes cluster (manifests exist under `k8s/`, but no cluster deploy has been run/verified)
+- [x] Docker registry (GitHub Container Registry, via `deploy.yml`)
 - [ ] Load balancer
-- [ ] Monitoring stack (Prometheus, Grafana)
+- [x] Monitoring stack (Prometheus, Grafana — configured under `k8s/monitoring/`)
 
 ---
 
 ## Success Metrics
 
 ### Phase 1 (Validation)
-- ✅ 3+ working MCP servers generated
-- ✅ Zero critical bugs in generation flow
-- ✅ All LangGraph nodes functional
+- ⚠️ 2 working MCP servers generated (2026-07-29), not the original 3+ target, both against the same JSONPlaceholder input
+- ✅ Zero critical bugs blocking generation flow at time of validation
+- ✅ All pipeline steps (analyzeIntent, research, planTools, refine, persist) functional — this replaces the old "all LangGraph nodes" criterion
 
 ### Phase 2 (Business)
 - 🎯 10 paying users
@@ -700,23 +714,21 @@ A2A/AP2 Integration:
 
 ## Conclusion
 
-**Current State**: Excellent technical foundation (60% aligned with vision)
+**Original (Jan 2025) State**: Excellent technical foundation (60% aligned with vision), core generator unvalidated.
 
-**Critical Gap**: Business infrastructure (authentication, payments, hosting)
+**2026-07 State**: The generator is validated end-to-end (`GenerationPipeline` replaced LangGraph/ensemble). Authentication, marketplace, and a first-pass hosting/deployment pathway are built. The remaining critical gap is narrower than before: **payments** (no Stripe integration) and **proving the cloud/Kubernetes deploy path actually works** (manifests exist, untested).
 
-**Path Forward**:
-1. Validate generator works (2 weeks)
-2. Build revenue model (4 weeks)
-3. Complete marketplace (3 weeks)
-4. Add advanced features (4 weeks)
-5. Scale and polish (ongoing)
+**Path Forward (remaining)**:
+1. Finish quota enforcement (in progress)
+2. Add Stripe/payment integration
+3. Exercise the cloud hosting and Kubernetes deploy path end-to-end
+4. Marketplace polish (ratings, featured/trending, download analytics)
+5. Advanced features (semantic search, auth passthrough, agent-first APIs) — unstarted
 
-**Total Time to Full Vision**: ~13-16 weeks of focused development
-
-**Recommendation**: Prioritize Phase 1 (validation) and Phase 2 (business foundation) before anything else. The rest won't matter if the generator doesn't work or if there's no way to make money.
+**Recommendation**: Prioritize payments and a real cloud deploy test before advanced features — the generator and most of the business plumbing now work, but revenue collection and infrastructure reliability are still unproven.
 
 ---
 
-**Last Updated**: January 2025
-**Next Review**: After Phase 1 completion
+**Last Updated**: July 2026 (rework/2026-07-review)
+**Next Review**: After quota enforcement + first real cloud deploy
 **Maintained By**: Engineering Team

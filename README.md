@@ -2,49 +2,30 @@
 
 AI-native conversational platform for automatically generating and hosting Model Context Protocol (MCP) servers through natural language chat.
 
-## Status (January 2025)
+## Status (July 2026)
 
-**Integration-Ready MVP - Awaiting First Production Run**
+**E2E-Validated — Core Generator Proven, Business Infrastructure Largely Built**
 
-### ✅ What's Built (Code Complete)
-- Complete LangGraph state machine with 8 intelligent nodes
-- LibreChat-inspired Angular frontend with SSE streaming
-- Claude Haiku 3.5 AI integration (cost-effective at $0.001/turn)
-- PostgreSQL schema for conversations and checkpoints
-- Full chat API with real-time updates
-- Comprehensive E2E test suite (80+ Playwright tests)
-- All core services implemented (GitHub analysis, tool discovery, code generation, validation)
+### ✅ What's Built and Validated
+- `GenerationPipeline`: an explicit orchestration service (analyzeIntent → research → planTools → clarify → refine → persist) that replaced the old 8-node LangGraph state machine and 4-agent ensemble; `@langchain/*` dependencies fully removed
+- Fully standalone Angular 20 frontend (no NgModules), functional interceptors/guards, signals-based chat state, SSE streaming
+- Single `AnthropicService` AI layer: claude-sonnet-5 (default) / claude-haiku-4-5 (small tier), structured outputs, retries, token/cost telemetry in Prometheus
+- PostgreSQL schema for conversations, deployments, and per-step `pipeline_runs` observability
+- Global JWT guard with ownership checks on conversations/deployments/hosting; single-use 60s SSE stream tickets; Docker-sandboxed code execution (`npm --ignore-scripts`, no host env, resource limits); the 5 unauthenticated debug endpoints have been deleted
+- Real marketplace backend, seeded with 6 servers; Explore page connects to the real API
+- **Validated on 2026-07-29**: the pipeline generated two working MCP servers (JSONPlaceholder, 7/7 and 10/10 tools passing), independently verified via stdio JSON-RPC
 
-### ⚠️ What Needs Validation
-- **Services not running** - Backend and frontend need to be started
-- **Database not initialized** - PostgreSQL setup required
-- **Zero MCP servers generated** - Core generation pipeline untested in practice
-- **No end-to-end testing** - Full workflow needs real-world validation
+### ⚠️ What Still Needs Validation
+- **Cloud/Kubernetes deploy path** - manifests exist under `k8s/` but the deploy has never been exercised end-to-end
+- **Quota enforcement** - tier-based monthly usage limits are in progress
+- **Payments** - no Stripe/billing integration yet
 
 ### 🎯 Next Steps
+1. Finish quota enforcement (tier monthly limits)
+2. Add Stripe/payment integration
+3. Exercise the cloud hosting and Kubernetes deploy path end-to-end
 
-**Phase 1: Validate Core Generator (Week 1-2)**
-1. Initialize PostgreSQL database
-2. Start backend and frontend services
-3. Generate first MCP server from any input (GitHub repo, API docs, service name, natural language)
-4. Validate complete workflow end-to-end
-5. Fix bugs discovered during real usage
-
-**Phase 2: Build Business Foundation (Week 3-6)**
-1. User authentication system (OAuth/email)
-2. Stripe payment integration
-3. MCP server hosting infrastructure
-4. Subscription/billing system
-
-**Phase 3: Complete Marketplace (Week 7-9)**
-1. Marketplace backend API
-2. Server storage and retrieval
-3. Search functionality
-4. Download/deployment features
-
-See [ROADMAP.md](ROADMAP.md) for complete feature alignment analysis.
-
-**Current Reality**: High-quality, well-architected code generator (60% of original vision) that's never been battle-tested. Missing: revenue model, hosting infrastructure, marketplace backend, and authentication.
+See [ROADMAP.md](ROADMAP.md) for the fuller status breakdown.
 
 ## Quick Start
 
@@ -112,7 +93,7 @@ The AI automatically:
 ```
 mcp-everything/
 ├── packages/
-│   ├── backend/          # NestJS API server with LangGraph orchestration
+│   ├── backend/          # NestJS API server with GenerationPipeline orchestration
 │   ├── frontend/         # Angular web interface (LibreChat-inspired)
 │   └── shared/           # Shared TypeScript types
 ├── generated-servers/    # Output directory for generated MCP servers
@@ -128,15 +109,15 @@ mcp-everything/
 - Intent detection with confidence scoring
 - Intelligent clarification when needed
 
-### LangGraph State Machine (8 Nodes)
+### GenerationPipeline
+An explicit orchestration service (`packages/backend/src/orchestration/pipeline.service.ts`) that replaced the old 8-node LangGraph state machine and 4-agent ensemble:
 1. **analyzeIntent**: AI-powered intent detection
-2. **researchCoordinator**: Multi-source research & planning (GitHub, web, APIs, docs)
-3. **ensembleCoordinator**: Parallel reasoning with 4 specialist agents + voting
-4. **clarificationOrchestrator**: AI-powered gap detection & iterative clarification
-5. **refinementLoop**: Generate-Test-Refine cycle until all tools work
-6. **clarifyWithUser**: Multi-turn conversation support
-7. **provideHelp**: User assistance and guidance
-8. **handleError**: Graceful error recovery
+2. **research**: Multi-source research & planning (GitHub, web, APIs, docs)
+3. **planTools**: One structured Claude call that plans the tool set (replaces the deleted 4-agent ensemble)
+4. **clarify**: Gap detection; pauses and persists state on the conversation row, resumes without re-running research
+5. **refine**: Generate-Test-Refine loop, max 5 iterations, Docker-sandboxed validation
+6. **persist**: Save the final generated server and a `pipeline_runs` observability record
+7. **provideHelp** / **handleError**: Side paths for help requests and failures
 
 ### Frontend Design
 - **LibreChat-Inspired**: Clean, minimal aesthetic
@@ -147,24 +128,21 @@ mcp-everything/
 - **Custom Components**: Lightweight, no heavy Material components
 
 ### Backend Services
-- **GraphOrchestrationService**: LangGraph workflow execution
+- **GenerationPipeline**: Orchestrates the full analyzeIntent → research → planTools → clarify → refine → persist flow
 - **ResearchService**: Input-agnostic research (GitHub/web/APIs/docs)
-- **EnsembleService**: Parallel reasoning with 4 specialist agents
-- **ClarificationService**: AI-powered gap detection
-- **RefinementService**: Generate-Test-Refine loop
-- **McpTestingService**: Docker-based MCP server validation
+- **RefinementService**: Generate-Test-Refine loop (max 5 iterations)
+- **McpTestingService**: Docker-sandboxed MCP server validation
 - **GitHubAnalysisService**: Repository analysis with Octokit
-- **McpGenerationService**: MCP server code generation
-- **CodeExecutionService**: Secure validation
+- **AnthropicService**: Single seam to Claude — structured outputs, retries, token/cost telemetry
 
 ## Technology Stack
 
 **Backend**
 - NestJS + TypeScript
-- LangGraph for state machine orchestration
+- Explicit `GenerationPipeline` orchestration (no LangGraph — `@langchain/*` removed)
 - PostgreSQL with TypeORM
-- Claude Haiku 3.5 (cost-effective AI)
-- Server-Sent Events (SSE) for streaming
+- Claude Sonnet 5 (default) / Claude Haiku 4.5 (small tier)
+- Server-Sent Events (SSE) for streaming, gated by single-use stream tickets
 
 **Frontend**
 - Angular 20
@@ -183,28 +161,29 @@ mcp-everything/
 ```
 User Input → analyzeIntent → [Routing Decision]
                     ↓
-          researchCoordinator (Multi-source research)
+          research (Multi-source research)
                     ↓
-          ensembleCoordinator (4 specialist agents + voting)
+          planTools (single structured call plans the tool set)
                     ↓
-          clarificationOrchestrator (Gap detection)
+          clarify (Gap detection; pause/resume on conversation row)
                     ↓
-          refinementLoop (Generate-Test-Refine)
+          refine (Generate-Test-Refine, max 5 iterations)
                     ↓
-          Complete MCP Server
+          persist → Complete MCP Server
 
 Alternative paths:
-- clarifyWithUser (if clarification needed)
+- clarify pauses and waits for user input (resumes without re-running research)
 - provideHelp (for help requests)
 - handleError (for errors)
 ```
 
 ### Database Schema
-- **Conversations**: Session management and message history
-- **ConversationMemories**: LangGraph checkpoints for state persistence
+- **Conversations**: Session management, message history, and pipeline pause/resume state (`state.currentNode`, `state.generatedCode`, etc.)
+- **PipelineRuns**: Per-step observability record (step, status, timing, input/output summary, error) — replaced the old write-only LangGraph checkpoints
 
 ### Cost Optimization
-- Claude Haiku: $0.001 per conversation turn
+- claude-haiku-4-5 for cheap classification/extraction, claude-sonnet-5 for reasoning/synthesis/codegen
+- Token/cost telemetry tracked in Prometheus (`ai_calls_total`, `ai_tokens_total`, `ai_cost_usd_total`); ~$0.22 tracked cost observed per full generation
 - Intelligent caching for repository analysis
 - Local Docker builds minimize cloud costs
 
@@ -218,19 +197,20 @@ mcp-server-example/
 ├── package.json          # Dependencies and scripts
 ├── tsconfig.json         # TypeScript configuration
 ├── README.md             # Usage documentation
-└── Dockerfile           # Container configuration (optional)
+├── Dockerfile            # Container configuration
+└── .dockerignore
 ```
 
 ## API Endpoints
 
 ### Chat API
-- `POST /api/chat/message` - Send message to AI
-- `GET /api/chat/stream/:sessionId` - SSE stream for real-time updates
+- `POST /api/chat/message` - Send message to AI (authenticated)
+- `POST /api/chat/stream-ticket` - Issue a single-use, 60s SSE stream ticket (authenticated)
+- `GET /api/chat/stream/:sessionId` - SSE stream for real-time updates (requires a valid stream ticket)
 - `POST /api/chat/close/:sessionId` - Close conversation session
 - `GET /api/chat/health` - Health check
 
-### Legacy Generation API (backward compatible)
-- `POST /generate` - Direct generation from GitHub URL
+The previous unauthenticated debug endpoints (`POST /chat`, `/analyze`, `/discover-tools`, `/generate-mcp`, `/generate`) have been deleted; all generation now goes through the authenticated chat message flow.
 
 ## Development
 
@@ -316,11 +296,9 @@ See [DEPLOYMENT.md](DEPLOYMENT.md) for detailed deployment instructions.
 
 ## Performance Metrics
 
-- **Intent Analysis**: 2-3 seconds (Claude Haiku)
 - **Database Write**: <100ms (PostgreSQL)
 - **SSE Latency**: <50ms
-- **Total Response**: 3-4 seconds for simple flows
-- **Cost per Turn**: $0.001 (very cost-effective)
+- **Cost per Generation**: ~$0.22 tracked cost observed for a full pipeline run (analyzeIntent → research → planTools → refine), per Prometheus `ai_cost_usd_total`
 
 ## Contributing
 
@@ -339,7 +317,6 @@ MIT License - see [LICENSE](LICENSE) file for details.
 - **Repository**: https://github.com/4eyedengineer/mcp-everything
 - **Issues**: https://github.com/4eyedengineer/mcp-everything/issues
 - **MCP Specification**: https://modelcontextprotocol.io
-- **LangGraph**: https://langchain-ai.github.io/langgraph/
 
 ## Support
 

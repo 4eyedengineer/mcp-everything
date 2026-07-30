@@ -38,42 +38,42 @@ cp .env.example .env
 
 ### Environment Configuration
 
-Edit `.env` with your configuration:
+`.env.example` at the repo root lists every variable the backend actually reads (verified by grepping `process.env`/`ConfigService.get()`), marked `[REQUIRED]`/`[OPTIONAL]`, with a "NOT READ BY THE BACKEND" section at the bottom for names that look plausible but are ignored (e.g. `POSTGRES_*`, `DATABASE_URL` — the backend only reads `DATABASE_*`). `cp .env.example .env` now works out of the box for local development; the essentials are:
 
 ```bash
 #===========================================
-# Required API Keys
+# Required
 #===========================================
 ANTHROPIC_API_KEY=sk-ant-xxx...           # Get from console.anthropic.com
-GITHUB_TOKEN=ghp_xxx...                   # Personal Access Token with 'gist' scope
 
 #===========================================
-# Database Configuration
+# AI model selection (optional, sane defaults)
+#===========================================
+ANTHROPIC_MODEL=claude-sonnet-5           # reasoning / synthesis / code generation
+ANTHROPIC_SMALL_MODEL=claude-haiku-4-5    # cheap classification / extraction
+
+#===========================================
+# Database (the backend reads DATABASE_*, not POSTGRES_*/DATABASE_URL)
 #===========================================
 DATABASE_HOST=localhost
 DATABASE_PORT=5432
-DATABASE_USER=postgres
-DATABASE_PASSWORD=postgres
+DATABASE_USER=mcp
+DATABASE_PASSWORD=mcp_secret
 DATABASE_NAME=mcp_everything
 
 #===========================================
-# Application Settings
+# Application
 #===========================================
 NODE_ENV=development
 PORT=3000
 FRONTEND_URL=http://localhost:4200
 
 #===========================================
-# Optional Settings
+# Optional
 #===========================================
-# Docker
+GITHUB_TOKEN=ghp_xxx...                   # Personal Access Token; needed for gist/repo publishing and GitHub-URL research
 DOCKER_HOST=unix:///var/run/docker.sock
-
-# Performance
-CACHE_ENABLED=true
-MAX_PARALLEL_OPERATIONS=4
-
-# Logging
+GENERATED_SERVERS_DIR=./generated-servers
 LOG_LEVEL=debug
 ```
 
@@ -145,11 +145,13 @@ mcp-everything/
 ├── packages/
 │   ├── backend/                    # NestJS API server
 │   │   ├── src/
-│   │   │   ├── orchestration/     # LangGraph state machine
-│   │   │   ├── github/            # GitHub API integration
-│   │   │   ├── generation/        # MCP server generation
+│   │   │   ├── orchestration/     # GenerationPipeline (analyzeIntent → research → planTools → clarify → refine → persist)
+│   │   │   ├── ai/                 # AnthropicService - single seam to Claude
+│   │   │   ├── testing/           # Docker-sandboxed MCP server validation
 │   │   │   ├── validation/        # Code validation
-│   │   │   └── chat/              # Chat endpoints
+│   │   │   ├── deployment/        # Deployment providers (gist, repo, devcontainer, CI workflow)
+│   │   │   ├── marketplace/       # Marketplace CRUD + AdminGuard
+│   │   │   └── chat/              # Chat endpoints (message, SSE stream, stream tickets)
 │   │   ├── test/                  # Backend tests
 │   │   └── package.json
 │   │
@@ -638,7 +640,6 @@ npx ng cache clean
 
 - [NestJS Documentation](https://docs.nestjs.com/)
 - [Angular Documentation](https://angular.io/docs)
-- [LangGraph Documentation](https://langchain-ai.github.io/langgraph/)
 - [TypeORM Documentation](https://typeorm.io/)
 - [PostgreSQL Documentation](https://www.postgresql.org/docs/)
 
