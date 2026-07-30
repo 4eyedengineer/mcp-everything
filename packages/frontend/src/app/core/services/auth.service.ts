@@ -9,17 +9,25 @@ import { NotificationService } from './notification.service';
 export interface User {
   id: string;
   email: string;
-  name: string;
+  firstName?: string;
+  lastName?: string;
   avatarUrl?: string;
   provider?: 'local' | 'github' | 'google';
   createdAt: string;
   updatedAt: string;
 }
 
+/** Human-readable name for display, falling back to the email local part. */
+export function userDisplayName(user: User): string {
+  const name = [user.firstName, user.lastName].filter(Boolean).join(' ');
+  return name || user.email.split('@')[0];
+}
+
 export interface RegisterRequest {
   email: string;
   password: string;
-  name: string;
+  firstName?: string;
+  lastName?: string;
 }
 
 export interface LoginRequest {
@@ -292,7 +300,7 @@ export class AuthService {
   /**
    * Get refresh token from storage
    */
-  private getRefreshToken(): string | null {
+  getRefreshToken(): string | null {
     try {
       return localStorage.getItem(REFRESH_TOKEN_KEY);
     } catch {

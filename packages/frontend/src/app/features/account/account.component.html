@@ -23,7 +23,7 @@
         <div class="profile-layout">
           <div class="profile-avatar-section">
             <div class="avatar-circle">
-              <img *ngIf="user.avatarUrl" [src]="user.avatarUrl" [alt]="user.name" class="avatar-image">
+              <img *ngIf="user.avatarUrl" [src]="user.avatarUrl" [alt]="user.email" class="avatar-image">
               <mat-icon *ngIf="!user.avatarUrl">account_circle</mat-icon>
             </div>
             <button class="text-button" disabled>

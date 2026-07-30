@@ -11,6 +11,7 @@ import { TopNavComponent } from './shared/components/top-nav/top-nav.component';
 import { ConversationService, Conversation } from './core/services/conversation.service';
 import { ChatService } from './core/services/chat.service';
 import { SessionService } from './core/services/session.service';
+import { AuthService } from './core/services/auth.service';
 
 /** Below this viewport width the sidebar defaults closed (mobile/tablet). */
 const DESKTOP_BREAKPOINT_PX = 1024;
@@ -61,6 +62,7 @@ export class AppComponent implements OnInit {
     private conversationService: ConversationService,
     private chatService: ChatService,
     private sessionService: SessionService,
+    private authService: AuthService,
     viewportScroller: ViewportScroller
   ) {
     // Get or create session ID
@@ -98,7 +100,15 @@ export class AppComponent implements OnInit {
   }
 
   ngOnInit(): void {
-    this.loadConversations();
+    // Load user data only once authenticated (and again on login), so auth
+    // pages don't fire doomed 401 requests during boot.
+    this.authService.isAuthenticated$.subscribe(isAuthenticated => {
+      if (isAuthenticated) {
+        this.loadConversations();
+      } else {
+        this.conversations.set([]);
+      }
+    });
   }
 
   /**

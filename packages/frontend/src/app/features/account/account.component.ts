@@ -7,7 +7,7 @@ import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { Observable, Subscription } from 'rxjs';
 import { SubscriptionService, TierInfo, SubscriptionInfo, UsageInfo } from '../../core/services/subscription.service';
-import { AuthService, User } from '../../core/services/auth.service';
+import { AuthService, User, userDisplayName } from '../../core/services/auth.service';
 import { ApiKeySectionComponent } from './sections/api-key-section/api-key-section.component';
 import { UsageStatsSectionComponent } from './sections/usage-stats-section/usage-stats-section.component';
 import { ThemeToggleComponent } from '../../shared/components/theme-toggle/theme-toggle.component';
@@ -81,7 +81,7 @@ export class AccountComponent implements OnInit, OnDestroy {
 
     this.userSub = this.user$.subscribe(user => {
       if (user && !this.isEditingProfile) {
-        this.editableName = user.name;
+        this.editableName = userDisplayName(user);
         this.editableEmail = user.email;
       }
     });
@@ -147,7 +147,7 @@ export class AccountComponent implements OnInit, OnDestroy {
     // Reset editable fields back to the last known user values
     const user = this.authService.currentUser;
     if (user) {
-      this.editableName = user.name;
+      this.editableName = userDisplayName(user);
       this.editableEmail = user.email;
     }
   }

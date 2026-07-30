@@ -70,7 +70,10 @@ export class RegisterComponent implements OnInit {
     this.error = null;
 
     const { name, email, password } = this.registerForm.value;
-    this.authService.register({ name, email, password }).subscribe({
+    // The form collects one full-name field; the API takes firstName/lastName.
+    const [firstName, ...rest] = (name as string).trim().split(/\s+/);
+    const lastName = rest.join(' ') || undefined;
+    this.authService.register({ firstName, lastName, email, password }).subscribe({
       next: () => {
         this.router.navigate(['/chat']);
       },

@@ -47,6 +47,13 @@ function handle401Error(
   authService: AuthService,
   next: HttpHandlerFn
 ): Observable<HttpEvent<unknown>> {
+  // Never logged in (no refresh token): there is no session to recover or
+  // terminate. Propagate the 401 without calling logout(), whose navigation
+  // to /auth/login would hijack whatever page is loading (e.g. /auth/register).
+  if (!authService.getRefreshToken()) {
+    return throwError(() => new HttpErrorResponse({ status: 401, url: request.url }));
+  }
+
   if (!isRefreshing) {
     isRefreshing = true;
     refreshTokenSubject.next(null);
