@@ -58,6 +58,13 @@ export interface PipelineState {
 
   // Extracted information
   extractedData?: {
+    /**
+     * The service / API / repository the USER named, as reported by the intent
+     * step. Undefined when the request identified no target - the intent gate
+     * refuses to start research in that case rather than let research invent
+     * one.
+     */
+    targetService?: string;
     githubUrl?: string;
     repositoryName?: string;
     apiSpecUrl?: string;

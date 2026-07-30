@@ -2,12 +2,30 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
+import { Octokit } from '@octokit/rest';
 import { HealthResponse, ServiceHealth, HealthChecks, OverallStatus } from './health.types';
+
+/** How long a live third-party probe result is reused for. */
+const PROBE_CACHE_TTL_MS = 60_000;
+
+/** Ceiling on a live probe so /health stays fast enough for a k8s probe. */
+const PROBE_TIMEOUT_MS = 3_000;
+
+/** Values people leave in .env.example that are not real credentials. */
+const PLACEHOLDER_SECRETS = new Set([
+  'your-github-token-here',
+  'your-api-key-here',
+  'changeme',
+  'todo',
+]);
 
 @Injectable()
 export class HealthService {
   private readonly logger = new Logger(HealthService.name);
   private readonly startTime = Date.now();
+
+  /** Cached GitHub probe result - the only check that leaves the process. */
+  private githubProbe?: { at: number; result: ServiceHealth };
 
   constructor(
     @InjectDataSource()
@@ -122,129 +140,221 @@ export class HealthService {
     }
   }
 
+  /** Is this a real secret, or a placeholder / empty value? */
+  private isConfigured(secret?: string): boolean {
+    const value = secret?.trim();
+    return Boolean(value) && !PLACEHOLDER_SECRETS.has(value!.toLowerCase());
+  }
+
   /**
-   * Check Anthropic API availability by verifying API key is configured
-   * Note: We don't make actual API calls to avoid rate limiting and costs
+   * Check Anthropic API credentials.
+   *
+   * Reports `configured`, never `up`: Anthropic has no free health/ping endpoint,
+   * so the only way to verify the key is to spend money on a completion, which a
+   * probe hit on every k8s interval must not do. The status name says exactly
+   * what was established - that a well-formed key is present - rather than
+   * claiming a liveness we did not check.
    */
   private async checkAnthropic(): Promise<ServiceHealth> {
     const apiKey = this.configService.get<string>('ANTHROPIC_API_KEY');
+    const lastCheck = new Date().toISOString();
 
-    if (!apiKey) {
-      return {
-        status: 'down',
-        message: 'API key not configured',
-        lastCheck: new Date().toISOString(),
-      };
+    if (!this.isConfigured(apiKey)) {
+      return { status: 'not_configured', message: 'API key not configured', lastCheck };
     }
 
-    // Check if API key looks valid (starts with expected prefix)
-    if (!apiKey.startsWith('sk-ant-')) {
+    if (!apiKey!.startsWith('sk-ant-')) {
       return {
         status: 'degraded',
-        message: 'API key format may be invalid',
-        lastCheck: new Date().toISOString(),
+        message:
+          'API key present but does not look like an Anthropic key (expected sk-ant- prefix)',
+        lastCheck,
+        verified: false,
       };
     }
 
     return {
-      status: 'up',
-      message: 'API key configured',
-      lastCheck: new Date().toISOString(),
+      status: 'configured',
+      message: 'API key present; not verified (no free probe endpoint)',
+      lastCheck,
+      verified: false,
     };
   }
 
   /**
-   * Check GitHub API availability by verifying token is configured
+   * Check GitHub by actually calling the API with the configured token.
+   *
+   * Token *presence* is not health. This check previously reported `up` whenever
+   * a GITHUB_TOKEN of any kind was set, and went on doing so while every real
+   * GitHub call in the process failed with "Bad credentials" - the single most
+   * misleading thing a health endpoint can do.
+   *
+   * `GET /rate_limit` is the right probe: it is authenticated (so it fails on a
+   * bad token), free (it does not consume rate limit), and cheap. The result is
+   * cached for a minute so k8s probing every few seconds does not turn into
+   * per-probe network round trips.
    */
   private async checkGitHub(): Promise<ServiceHealth> {
-    const token = this.configService.get<string>('GITHUB_TOKEN');
+    const cached = this.githubProbe;
+    if (cached && Date.now() - cached.at < PROBE_CACHE_TTL_MS) {
+      return cached.result;
+    }
 
-    if (!token) {
+    const result = await this.probeGitHub();
+    this.githubProbe = { at: Date.now(), result };
+    return result;
+  }
+
+  private async probeGitHub(): Promise<ServiceHealth> {
+    const token = this.configService.get<string>('GITHUB_TOKEN');
+    const lastCheck = new Date().toISOString();
+
+    if (!this.isConfigured(token)) {
+      return { status: 'not_configured', message: 'GitHub token not configured', lastCheck };
+    }
+
+    const start = Date.now();
+
+    try {
+      const octokit = new Octokit({ auth: token });
+      const response = await this.withTimeout(
+        octokit.rest.rateLimit.get(),
+        'GitHub rate-limit probe',
+      );
+
+      const core = response.data?.resources?.core;
+      const latency = Date.now() - start;
+
+      // Authenticated but exhausted: real calls will fail until the window resets.
+      if (core && core.remaining === 0) {
+        return {
+          status: 'degraded',
+          message: `authenticated, but core rate limit exhausted (resets ${new Date(
+            core.reset * 1000,
+          ).toISOString()})`,
+          latency,
+          lastCheck,
+          verified: true,
+        };
+      }
+
+      return {
+        status: 'up',
+        message: core
+          ? `authenticated (${core.remaining}/${core.limit} core requests remaining)`
+          : 'authenticated',
+        latency,
+        lastCheck,
+        verified: true,
+      };
+    } catch (error) {
+      const status = (error as { status?: number }).status;
+      const message =
+        status === 401
+          ? 'bad credentials - the configured GITHUB_TOKEN was rejected'
+          : status === 403
+            ? `forbidden - ${error.message}`
+            : error.message;
+
+      this.logger.warn(`GitHub health probe failed: ${message}`);
+
       return {
         status: 'down',
-        message: 'GitHub token not configured',
-        lastCheck: new Date().toISOString(),
+        message,
+        latency: Date.now() - start,
+        lastCheck,
+        verified: true,
       };
     }
-
-    // GitHub tokens can have various formats (classic PAT, fine-grained, app tokens)
-    // Just verify it's not empty and has reasonable length
-    if (token.length < 10) {
-      return {
-        status: 'degraded',
-        message: 'GitHub token may be invalid',
-        lastCheck: new Date().toISOString(),
-      };
-    }
-
-    return {
-      status: 'up',
-      message: 'GitHub token configured',
-      lastCheck: new Date().toISOString(),
-    };
   }
 
   /**
-   * Check Tavily API availability
-   * Tavily is optional, so missing key results in degraded, not down
+   * Check Tavily API credentials.
+   *
+   * Key-presence only, and named honestly as such. Tavily's search endpoint is
+   * metered, so probing it on every k8s interval would bill the user for health
+   * checks; there is no free equivalent of GitHub's /rate_limit.
    */
   private async checkTavily(): Promise<ServiceHealth> {
     const apiKey = this.configService.get<string>('TAVILY_API_KEY');
+    const lastCheck = new Date().toISOString();
 
-    if (!apiKey) {
+    if (!this.isConfigured(apiKey)) {
       return {
-        status: 'degraded',
+        status: 'not_configured',
         message: 'API key not configured (optional service)',
-        lastCheck: new Date().toISOString(),
+        lastCheck,
       };
     }
 
-    // Tavily keys typically start with 'tvly-'
-    if (!apiKey.startsWith('tvly-')) {
+    if (!apiKey!.startsWith('tvly-')) {
       return {
         status: 'degraded',
-        message: 'API key format may be invalid',
-        lastCheck: new Date().toISOString(),
+        message: 'API key present but does not look like a Tavily key (expected tvly- prefix)',
+        lastCheck,
+        verified: false,
       };
     }
 
     return {
-      status: 'up',
-      message: 'API key configured',
-      lastCheck: new Date().toISOString(),
+      status: 'configured',
+      message: 'API key present; not verified (search calls are metered)',
+      lastCheck,
+      verified: false,
     };
   }
 
+  /** Bound a probe so a hanging dependency cannot hang the health endpoint. */
+  private async withTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
+    let timer: NodeJS.Timeout | undefined;
+
+    try {
+      return await Promise.race([
+        promise,
+        new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(
+            () => reject(new Error(`${label} timed out after ${PROBE_TIMEOUT_MS}ms`)),
+            PROBE_TIMEOUT_MS,
+          );
+        }),
+      ]);
+    } finally {
+      if (timer) {
+        clearTimeout(timer);
+      }
+    }
+  }
+
   /**
-   * Calculate overall system status based on individual service checks
-   * - healthy: All critical services up
-   * - degraded: Optional services down or any service degraded
-   * - unhealthy: Critical services (database) down
+   * Roll the individual checks up into one status.
+   *
+   * - unhealthy: the service cannot do its job at all - no database, or no
+   *   Anthropic credentials (every pipeline step is an LLM call).
+   * - degraded: something is impaired but requests can still be served. A
+   *   rejected GitHub token lands here rather than in `unhealthy`: it breaks
+   *   repository-input research only, and 503-ing the readiness probe over a
+   *   stale PAT would take a working deployment out of service. `configured`
+   *   (unverified credentials) is not on its own a degradation.
    */
   private calculateOverallStatus(checks: HealthChecks): OverallStatus {
-    // Database is critical - if down, system is unhealthy
-    if (checks.database.status === 'down') {
+    // Database is critical - nothing works without it.
+    if (checks.database.status === 'down' || checks.database.status === 'not_configured') {
       return 'unhealthy';
     }
 
-    // Redis is important for caching - if down, system is degraded
-    if (checks.redis.status === 'down') {
+    // Anthropic is critical: with no key there is no pipeline.
+    if (checks.anthropic.status === 'down' || checks.anthropic.status === 'not_configured') {
+      return 'unhealthy';
+    }
+
+    // Redis is a cache; GitHub only gates repo-input research; Tavily is
+    // optional. Any of them failing degrades capability, not availability.
+    const degrading: ServiceHealth[] = [checks.redis, checks.github, checks.tavily];
+    if (degrading.some((check) => check.status === 'down' || check.status === 'not_configured')) {
       return 'degraded';
     }
 
-    // Anthropic is critical for AI functionality
-    if (checks.anthropic.status === 'down') {
-      return 'unhealthy';
-    }
-
-    // GitHub is critical for repository analysis
-    if (checks.github.status === 'down') {
-      return 'unhealthy';
-    }
-
-    // Check for any degraded services
-    const hasDegrade = Object.values(checks).some((check) => check.status === 'degraded');
-    if (hasDegrade) {
+    if (Object.values(checks).some((check) => check.status === 'degraded')) {
       return 'degraded';
     }
 

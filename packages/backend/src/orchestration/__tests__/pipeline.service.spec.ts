@@ -31,6 +31,9 @@ const intentResponse = (overrides: Record<string, any> = {}) =>
     intent: 'generate_mcp',
     confidence: 0.95,
     githubUrl: null,
+    // A concrete target the user named. The intent gate refuses to start
+    // researching without one, so every "proceeds normally" fixture needs it.
+    targetService: 'JSONPlaceholder',
     missingInfo: null,
     reasoning: 'User wants an MCP server',
     scope: {
@@ -180,6 +183,8 @@ describe('GenerationPipeline', () => {
   let errorLoggingService: any;
   let mockLlmInvoke: jest.Mock;
   let generatedDir: string;
+  /** Extra ConfigService values a test wants; set, then rebuild via build(). */
+  let configValues: Record<string, any>;
 
   /** Route structured calls by prompt so ordering never matters. */
   const respondWith = (options: { intent?: string; plan?: string }) => {
@@ -209,8 +214,10 @@ describe('GenerationPipeline', () => {
         {
           provide: ConfigService,
           useValue: {
-            get: (key: string, fallback?: any) =>
-              key === 'GENERATED_SERVERS_DIR' ? generatedDir : fallback,
+            get: (key: string, fallback?: any) => {
+              if (key === 'GENERATED_SERVERS_DIR') return generatedDir;
+              return key in configValues ? configValues[key] : fallback;
+            },
           },
         },
         { provide: 'ErrorLoggingService', useValue: errorLoggingService },
@@ -227,6 +234,7 @@ describe('GenerationPipeline', () => {
   beforeEach(async () => {
     jest.clearAllMocks();
     generatedDir = mkdtempSync(join(tmpdir(), 'pipeline-spec-'));
+    configValues = {};
 
     mockLlmInvoke = jest.fn();
     conversationRepo = createConversationRepoFake();
@@ -578,6 +586,80 @@ describe('GenerationPipeline', () => {
       expect(final.executedSteps).toEqual(['analyzeIntent', 'research', 'persist']);
     });
 
+    /**
+     * A pause from the intent gate happens *before* research. Resuming such a
+     * run used to jump straight to planTools, planning tools from zero
+     * researched facts ("research confidence 0.00") - it only ever appeared to
+     * work when the model happened to know the API from priors.
+     */
+    it('resumes AT research when the pause happened before research ran', async () => {
+      respondWith({ intent: intentResponse({ targetService: null }) });
+
+      await collect(
+        await service.execute(SESSION_ID, 'make me an MCP server', CONVERSATION_ID, USER_ID),
+      );
+      expect(researchService.conductResearch).not.toHaveBeenCalled();
+      expect(conversationRepo.row.state.pipeline.state.researchPhase).toBeUndefined();
+
+      respondWith({});
+      const updates = await collect(
+        await service.execute(SESSION_ID, 'the JSONPlaceholder API', CONVERSATION_ID, USER_ID),
+      );
+
+      const final = updates[updates.length - 1];
+      expect(final.isComplete).toBe(true);
+      expect(final.needsUserInput).toBe(false);
+      // Research runs on the resumed turn, before planning
+      expect(researchService.conductResearch).toHaveBeenCalledTimes(1);
+      expect(final.executedSteps).toEqual([
+        'research',
+        'planTools',
+        'clarify',
+        'refine',
+        'persist',
+      ]);
+      // ...and the planner sees real research, not confidence 0.00
+      const planRow = pipelineRunRepo.rows.find((r) => r.step === 'planTools');
+      expect(planRow.inputSummary).toBe('research confidence 0.90');
+    });
+
+    it('re-runs research on resume when saved research has zero confidence', async () => {
+      pauseOnce();
+      researchService.conductResearch.mockResolvedValue({
+        ...researchPhase(0.9),
+        researchConfidence: 0,
+      });
+
+      await collect(
+        await service.execute(SESSION_ID, 'MCP server for MyCustomAPI', CONVERSATION_ID, USER_ID),
+      );
+
+      // A zero-confidence result is not research worth planning against
+      researchService.conductResearch.mockResolvedValue(researchPhase(0.9));
+      const updates = await collect(
+        await service.execute(SESSION_ID, 'it is JSONPlaceholder', CONVERSATION_ID, USER_ID),
+      );
+
+      expect(researchService.conductResearch).toHaveBeenCalledTimes(2);
+      expect(updates[updates.length - 1].executedSteps).toContain('research');
+    });
+
+    it('still skips research on resume when the paused run actually researched', async () => {
+      pauseOnce();
+
+      await collect(
+        await service.execute(SESSION_ID, 'MCP server for MyCustomAPI', CONVERSATION_ID, USER_ID),
+      );
+      expect(researchService.conductResearch).toHaveBeenCalledTimes(1);
+
+      const updates = await collect(
+        await service.execute(SESSION_ID, 'https://api.example.com', CONVERSATION_ID, USER_ID),
+      );
+
+      expect(researchService.conductResearch).toHaveBeenCalledTimes(1);
+      expect(updates[updates.length - 1].executedSteps).not.toContain('research');
+    });
+
     it('pauses when intent analysis reports a critical blocker', async () => {
       respondWith({
         intent: intentResponse({ intent: 'unknown', missingInfo: ['which service'] }),
@@ -591,6 +673,163 @@ describe('GenerationPipeline', () => {
       expect(final.needsUserInput).toBe(true);
       expect(final.response).toContain('which service');
       expect(researchService.conductResearch).not.toHaveBeenCalled();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+
+  /**
+   * The gate that decides whether a request is concrete enough to spend money
+   * on. Regression cover for the run where "make me an MCP server for my stuff"
+   * was classified `clarify` at confidence 0.65, sailed through, and research
+   * invented AWS S3 with 0.85 confidence - five refinement iterations on tools
+   * for a service the user never mentioned.
+   */
+  describe('intent gate', () => {
+    /** Nothing expensive may have started. */
+    const expectNoExpensiveWork = () => {
+      expect(researchService.conductResearch).not.toHaveBeenCalled();
+      expect(clarificationService.orchestrateClarification).not.toHaveBeenCalled();
+      expect(refinementService.refineUntilWorking).not.toHaveBeenCalled();
+      expect(pipelineRunRepo.rows.map((r) => r.step)).toEqual(['analyzeIntent', 'persist']);
+    };
+
+    it('pauses when the request names no identifiable target', async () => {
+      respondWith({
+        intent: intentResponse({
+          intent: 'generate_mcp',
+          confidence: 0.9,
+          targetService: null,
+        }),
+      });
+
+      const updates = await collect(
+        await service.execute(
+          SESSION_ID,
+          'make me an MCP server for my stuff',
+          CONVERSATION_ID,
+          USER_ID,
+        ),
+      );
+
+      const final = updates[updates.length - 1];
+      expect(final.needsUserInput).toBe(true);
+      expect(final.clarificationNeeded?.context).toBe('no_identifiable_target');
+      expect(final.response).toContain('Which service, API or repository');
+      expectNoExpensiveWork();
+    });
+
+    it('pauses when intent confidence is below the threshold, even with a target', async () => {
+      respondWith({
+        intent: intentResponse({ confidence: 0.65, targetService: 'something file-ish' }),
+      });
+
+      const updates = await collect(
+        await service.execute(SESSION_ID, 'a server for my stuff', CONVERSATION_ID, USER_ID),
+      );
+
+      const final = updates[updates.length - 1];
+      expect(final.needsUserInput).toBe(true);
+      expect(final.clarificationNeeded?.context).toBe('low_intent_confidence');
+      expectNoExpensiveWork();
+    });
+
+    it("pauses on a 'clarify' intent when no question is outstanding", async () => {
+      respondWith({ intent: intentResponse({ intent: 'clarify', confidence: 0.95 }) });
+
+      const updates = await collect(
+        await service.execute(SESSION_ID, 'yes, that one', CONVERSATION_ID, USER_ID),
+      );
+
+      const final = updates[updates.length - 1];
+      expect(final.needsUserInput).toBe(true);
+      expect(final.clarificationNeeded?.context).toBe('unmatched_clarification');
+      expectNoExpensiveWork();
+    });
+
+    it('proceeds when the request is confident and names a target', async () => {
+      respondWith({
+        intent: intentResponse({ confidence: 0.76, targetService: 'JSONPlaceholder' }),
+      });
+
+      const updates = await collect(
+        await service.execute(
+          SESSION_ID,
+          'MCP server for JSONPlaceholder',
+          CONVERSATION_ID,
+          USER_ID,
+        ),
+      );
+
+      const final = updates[updates.length - 1];
+      expect(final.needsUserInput).toBe(false);
+      expect(final.clarificationNeeded).toBeUndefined();
+      expect(researchService.conductResearch).toHaveBeenCalledTimes(1);
+      expect(refinementService.refineUntilWorking).toHaveBeenCalledTimes(1);
+    });
+
+    it('accepts a repository URL as the target when no service was named', async () => {
+      respondWith({
+        intent: intentResponse({
+          targetService: null,
+          githubUrl: 'https://github.com/typicode/jsonplaceholder',
+        }),
+      });
+
+      const updates = await collect(
+        await service.execute(
+          SESSION_ID,
+          'build one from https://github.com/typicode/jsonplaceholder',
+          CONVERSATION_ID,
+          USER_ID,
+        ),
+      );
+
+      expect(updates[updates.length - 1].needsUserInput).toBe(false);
+      expect(researchService.conductResearch).toHaveBeenCalledTimes(1);
+    });
+
+    it('honours PIPELINE_INTENT_CONFIDENCE_MIN from config', async () => {
+      configValues.PIPELINE_INTENT_CONFIDENCE_MIN = '0.5';
+      service = await build();
+      respondWith({ intent: intentResponse({ confidence: 0.65 }) });
+
+      const updates = await collect(
+        await service.execute(SESSION_ID, 'MCP server for JSONPlaceholder', CONVERSATION_ID, USER_ID),
+      );
+
+      // 0.65 clears a 0.5 floor, so the run proceeds where it would not by default
+      expect(updates[updates.length - 1].needsUserInput).toBe(false);
+      expect(researchService.conductResearch).toHaveBeenCalledTimes(1);
+    });
+
+    it('falls back to the default threshold when the configured one is nonsense', async () => {
+      configValues.PIPELINE_INTENT_CONFIDENCE_MIN = 'banana';
+      service = await build();
+      respondWith({ intent: intentResponse({ confidence: 0.65 }) });
+
+      const updates = await collect(
+        await service.execute(SESSION_ID, 'MCP server for JSONPlaceholder', CONVERSATION_ID, USER_ID),
+      );
+
+      expect(updates[updates.length - 1].clarificationNeeded?.context).toBe(
+        'low_intent_confidence',
+      );
+      expect(researchService.conductResearch).not.toHaveBeenCalled();
+    });
+
+    it('saves resumable state so the answer continues the same run', async () => {
+      respondWith({ intent: intentResponse({ targetService: null }) });
+
+      await collect(
+        await service.execute(SESSION_ID, 'make me an MCP server', CONVERSATION_ID, USER_ID),
+      );
+
+      const saved = conversationRepo.row.state.pipeline;
+      expect(saved.awaitingClarification).toBe(true);
+      // Nothing researched yet - that is the whole point of pausing here
+      expect(saved.state.researchPhase).toBeUndefined();
+      expect(saved.state.generationPlan).toBeUndefined();
     });
   });
 
@@ -825,6 +1064,69 @@ describe('GenerationPipeline', () => {
       expect(final.needsUserInput).toBe(true);
       expect(final.response).toContain('which service');
       expect(userService.checkCanGenerate).not.toHaveBeenCalled();
+    });
+
+    /**
+     * The check used to sit inside the `if (!resumed)` branch, so a user at
+     * their limit could resume any paused conversation and generate for free.
+     */
+    it('blocks a resumed run when the quota is exhausted', async () => {
+      clarificationService.orchestrateClarification
+        .mockResolvedValueOnce({
+          complete: false,
+          needsUserInput: true,
+          gaps: [{ issue: 'Base URL unknown', priority: 'HIGH', suggestedQuestion: 'URL?', context: 'c' }],
+          questions: [{ question: 'URL?', context: 'c', required: true }],
+        })
+        .mockResolvedValue({ complete: true, gaps: [], needsUserInput: false });
+
+      await collect(
+        await service.execute(SESSION_ID, 'MCP server for MyCustomAPI', CONVERSATION_ID, USER_ID),
+      );
+      expect(userService.checkCanGenerate).toHaveBeenCalledTimes(1);
+
+      // The user hits their limit between turns
+      userService.checkCanGenerate.mockResolvedValue({
+        allowed: false,
+        reason: "You've reached your Free tier limit of 5 MCP server generations this month.",
+      });
+
+      const updates = await collect(
+        await service.execute(SESSION_ID, 'https://api.example.com', CONVERSATION_ID, USER_ID),
+      );
+
+      const final = updates[updates.length - 1];
+      expect(final.isComplete).toBe(true);
+      expect(final.response).toContain('Free tier limit of 5 MCP server generations');
+      expect(userService.checkCanGenerate).toHaveBeenCalledTimes(2);
+
+      // The resumed run never reached the expensive steps
+      expect(refinementService.refineUntilWorking).not.toHaveBeenCalled();
+      expect(userService.incrementUsage).not.toHaveBeenCalled();
+      expect(pipelineRunRepo.rows.map((r) => r.step)).not.toContain('refine');
+    });
+
+    it('lets a resumed run through when the user is still within quota', async () => {
+      clarificationService.orchestrateClarification
+        .mockResolvedValueOnce({
+          complete: false,
+          needsUserInput: true,
+          gaps: [{ issue: 'Base URL unknown', priority: 'HIGH', suggestedQuestion: 'URL?', context: 'c' }],
+          questions: [{ question: 'URL?', context: 'c', required: true }],
+        })
+        .mockResolvedValue({ complete: true, gaps: [], needsUserInput: false });
+
+      await collect(
+        await service.execute(SESSION_ID, 'MCP server for MyCustomAPI', CONVERSATION_ID, USER_ID),
+      );
+
+      const updates = await collect(
+        await service.execute(SESSION_ID, 'https://api.example.com', CONVERSATION_ID, USER_ID),
+      );
+
+      expect(updates[updates.length - 1].response).toContain('Successfully generated');
+      expect(userService.checkCanGenerate).toHaveBeenCalledTimes(2);
+      expect(userService.incrementUsage).toHaveBeenCalledTimes(1);
     });
 
     it('records usage exactly once when a generation completes successfully', async () => {

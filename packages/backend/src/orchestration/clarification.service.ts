@@ -168,6 +168,13 @@ ${getClarificationThresholdPrompt()}
 **User Request**:
 "${userInput}"
 
+**Target the user actually named**: ${
+      state.extractedData?.targetService ||
+      state.extractedData?.githubUrl ||
+      'NONE - the user named no service, API or repository. Anything the research or plan ' +
+        'below is "about" was inferred, so confirming it with the user is a HIGH gap.'
+    }
+
 **Research Summary**:
 ${research?.synthesizedPlan?.summary || 'No research available'}
 
@@ -200,6 +207,16 @@ ${plan?.toolsToGenerate?.map((t) => `- ${t.name}: ${t.description}`).join('\n') 
 **What IS a Gap (ONLY report these)**:
 ✅ API base URL is completely unknown AND service name provides no clues (EXTREMELY RARE)
 ✅ User explicitly said "I don't know" or asked for help deciding
+✅ **The target system was INFERRED, not stated by the user.** Compare the user request
+   above against the service the research and planned tools are actually about. If the
+   user never named that service - if research or planning picked it because the request
+   was vague ("my stuff", "my files", "our data") and something plausible had to be
+   chosen - that is a HIGH gap, no matter how confident the research looks. Say which
+   service the plan assumes and ask the user to confirm or correct it.
+   Example: user said "an MCP server for my stuff", the plan is five AWS S3 tools
+   including s3_delete_object -> HIGH gap: nobody mentioned S3. High research confidence
+   in an invented target is exactly the failure this check exists to catch, because
+   everything downstream will confidently generate and test tools for the wrong system.
 
 **Research Already Provided** (from above):
 - Base URL: ${research?.webSearchFindings?.bestPractices?.find((p: string) => p.includes('Base URL'))?.split(': ')[1] || 'Found in research'}
@@ -224,6 +241,10 @@ ${plan?.toolsToGenerate?.map((t) => `- ${t.name}: ${t.description}`).join('\n') 
 3. If user says "all endpoints" → DO NOT ask which specific ones, use all from research
 4. If research found base URL or can infer from service name → DO NOT raise gap
 5. Only raise HIGH gaps if literally impossible to generate without info
+6. EXCEPTION to rules 1-5: if the target system itself was inferred rather than stated
+   by the user, raise it as a HIGH gap. Research finding a base URL, auth method and
+   endpoints for a service the user never named is not evidence the gap is closed - it
+   is evidence the pipeline is about to build the wrong server.
 
 **IMPORTANT**: Only raise HIGH-priority gaps if generation is LITERALLY IMPOSSIBLE. If research provides ANY information, use it with reasonable defaults.
 
@@ -279,7 +300,9 @@ ${plan?.toolsToGenerate?.map((t) => `- ${t.name}: ${t.description}`).join('\n') 
   "context": "To generate better tools"
 }
 
-**REMINDER**: If research found base URL, authentication, or endpoints → Return {"gaps": []}
+**REMINDER**: If the user named the target service AND research found base URL,
+authentication, or endpoints → Return {"gaps": []}. If the user never named the target
+service, raise the inferred-target gap even when research found all of those.
 
 Return ONLY valid JSON with detected gaps.`;
   }

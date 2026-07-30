@@ -28,6 +28,15 @@ const IntentAnalysisSchema = z.object({
   intent: z.enum(['generate_mcp', 'clarify', 'research', 'help', 'unknown']),
   confidence: z.number(),
   githubUrl: z.string().nullable().optional(),
+  /**
+   * The service / API / product / repository the USER named, verbatim-ish.
+   *
+   * Null when the request identifies no target at all ("make me an MCP server
+   * for my stuff"). This is the signal the intent gate uses to refuse to start
+   * researching: without it, `research` will happily invent a plausible target
+   * and report high confidence in a service the user never mentioned.
+   */
+  targetService: z.string().nullable().optional(),
   missingInfo: z.array(z.string()).nullable().optional(),
   reasoning: z.string(),
   scope: z.object({
@@ -81,10 +90,41 @@ const DEFAULT_MAX_TOOLS = 10;
 const MAX_REFINEMENT_ITERATIONS = 5;
 
 /**
+ * Minimum intent confidence required to start spending money on a request.
+ *
+ * Override with `PIPELINE_INTENT_CONFIDENCE_MIN`. Below this the pipeline asks
+ * instead of guessing: a low-confidence classification means the model is not
+ * sure what the user wants, and every step after `analyzeIntent` is more
+ * expensive than the question.
+ */
+const DEFAULT_INTENT_CONFIDENCE_MIN = 0.75;
+
+/**
+ * Research confidence at or below which the run is not worth planning against.
+ *
+ * Also decides whether a resumed run's saved research is usable or has to be
+ * redone (see `needsResearch`).
+ */
+const RESEARCH_CONFIDENCE_MIN = 0.5;
+
+/**
  * An update handed to the SSE layer. `streamingUpdates` carries only the
  * entries produced since the previous yield.
  */
 export type PipelineUpdate = Partial<PipelineState> & { conversationId: string };
+
+/**
+ * A refusal from the intent gate.
+ *
+ * `question` is shown to the user, `context` is the machine-readable pause cause
+ * recorded on the state, and `reason` is the operator-facing explanation that
+ * goes into the log and progress stream.
+ */
+interface IntentGateBlock {
+  question: string;
+  context: string;
+  reason: string;
+}
 
 /**
  * Generation Pipeline
@@ -98,9 +138,11 @@ export type PipelineUpdate = Partial<PipelineState> & { conversationId: string }
  * identical branches) and the 4-agent "ensemble" vote (whose consensus score was
  * a constant and whose merge step was commented out).
  *
- * Resumability: when the clarify step needs user input, the full state is
- * serialised into `conversations.state.pipeline`. The next message on the same
- * conversation resumes from that state - research is *not* re-run.
+ * Resumability: when the pipeline needs user input, the full state is serialised
+ * into `conversations.state.pipeline`. The next message on the same conversation
+ * resumes from that state, at the step the pause actually reached: research is
+ * skipped when the paused run already produced it, and re-run when the pause
+ * happened before research (e.g. the intent gate).
  *
  * Observability: every step writes a `pipeline_runs` row with status, timings
  * and input/output summaries.
@@ -109,6 +151,9 @@ export type PipelineUpdate = Partial<PipelineState> & { conversationId: string }
 export class GenerationPipeline {
   private readonly logger: StructuredLoggerService;
   private readonly generatedServersDir: string;
+
+  /** Confidence floor for acting on an intent (see the constant's docs). */
+  private readonly intentConfidenceMin: number;
 
   /** Streaming entries produced since the last yield, keyed by state object. */
   private readonly pending = new WeakMap<
@@ -140,6 +185,30 @@ export class GenerationPipeline {
       'GENERATED_SERVERS_DIR',
       join(process.cwd(), 'generated-servers'),
     );
+    this.intentConfidenceMin = this.readConfidenceThreshold();
+  }
+
+  /**
+   * Parse `PIPELINE_INTENT_CONFIDENCE_MIN`, falling back to the default for
+   * anything unusable (unset, non-numeric, outside 0-1). A misconfigured
+   * threshold must not silently disable the gate.
+   */
+  private readConfidenceThreshold(): number {
+    const raw = this.configService.get<string | number>('PIPELINE_INTENT_CONFIDENCE_MIN');
+    if (raw === undefined || raw === null || raw === '') {
+      return DEFAULT_INTENT_CONFIDENCE_MIN;
+    }
+
+    const parsed = typeof raw === 'number' ? raw : Number.parseFloat(String(raw));
+    if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1) {
+      this.logger.warn(
+        `Ignoring invalid PIPELINE_INTENT_CONFIDENCE_MIN="${raw}" ` +
+          `(expected 0-1), using ${DEFAULT_INTENT_CONFIDENCE_MIN}`,
+      );
+      return DEFAULT_INTENT_CONFIDENCE_MIN;
+    }
+
+    return parsed;
   }
 
   // ---------------------------------------------------------------------------
@@ -213,7 +282,13 @@ export class GenerationPipeline {
             streamingUpdates: [],
             // A resumed run is its own run: pipeline_runs is the cross-turn
             // audit trail, executedSteps describes this turn.
-            currentStep: 'planTools',
+            //
+            // Where it resumes depends on how far the paused run got: a pause
+            // during `clarify` already has research and picks up at planTools,
+            // but a pause from the intent gate happened before research ran and
+            // has to start there. `run()` makes the same call via
+            // `needsResearch`; this is only the reported starting step.
+            currentStep: this.needsResearch(saved) ? 'research' : 'planTools',
             executedSteps: [],
           }
         : {
@@ -239,9 +314,10 @@ export class GenerationPipeline {
           };
           state.clarificationHistory = history;
         }
-        this.logger.log('Resuming saved pipeline state (research will not be re-run)', {
+        this.logger.log(`Resuming saved pipeline state at ${state.currentStep}`, {
           conversationId: conversation.id,
           clarificationRounds: history.length,
+          researchWillRerun: this.needsResearch(state),
         });
       }
 
@@ -277,38 +353,53 @@ export class GenerationPipeline {
           return;
         }
 
-        if (state.clarificationNeeded || state.intent?.type === 'unknown' || !state.intent) {
-          // Not enough to act on - ask and wait for the next message.
-          state.response = state.clarificationNeeded?.question || 'Could you provide more details?';
+        // --- Intent gate ---------------------------------------------------
+        // The cheapest possible place to stop a request we cannot act on.
+        // Everything downstream (research web/GitHub calls, planTools, up to
+        // five refinement iterations each building a Docker image) costs real
+        // money, and none of it can recover from not knowing what to build.
+        const blocked = this.checkIntentGate(state);
+        if (blocked) {
+          state.clarificationNeeded = { question: blocked.question, context: blocked.context };
+          state.response = blocked.question;
           state.needsUserInput = true;
+          this.push(state, 'analyzeIntent', `Pausing for clarification: ${blocked.reason}`);
           yield* this.pause(state);
           return;
         }
+      }
 
-        // --- Quota gate ------------------------------------------------------
-        // Deliberately placed here: after `analyzeIntent` (a single small-model
-        // classification call - cheap) and before `research` (the first
-        // expensive step - web search, GitHub API calls, and further LLM
-        // calls through `planTools`/`refine`). Help and clarification-needed
-        // replies above never reach this check, so they are never blocked by
-        // quota. Silent (no pipeline_runs row, no progress message) when the
-        // user is within quota so the normal path is unaffected; only the
-        // denial is user-visible, delivered as a normal assistant response
-        // through the same SSE `complete` event every other reply uses.
-        const quota = await this.checkGenerationQuota(state);
-        if (!quota.allowed) {
-          state.response = quota.reason!;
-          this.push(state, 'analyzeIntent', quota.reason!);
-          yield* this.finish(state);
-          return;
-        }
+      // --- Quota gate --------------------------------------------------------
+      // Runs on fresh AND resumed turns. On a fresh turn this is after
+      // `analyzeIntent` (one small-model classification call - cheap) and
+      // before `research`; help replies and intent-gate pauses return above, so
+      // they are never blocked by quota. On a resumed turn the run is about to
+      // reach research/planTools/refine too, so it has to be gated here as well
+      // - otherwise a user at their limit could keep resuming paused
+      // conversations to generate for free.
+      //
+      // Silent (no pipeline_runs row, no progress message) when the user is
+      // within quota so the normal path is unaffected; only the denial is
+      // user-visible, delivered as a normal assistant response through the same
+      // SSE `complete` event every other reply uses.
+      const quota = await this.checkGenerationQuota(state);
+      if (!quota.allowed) {
+        state.response = quota.reason!;
+        this.push(state, state.intent ? 'analyzeIntent' : 'planTools', quota.reason!);
+        yield* this.finish(state);
+        return;
+      }
 
-        // --- Step 2: research ----------------------------------------------
+      // --- Step 2: research --------------------------------------------------
+      // Skipped only when a resumed run carries research that actually ran.
+      // A run that paused *before* research (intent gate) has none, and must
+      // not plan tools from zero researched facts.
+      if (this.needsResearch(state)) {
         await this.step(state, 'research', state.userInput, () => this.research(state));
         yield this.snapshot(state);
 
         const confidence = state.researchPhase?.researchConfidence ?? 0;
-        if (confidence <= 0.5) {
+        if (confidence <= RESEARCH_CONFIDENCE_MIN) {
           state.clarificationNeeded = {
             question:
               'I could not gather enough reliable information about that. Could you tell me more ' +
@@ -413,6 +504,23 @@ ${state.messages
 - Default to TypeScript unless user specifies another language
 - Only flag missing info if it's CRITICAL and cannot be inferred
 
+**Target identification** - \`targetService\`:
+- Set it to the service, API, product or repository the USER actually named or
+  unambiguously referred to: "Stripe", "the GitHub Issues API", "JSONPlaceholder",
+  the repo in a github.com URL, a company's own API they gave a docs link for.
+- Set it to \`null\` when the message identifies no target at all. "Make me an MCP
+  server for my stuff", "build me something useful", "I need a server" -> null.
+- NEVER guess, infer, complete, or supply a plausible example. If the user did not
+  say which service, \`null\` is the correct and useful answer. A fabricated target
+  here sends the whole pipeline off researching, planning and generating tools for
+  a service the user never mentioned, and nothing downstream can recover from it.
+- A vague *purpose* is not a target: "something for my files" is null, "for my S3
+  bucket" is "AWS S3".
+
+**Confidence** must reflect how sure you are about intent AND target together. If you
+had to reach to decide what the user meant, say so with a low number - the pipeline
+asks a clarifying question below a threshold rather than spending money on a guess.
+
 **Scope extraction** - read what the user actually asked for and report it in \`scope\`:
 - \`requestedToolCount\`: the number of tools they asked for, if they said or implied one.
   "list posts, get post, list comments" implies 3. "with 2 tools" is 2. Null if unstated.
@@ -447,7 +555,11 @@ Do NOT invent constraints the user did not express, and do NOT drop constraints 
       confidence: analysis.confidence,
       reasoning: analysis.reasoning,
     };
-    state.extractedData = { ...state.extractedData, githubUrl: analysis.githubUrl ?? undefined };
+    state.extractedData = {
+      ...state.extractedData,
+      githubUrl: analysis.githubUrl ?? undefined,
+      targetService: analysis.targetService ?? undefined,
+    };
     state.requestedToolCount = requestedToolCount;
     state.requestedToolNames = requestedToolNames;
     state.maxToolCount = requestedToolCount ?? undefined;
@@ -473,6 +585,104 @@ Do NOT invent constraints the user did not express, and do NOT drop constraints 
     this.push(state, 'analyzeIntent', message);
 
     return message;
+  }
+
+  /**
+   * Intent gate: is this request concrete enough to spend money on?
+   *
+   * The pipeline used to proceed unless the intent step *volunteered*
+   * `missingInfo` or classified the request as `unknown`. That let a `clarify`
+   * intent at confidence 0.65 for "make me an MCP server for my stuff" through
+   * to research, which invented AWS S3, reported 0.85 confidence in it, and
+   * burned every refinement iteration on tools for a service the user never
+   * mentioned. The clarification machinery worked fine - the pipeline simply
+   * never chose to use it.
+   *
+   * Four reasons to stop and ask, cheapest signal first:
+   * 1. The intent step already named critical missing info.
+   * 2. The intent could not be classified at all.
+   * 3. `clarify` on a fresh turn - the user is answering a question nobody
+   *    asked (there is no saved state, or this would be a resumed run), which
+   *    means the message only makes sense as part of a conversation we do not
+   *    have.
+   * 4. Confidence below `intentConfidenceMin`.
+   * 5. No identifiable target: the user named no service, API or repository, so
+   *    research has nothing to research and will fabricate a target instead.
+   *
+   * Returns null when the run may proceed, or the pause to raise otherwise.
+   */
+  private checkIntentGate(state: PipelineState): IntentGateBlock | null {
+    const intent = state.intent;
+
+    if (state.clarificationNeeded) {
+      return {
+        question: state.clarificationNeeded.question,
+        context: state.clarificationNeeded.context,
+        reason: 'intent analysis reported missing information',
+      };
+    }
+
+    if (!intent || intent.type === 'unknown') {
+      return {
+        question:
+          "I'm not sure what you'd like me to build. I generate MCP servers for APIs and " +
+          'services - tell me which service or API to wrap (for example "Stripe payments" or ' +
+          '"the GitHub Issues API"), or paste a docs or repository link.',
+        context: 'unknown_intent',
+        reason: 'intent could not be classified',
+      };
+    }
+
+    if (intent.type === 'clarify') {
+      return {
+        question:
+          "I don't have an open question for that answer to belong to. What would you like an " +
+          'MCP server for? Naming the service or API - or pasting a docs or repository link - ' +
+          'is enough to get started.',
+        context: 'unmatched_clarification',
+        reason: 'clarify intent with no question outstanding',
+      };
+    }
+
+    if (intent.confidence < this.intentConfidenceMin) {
+      return {
+        question:
+          "I'm not confident I understood that correctly, and I'd rather ask than guess. Which " +
+          'service or API should the MCP server wrap, and what should it be able to do?',
+        context: 'low_intent_confidence',
+        reason: `confidence ${intent.confidence.toFixed(2)} below ${this.intentConfidenceMin}`,
+      };
+    }
+
+    const target = state.extractedData?.targetService || state.extractedData?.githubUrl;
+    if (!target) {
+      return {
+        question:
+          'I need to know what to build the MCP server *for* before I start researching. Which ' +
+          'service, API or repository should it wrap? A name ("Stripe", "the GitHub Issues API") ' +
+          'or a docs/repository link is all I need.',
+        context: 'no_identifiable_target',
+        reason: 'request names no identifiable target service or API',
+      };
+    }
+
+    return null;
+  }
+
+  /**
+   * Does this turn have to run research?
+   *
+   * Yes unless the state already carries research that actually ran. A resumed
+   * run used to skip research unconditionally, which was correct for the case
+   * it was written for (a pause during `clarify`, i.e. after research) but wrong
+   * for a pause that happened *before* research - the resumed run then planned
+   * tools from zero researched facts (`research confidence 0.00`) and only
+   * appeared to work when the model happened to know the API from priors. The
+   * intent gate above makes pre-research pauses the common case, so this path is
+   * hot rather than theoretical.
+   */
+  private needsResearch(state: PipelineState): boolean {
+    return !state.researchPhase || (state.researchPhase.researchConfidence ?? 0) <= 0;
   }
 
   /**

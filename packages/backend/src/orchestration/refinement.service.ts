@@ -1,5 +1,6 @@
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { builtinModules } from 'module';
 import * as ts from 'typescript';
 import * as z from 'zod/v4';
 import {
@@ -64,6 +65,35 @@ const FailureAnalysisSchema = z.object({
 const CODE_GEN_MAX_TOKENS = 64000;
 const CODE_GEN_RETRY_MAX_TOKENS = 128000;
 const ANALYSIS_MAX_TOKENS = 16000;
+
+/** Node's own modules never belong in `dependencies`. */
+const NODE_BUILTINS = new Set(builtinModules);
+
+/**
+ * Version ranges for packages generated servers reach for often enough to be
+ * worth pinning deliberately. Anything not listed gets `latest`, which npm
+ * resolves at install time - a slightly loose range still builds, whereas a
+ * *missing* dependency cannot build at all.
+ *
+ * Prefix entries (trailing `/`) match a whole scope, which is how the AWS SDK's
+ * one-package-per-service layout is covered without listing 300 packages.
+ */
+const KNOWN_DEPENDENCY_VERSIONS: Array<[string, string]> = [
+  ['@aws-sdk/', '^3.0.0'],
+  ['@smithy/', '^3.0.0'],
+  ['@modelcontextprotocol/sdk', '^1.0.0'],
+  ['@octokit/', '^20.0.0'],
+  ['axios', '^1.7.0'],
+  ['zod', '^3.23.0'],
+  ['dotenv', '^16.0.0'],
+  ['form-data', '^4.0.0'],
+  ['jsonwebtoken', '^9.0.0'],
+  ['node-fetch', '^3.3.0'],
+  ['ws', '^8.0.0'],
+];
+
+/** npm package name rules, enough to reject a mangled import specifier. */
+const VALID_PACKAGE_NAME = /^(?:@[a-z0-9][\w.-]*\/)?[a-z0-9][\w.-]*$/;
 
 /**
  * MCP SDK Reference Implementation (Issue #140)
@@ -266,6 +296,148 @@ export class RefinementService {
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Dependency reconciliation
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Extract the external npm packages a generated file imports.
+   *
+   * Covers static `from '...'`, side-effect `import '...'`, dynamic
+   * `import('...')` and `require('...')`. Relative paths, absolute paths,
+   * `node:`-prefixed specifiers and Node builtins are not dependencies.
+   *
+   * Deep specifiers collapse to their installable root, so
+   * `@modelcontextprotocol/sdk/server/index.js` -> `@modelcontextprotocol/sdk`
+   * and `lodash/merge` -> `lodash`.
+   */
+  private extractImportedPackages(code: string): string[] {
+    const specifiers = new Set<string>();
+    const patterns = [
+      /\bfrom\s*['"]([^'"]+)['"]/g,
+      /\bimport\s+['"]([^'"]+)['"]/g,
+      /\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/g,
+      /\brequire\s*\(\s*['"]([^'"]+)['"]\s*\)/g,
+    ];
+
+    for (const pattern of patterns) {
+      for (const match of code.matchAll(pattern)) {
+        specifiers.add(match[1]);
+      }
+    }
+
+    const packages = new Set<string>();
+
+    for (const specifier of specifiers) {
+      if (
+        !specifier ||
+        specifier.startsWith('.') ||
+        specifier.startsWith('/') ||
+        specifier.startsWith('node:')
+      ) {
+        continue;
+      }
+
+      const segments = specifier.split('/');
+      const root = specifier.startsWith('@') ? segments.slice(0, 2).join('/') : segments[0];
+
+      if (!root || NODE_BUILTINS.has(root) || !VALID_PACKAGE_NAME.test(root)) {
+        continue;
+      }
+
+      packages.add(root);
+    }
+
+    return [...packages];
+  }
+
+  /** The version range to declare for a package we are adding. */
+  private resolveDependencyVersion(packageName: string): string {
+    for (const [key, version] of KNOWN_DEPENDENCY_VERSIONS) {
+      const matches = key.endsWith('/') ? packageName.startsWith(key) : packageName === key;
+      if (matches) {
+        return version;
+      }
+    }
+    return 'latest';
+  }
+
+  /**
+   * Reconcile the generated code's imports against its declared dependencies.
+   *
+   * Generated servers routinely import a package the generated `package.json`
+   * never declares - an S3 server imported `@aws-sdk/client-s3` against a
+   * manifest listing only the MCP SDK, zod and axios. `tsc` then fails with
+   * TS2307 ("Cannot find module") on every iteration, and no amount of *code*
+   * refinement can fix it, because the code was never the problem: all five
+   * iterations failed identically and the run was written off as a failure.
+   *
+   * Declaring the missing package turns that into a build that either succeeds
+   * or fails for a reason refinement can actually act on.
+   *
+   * Mutates `generatedCode.packageJson` in place and returns the packages added.
+   * Never throws: a manifest we cannot parse is left exactly as it is.
+   */
+  private reconcileDependencies(generatedCode: GeneratedCode): string[] {
+    if (!generatedCode.mainFile || !generatedCode.packageJson) {
+      return [];
+    }
+
+    let manifest: any;
+    try {
+      manifest = JSON.parse(generatedCode.packageJson);
+    } catch (error) {
+      this.logger.warn(
+        `Cannot reconcile dependencies - unparseable package.json: ${error.message}`,
+      );
+      return [];
+    }
+
+    if (!manifest || typeof manifest !== 'object') {
+      return [];
+    }
+
+    const declared = new Set([
+      ...Object.keys(manifest.dependencies || {}),
+      ...Object.keys(manifest.devDependencies || {}),
+      ...Object.keys(manifest.peerDependencies || {}),
+    ]);
+
+    const imported = this.extractImportedPackages(generatedCode.mainFile);
+    const missing = imported.filter((name) => !declared.has(name));
+
+    if (missing.length === 0) {
+      return [];
+    }
+
+    manifest.dependencies = { ...(manifest.dependencies || {}) };
+    for (const name of missing) {
+      manifest.dependencies[name] = this.resolveDependencyVersion(name);
+    }
+
+    generatedCode.packageJson = JSON.stringify(manifest, null, 2);
+
+    this.logger.log(
+      `Added ${missing.length} imported-but-undeclared dependency/ies to package.json: ` +
+        missing.map((name) => `${name}@${manifest.dependencies[name]}`).join(', '),
+    );
+
+    return missing;
+  }
+
+  /** The dependency names a generated manifest already declares. */
+  private declaredDependencies(packageJson?: string): string[] {
+    if (!packageJson) {
+      return [];
+    }
+    try {
+      const manifest = JSON.parse(packageJson);
+      return Object.keys(manifest?.dependencies || {});
+    } catch {
+      return [];
+    }
+  }
+
   /** Strip a fenced TypeScript code block, if the model wrapped its output. */
   private stripCodeFence(text: string): string {
     const codeBlockMatch = text.match(/```(?:typescript|ts)?\n([\s\S]*?)\n```/);
@@ -299,6 +471,12 @@ export class RefinementService {
     const generatedCode = state.generatedCode
       ? this.convertToGeneratedCode(state.generatedCode)
       : await this.generateInitialCode(state);
+
+    // Step 1b: Make the manifest match the code before anything tries to build
+    // it. Covers both paths into this iteration - freshly generated code and
+    // code carried over from the previous iteration - so a missing dependency
+    // is fixed on the spot instead of failing the build identically five times.
+    const addedDependencies = this.reconcileDependencies(generatedCode);
 
     // Step 2: Test MCP server in Docker
     this.logger.log(`Testing MCP server: ${generatedCode.metadata.tools.length} tools`);
@@ -444,7 +622,11 @@ export class RefinementService {
 
     // Step 5: Analyze failures
     this.logger.log(`Analyzing ${testResults.toolsFound - testResults.toolsPassedCount} failures`);
-    const failureAnalysis = await this.analyzeFailures(testResults, generatedCode);
+    const failureAnalysis = await this.analyzeFailures(
+      testResults,
+      generatedCode,
+      addedDependencies,
+    );
 
     // Step 6: Refine code
     this.logger.log(`Refining code based on ${failureAnalysis.fixes.length} fixes`);
@@ -632,6 +814,11 @@ ${toolsList}
 6. Use axios for HTTP requests if needed
 7. Include proper authentication handling
 8. Use StdioServerTransport() with NO ARGUMENTS
+
+**Dependencies**: \`@modelcontextprotocol/sdk\`, \`zod\` and \`axios\` are declared already -
+prefer them. If this server genuinely needs another package (an official SDK, for
+example), import it normally: the manifest is reconciled against your imports before the
+build, so it will be declared for you. Never import a package you do not use.
 
 **Output Format**: Return ONLY the complete TypeScript code, no explanations.
 Start with imports.`;
@@ -843,8 +1030,10 @@ dist
   private async analyzeFailures(
     testResults: McpServerTestResult,
     generatedCode: GeneratedCode,
+    addedDependencies: string[] = [],
   ): Promise<FailureAnalysis> {
     const failures = testResults.results.filter((r) => !r.success);
+    const declared = this.declaredDependencies(generatedCode.packageJson);
 
     const prompt = `${getPlatformContextPrompt()}
 
@@ -856,7 +1045,14 @@ ${MCP_REFERENCE_IMPLEMENTATION}
 - Server Name: ${generatedCode.metadata.serverName}
 - Tools: ${generatedCode.metadata.tools.length}
 - Iteration: ${generatedCode.metadata.iteration}
-
+- Declared dependencies: ${declared.join(', ') || 'none'}
+${
+  addedDependencies.length
+    ? `- NOTE: ${addedDependencies.join(', ')} were imported by the code but missing from ` +
+      'package.json, and have just been declared automatically. Do NOT propose adding them ' +
+      'again, and do NOT propose rewriting the code to avoid them - they are installed now.\n'
+    : ''
+}
 **Test Results**:
 - Total Tools: ${testResults.toolsFound}
 - Passed: ${testResults.toolsPassedCount}
@@ -964,11 +1160,19 @@ ${i + 1}. Tool: ${f.toolName}
     failureAnalysis: FailureAnalysis,
     _plan: PipelineState['generationPlan'],
   ): Promise<GeneratedCode> {
+    const declared = this.declaredDependencies(generatedCode.packageJson);
+
     const prompt = `${getPlatformContextPrompt()}
 
 **Your Role**: Fix MCP server code efficiently. Apply systematic fixes that address root causes.
 
 ${MCP_REFERENCE_IMPLEMENTATION}
+
+**Dependencies declared in this server's package.json**: ${declared.join(', ') || 'none'}
+Prefer these - they are installed and importable. If a fix genuinely needs another
+package, import it normally: the manifest is reconciled against your imports before the
+build, so the dependency will be declared for you. Do NOT hand-roll HTTP calls or
+reimplement an SDK just to avoid adding an import.
 
 **Original Code**:
 \`\`\`typescript

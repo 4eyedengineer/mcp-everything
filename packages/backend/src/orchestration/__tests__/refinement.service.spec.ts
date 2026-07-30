@@ -309,6 +309,160 @@ describe('RefinementService', () => {
     });
   });
 
+  /**
+   * A generated server that imports a package its package.json never declares
+   * cannot build, and no amount of *code* refinement fixes it: the S3 run
+   * imported @aws-sdk/client-s3 against a manifest listing only the MCP SDK,
+   * zod and axios, and all five iterations failed identically on TS2307.
+   */
+  describe('dependency reconciliation', () => {
+    /** Code importing a package the default manifest does not declare. */
+    const codeImporting = (...specifiers: string[]) =>
+      [
+        ...specifiers.map((s, i) => `import pkg${i} from "${s}";`),
+        'import { Server } from "@modelcontextprotocol/sdk/server/index.js";',
+        'import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";',
+        'import { readFile } from "node:fs/promises";',
+        'import path from "path";',
+        'import { helper } from "./helper.js";',
+        'const server = new Server({ name: "s", version: "1.0.0" }, { capabilities: { tools: {} } });',
+        'async function main() { await server.connect(new StdioServerTransport()); }',
+        'main().catch(console.error);',
+      ].join('\n');
+
+    it('declares a package the generated code imports but the manifest omits', async () => {
+      mockLlmInvoke.mockResolvedValue({
+        content: codeImporting('@aws-sdk/client-s3'),
+      });
+
+      const result = await service.refineUntilWorking(createPlannedState());
+
+      const pkg = JSON.parse(result.generatedCode.packageJson);
+      expect(pkg.dependencies['@aws-sdk/client-s3']).toBe('^3.0.0');
+      // The baseline dependencies survive
+      expect(pkg.dependencies['@modelcontextprotocol/sdk']).toBeDefined();
+      expect(pkg.dependencies['zod']).toBeDefined();
+    });
+
+    it('reconciles before the build, so the Docker test sees the fixed manifest', async () => {
+      mockLlmInvoke.mockResolvedValue({ content: codeImporting('@aws-sdk/client-s3') });
+
+      await service.refineUntilWorking(createPlannedState());
+
+      const tested = mockMcpTestingService.testMcpServer.mock.calls[0][0];
+      expect(JSON.parse(tested.packageJson).dependencies['@aws-sdk/client-s3']).toBe('^3.0.0');
+    });
+
+    it('uses `latest` for packages outside the pinned allowlist', async () => {
+      mockLlmInvoke.mockResolvedValue({ content: codeImporting('some-obscure-sdk') });
+
+      const result = await service.refineUntilWorking(createPlannedState());
+
+      expect(JSON.parse(result.generatedCode.packageJson).dependencies['some-obscure-sdk']).toBe(
+        'latest',
+      );
+    });
+
+    it('resolves deep import specifiers to their installable package root', async () => {
+      mockLlmInvoke.mockResolvedValue({
+        content: codeImporting('@octokit/rest/dist-types/index.js', 'lodash/merge'),
+      });
+
+      const result = await service.refineUntilWorking(createPlannedState());
+
+      const deps = JSON.parse(result.generatedCode.packageJson).dependencies;
+      expect(deps['@octokit/rest']).toBe('^20.0.0');
+      expect(deps['lodash']).toBe('latest');
+      expect(deps['@octokit/rest/dist-types/index.js']).toBeUndefined();
+    });
+
+    it('never declares Node builtins or relative imports as dependencies', async () => {
+      mockLlmInvoke.mockResolvedValue({ content: codeImporting() });
+
+      const result = await service.refineUntilWorking(createPlannedState());
+
+      const deps = JSON.parse(result.generatedCode.packageJson).dependencies;
+      expect(Object.keys(deps).sort()).toEqual(['@modelcontextprotocol/sdk', 'axios', 'zod']);
+    });
+
+    it('picks up require() and dynamic import() specifiers too', async () => {
+      mockLlmInvoke.mockResolvedValue({
+        content: [
+          'const twilio = require("twilio");',
+          'const mod = await import("dotenv");',
+          'import { Server } from "@modelcontextprotocol/sdk/server/index.js";',
+        ].join('\n'),
+      });
+
+      const result = await service.refineUntilWorking(createPlannedState());
+
+      const deps = JSON.parse(result.generatedCode.packageJson).dependencies;
+      expect(deps['twilio']).toBe('latest');
+      expect(deps['dotenv']).toBe('^16.0.0');
+    });
+
+    it('leaves an already-complete manifest untouched', async () => {
+      mockLlmInvoke.mockResolvedValue({ content: mockCodeGenerationResponse() });
+
+      const result = await service.refineUntilWorking(createPlannedState());
+
+      const deps = JSON.parse(result.generatedCode.packageJson).dependencies;
+      expect(Object.keys(deps).sort()).toEqual(['@modelcontextprotocol/sdk', 'axios', 'zod']);
+    });
+
+    it('fixes a missing dependency on code carried over from a previous iteration', async () => {
+      const state = createGeneratedState();
+      state.generatedCode!.mainFile += '\nimport { S3Client } from "@aws-sdk/client-s3";\n';
+
+      const result = await service.refineUntilWorking(state);
+
+      expect(JSON.parse(result.generatedCode.packageJson).dependencies['@aws-sdk/client-s3']).toBe(
+        '^3.0.0',
+      );
+    });
+
+    it('tells the refine prompt which dependencies are declared', async () => {
+      mockMcpTestingService.testMcpServer.mockResolvedValue(createMockTestResults(false, 2));
+      mockLlmInvoke.mockResolvedValue({ content: mockCodeGenerationResponse() });
+      mockLlmInvoke.mockResolvedValueOnce({ content: codeImporting('@aws-sdk/client-s3') });
+
+      await service.refineUntilWorking(createPlannedState());
+
+      const refinePrompt = mockLlmInvoke.mock.calls
+        .map((call) => call[0] as string)
+        .find((prompt) => prompt.includes('Return the COMPLETE corrected TypeScript code'))!;
+
+      expect(refinePrompt).toContain('Dependencies declared in this server');
+      expect(refinePrompt).toContain('@aws-sdk/client-s3');
+    });
+
+    it('tells the failure analyser which dependencies it just added', async () => {
+      mockMcpTestingService.testMcpServer.mockResolvedValue(createMockTestResults(false, 2));
+      mockLlmInvoke.mockResolvedValue({ content: mockFailureAnalysisResponse() });
+      mockLlmInvoke.mockResolvedValueOnce({ content: codeImporting('@aws-sdk/client-s3') });
+
+      await service.refineUntilWorking(createPlannedState());
+
+      const analysisPrompt = mockLlmInvoke.mock.calls
+        .map((call) => call[0] as string)
+        .find((prompt) => prompt.includes('Analyze root causes and provide specific fixes'))!;
+
+      expect(analysisPrompt).toContain('have just been declared automatically');
+      expect(analysisPrompt).toContain('@aws-sdk/client-s3');
+    });
+
+    it('leaves an unparseable manifest alone rather than throwing', async () => {
+      const state = createGeneratedState();
+      state.generatedCode!.packageJson = '{ this is not json';
+      state.generatedCode!.mainFile += '\nimport { S3Client } from "@aws-sdk/client-s3";\n';
+
+      const result = await service.refineUntilWorking(state);
+
+      expect(result.generatedCode.packageJson).toBe('{ this is not json');
+      expect(mockMcpTestingService.testMcpServer).toHaveBeenCalled();
+    });
+  });
+
   describe('failure analysis', () => {
     it('should categorize failures by type', async () => {
       mockMcpTestingService.testMcpServer.mockResolvedValue(createMockTestResults(false, 2));

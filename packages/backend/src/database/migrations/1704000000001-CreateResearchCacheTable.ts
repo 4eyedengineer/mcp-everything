@@ -97,14 +97,22 @@ export class CreateResearchCacheTable1704000000001 implements MigrationInterface
     /**
      * Index on cachedAt for freshness queries
      * - Enables "recent cache" queries
-     * - Partial index for 7-day window
      * - Query: SELECT * FROM research_cache WHERE cachedAt > NOW() - INTERVAL '1 day'
      * - Use case: Find recently cached research to avoid immediate expiration
+     *
+     * NOTE: this was originally written as a partial index with the predicate
+     * `WHERE (NOW() - "cachedAt") < INTERVAL '7 days'`. PostgreSQL rejects that
+     * outright - index predicates must be IMMUTABLE and NOW() is STABLE at best
+     * ("functions in index predicate must be marked IMMUTABLE", SQLSTATE 42P17)
+     * - which broke the whole migration chain on a fresh database. A predicate
+     * over a moving wall-clock window is not expressible as an index predicate
+     * anyway (the index would have to be rebuilt continuously), so the index is
+     * plain: it still serves the ORDER BY "cachedAt" DESC freshness queries, and
+     * the recency filter is applied at query time.
      */
     await queryRunner.query(`
       CREATE INDEX "IDX_research_cache_cached_at_recent"
       ON "research_cache" ("cachedAt" DESC)
-      WHERE (NOW() - "cachedAt") < INTERVAL '7 days'
     `);
 
     // === VECTOR SIMILARITY INDEXES ===
@@ -130,12 +138,18 @@ export class CreateResearchCacheTable1704000000001 implements MigrationInterface
      * - 100: Balanced (default, ~95-99% recall)
      * - 200: Slower builds, more neighbors (~99%+ recall)
      * - Formula: lists ≈ sqrt(number_of_vectors / 10)
+     *
+     * NOTE: the clause order here was originally `... WHERE ... WITH (lists = 100)`,
+     * which is a hard syntax error - CREATE INDEX takes the storage parameters
+     * (`WITH`) before the partial-index predicate (`WHERE`). Combined with the
+     * NOW() predicate above this made the migration unrunnable on a fresh
+     * database. Corrected to WITH-then-WHERE.
      */
     await queryRunner.query(`
       CREATE INDEX "IDX_research_cache_embedding_cosine"
       ON "research_cache" USING ivfflat (embedding vector_cosine_ops)
-      WHERE embedding IS NOT NULL AND status = 'active'
       WITH (lists = 100)
+      WHERE embedding IS NOT NULL AND status = 'active'
     `);
 
     /**
