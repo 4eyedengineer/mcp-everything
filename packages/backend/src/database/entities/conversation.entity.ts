@@ -20,11 +20,11 @@ export class Conversation {
   userId?: string;
 
   @ManyToOne(() => User, { nullable: true, onDelete: 'SET NULL' })
-  @JoinColumn({ name: 'userId' })
+  @JoinColumn({ name: 'userId', foreignKeyConstraintName: 'conversations_userId_fkey' })
   user?: User;
 
   @Column({ type: 'varchar', length: 255 })
-  @Index()
+  @Index('IDX_conversations_sessionId')
   sessionId: string;
 
   @Column({ type: 'jsonb' })

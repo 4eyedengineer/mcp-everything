@@ -20,7 +20,7 @@ export class Subscription {
   userId: string;
 
   @ManyToOne(() => User, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'userId' })
+  @JoinColumn({ name: 'userId', foreignKeyConstraintName: 'subscriptions_userId_fkey' })
   user: User;
 
   @Column({ type: 'varchar', length: 255 })

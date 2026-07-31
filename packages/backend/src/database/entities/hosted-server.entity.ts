@@ -20,18 +20,37 @@ export type HostedServerStatus =
   | 'failed'
   | 'deleted';
 
+/**
+ * Schema drift note (see 1753900010000-FixMcpServersSchemaDrift.ts): the
+ * 1733200000000 migration also added a
+ * `CHECK (status IN ('pending', ..., 'deleted'))` constraint with no
+ * TypeORM representation. Dropped for the same reason documented on
+ * McpServer - no other enum-like column in this schema is DB-CHECK-enforced.
+ */
 @Entity('hosted_servers')
 export class HostedServer {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
+  /**
+   * `idx_hosted_servers_conversation_id` (like the other idx_hosted_servers_*
+   * indexes below) was created directly in the 1733200000000 migration for
+   * join/lookup performance but was never given a TypeORM @Index - marked
+   * synchronize:false to document it without migration:generate proposing to
+   * drop it.
+   */
+  @Index('idx_hosted_servers_conversation_id', { synchronize: false })
   @Column({ name: 'conversation_id', type: 'uuid', nullable: true })
   conversationId: string;
 
   @ManyToOne(() => Conversation, { nullable: true, onDelete: 'SET NULL' })
-  @JoinColumn({ name: 'conversation_id' })
+  @JoinColumn({
+    name: 'conversation_id',
+    foreignKeyConstraintName: 'hosted_servers_conversation_id_fkey',
+  })
   conversation: Conversation;
 
+  @Index('idx_hosted_servers_user_id', { synchronize: false })
   @Column({ name: 'user_id', type: 'uuid', nullable: true })
   userId: string;
 
@@ -39,7 +58,7 @@ export class HostedServer {
   @Column({ name: 'server_name', length: 100 })
   serverName: string;
 
-  @Index()
+  @Index('idx_hosted_servers_server_id')
   @Column({ name: 'server_id', length: 50, unique: true })
   serverId: string;
 
@@ -65,7 +84,7 @@ export class HostedServer {
   endpointUrl: string;
 
   // Status
-  @Index()
+  @Index('idx_hosted_servers_status')
   @Column({ length: 20, default: 'pending' })
   status: HostedServerStatus;
 
@@ -83,6 +102,8 @@ export class HostedServer {
   lastRequestAt: Date;
 
   // Lifecycle
+  /** See `idx_hosted_servers_conversation_id` above - same reasoning. */
+  @Index('idx_hosted_servers_created_at', { synchronize: false })
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 

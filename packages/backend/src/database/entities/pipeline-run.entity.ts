@@ -27,7 +27,10 @@ export class PipelineRun {
   conversationId: string;
 
   @ManyToOne(() => Conversation, { nullable: true, onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'conversationId' })
+  @JoinColumn({
+    name: 'conversationId',
+    foreignKeyConstraintName: 'FK_pipeline_runs_conversation',
+  })
   conversation?: Conversation;
 
   /** Pipeline step name, e.g. `analyzeIntent`, `research`, `planTools`. */

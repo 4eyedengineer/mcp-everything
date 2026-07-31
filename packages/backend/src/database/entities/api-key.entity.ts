@@ -27,7 +27,7 @@ export class ApiKey {
   userId: string;
 
   @ManyToOne(() => User, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'userId' })
+  @JoinColumn({ name: 'userId', foreignKeyConstraintName: 'api_keys_userId_fkey' })
   user: User;
 
   @Column({ type: 'varchar', length: 100 })

@@ -16,11 +16,11 @@ export class Deployment {
   id: string;
 
   @Column({ type: 'uuid' })
-  @Index()
+  @Index('IDX_deployments_conversationId')
   conversationId: string;
 
   @ManyToOne(() => Conversation, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'conversationId' })
+  @JoinColumn({ name: 'conversationId', foreignKeyConstraintName: 'FK_deployments_conversation' })
   conversation: Conversation;
 
   @Column({ type: 'uuid', nullable: true })
@@ -28,7 +28,7 @@ export class Deployment {
   userId?: string;
 
   @ManyToOne(() => User, { nullable: true, onDelete: 'SET NULL' })
-  @JoinColumn({ name: 'userId' })
+  @JoinColumn({ name: 'userId', foreignKeyConstraintName: 'deployments_userId_fkey' })
   user?: User;
 
   @Column({ type: 'varchar', length: 20, nullable: true })
@@ -47,7 +47,7 @@ export class Deployment {
   codespaceUrl?: string;
 
   @Column({ type: 'varchar', length: 20, default: 'pending' })
-  @Index()
+  @Index('IDX_deployments_status')
   status: 'pending' | 'success' | 'failed';
 
   @Column({ type: 'text', nullable: true })
@@ -64,7 +64,7 @@ export class Deployment {
 
   // Validation fields
   @Column({ type: 'varchar', length: 20, default: 'pending' })
-  @Index()
+  @Index('IDX_deployments_validationStatus')
   validationStatus: 'pending' | 'running' | 'passed' | 'failed' | 'skipped';
 
   @Column({ type: 'timestamp', nullable: true })

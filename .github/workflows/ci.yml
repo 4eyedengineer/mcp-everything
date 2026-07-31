@@ -123,6 +123,20 @@ jobs:
             echo "::error::Pending migrations remain after migration:run - the chain is broken"
             exit 1
           fi
+      # Fails if the schema the migration chain just built doesn't match the
+      # entities exactly (this is the guard against the class of bug fixed by
+      # 1753900010000-FixMcpServersSchemaDrift.ts: entities silently drifting
+      # from what migrations actually create, only visible in prod because
+      # dev boots with `synchronize: true`). `migration:generate` emits the
+      # exact ALTERs needed to reconcile - empty output means zero drift.
+      - name: Assert migration chain matches entities exactly (no drift)
+        run: |
+          npm run migration:generate --workspace=@mcp-everything/backend -- /tmp/drift-check > drift-output.txt 2>&1 || true
+          cat drift-output.txt
+          if ! grep -q "No changes in database schema were found" drift-output.txt; then
+            echo "::error::Migrations have drifted from the entities - see generated diff above"
+            exit 1
+          fi
 
   test-frontend:
     runs-on: ubuntu-latest
