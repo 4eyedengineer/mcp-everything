@@ -10,6 +10,7 @@ Complete guide for deploying MCP Everything to production environments.
 - [Production Configuration](#production-configuration)
 - [Monitoring and Logging](#monitoring-and-logging)
 - [Scaling](#scaling)
+- [Homelab (k3s + ArgoCD)](#homelab-k3s--argocd)
 - [MCP Server Hosting (Host on Cloud)](#mcp-server-hosting-host-on-cloud)
 - [Troubleshooting](#troubleshooting)
 
@@ -720,6 +721,115 @@ import * as redisStore from 'cache-manager-redis-store';
 })
 export class AppModule {}
 ```
+
+## Homelab (k3s + ArgoCD)
+
+MCP Everything runs on a k3s homelab cluster (namespace `mcp-everything`),
+GitOps-managed by ArgoCD, at **http://mcp.192.168.1.240.nip.io**.
+
+### Flow
+
+```
+push to rework/2026-07-review (or main)
+  -> GitHub Actions (.github/workflows/deploy-homelab.yml, arc-runner-set)
+       builds+pushes harbor.192.168.1.240.nip.io/mcp-everything/{backend,frontend}:<git-sha>
+  -> argocd-image-updater (namespace argocd) polls Harbor every ~2m,
+       picks the newest-pushed sha tag, patches the ArgoCD Application's
+       spec.source.kustomize.images override (write-back method: argocd -
+       no git commit)
+  -> ArgoCD (Application `mcp-everything`, automated sync, prune+selfHeal)
+       notices the override, re-renders k8s/overlays/homelab, applies it
+  -> Deployments mcp-backend/mcp-frontend roll out the new image
+```
+
+The Application manifest lives at `k8s/argocd/application.yaml` in this
+repo (source path `k8s/overlays/homelab`, destination namespace
+`mcp-everything`). Apply/update it with:
+
+```bash
+kubectl --context <homelab> apply -f k8s/argocd/application.yaml
+```
+
+The image-updater side is **cluster-side only** (an `ImageUpdater` custom
+resource, not rendered from this repo - same as the pre-existing
+`dangus-cloud` app's updater config isn't tracked in its own repo either).
+It's reproduced here for review:
+
+```yaml
+apiVersion: argocd-image-updater.argoproj.io/v1alpha1
+kind: ImageUpdater
+metadata:
+  name: mcp-everything
+  namespace: argocd
+spec:
+  namespace: argocd
+  applicationRefs:
+    - namePattern: mcp-everything
+      images:
+        - alias: backend
+          imageName: harbor.192.168.1.240.nip.io/mcp-everything/backend:<initial-sha>
+          manifestTargets:
+            kustomize:
+              name: mcp-everything/backend
+        - alias: frontend
+          imageName: harbor.192.168.1.240.nip.io/mcp-everything/frontend:<initial-sha>
+          manifestTargets:
+            kustomize:
+              name: mcp-everything/frontend
+  commonUpdateSettings:
+    updateStrategy: newest-build   # CI only pushes <git-sha> tags, no "latest"
+    allowTags: '^[0-9a-f]{40}$'
+    platforms:
+      - linux/amd64                # see note below - required, not optional
+  writeBackConfig:
+    method: argocd
+```
+
+Why `newest-build` instead of the `dangus-cloud` app's `digest`/`latest`
+strategy: this repo's CI (`deploy-homelab.yml`) only ever pushes a
+`<full-git-sha>` tag, never `:latest`, so there's no tag whose digest can
+be tracked. `newest-build` orders arbitrary tags by registry push time and
+picks the newest, which works for sha tags.
+
+Why `write-back method: argocd` (an in-cluster parameter override, no git
+commit) instead of git write-back: no repository-push credential exists in
+the `argocd` namespace for this repo (or for `dangus_cloud` - checked, none
+exist), and `dangus-cloud`'s *live* `ImageUpdater` CR actually uses
+`method: argocd` despite its Application's annotations claiming
+`write-back-method: git` (that annotation is vestigial - the installed
+controller, `quay.io/argoprojlabs/argocd-image-updater:v1.0.1`, is fully
+CRD-driven and doesn't read Application annotations at all; see
+`k8s/argocd/application.yaml`'s comments for the full investigation).
+**Tradeoff**: the resolved image tag lives only in the live Application's
+`spec.source.kustomize.images` override, not committed back to git -
+`kubectl -n argocd get application mcp-everything -o
+jsonpath='{.spec.source.kustomize.images}'` is the source of truth for
+what's actually deployed, not this repo's `kustomization.yaml`.
+
+### Ops notes
+
+- **dind `daemon.json` insecure-registries entry**: the in-cluster GitHub
+  Actions runner (`arc-runner-set`) builds with `docker/setup-buildx-action`
+  using `driver: docker` specifically so it inherits the dind sidecar's own
+  daemon config (`arc-runners/actions-runner-dind-config` ConfigMap), which
+  must keep `harbor.192.168.1.240.nip.io` listed under
+  `insecure-registries` - Harbor here is plain HTTP, and a build using the
+  default `docker-container` driver (its own nested daemon, without that
+  config) cannot push to it.
+- **Harbor project must stay public**: neither the Deployment specs nor the
+  ArgoCD Application/ImageUpdater CR reference an `imagePullSecret`. If the
+  `mcp-everything` Harbor project is ever flipped to private, pod image
+  pulls (and image-updater's own tag-listing calls) will start failing
+  until a pull secret is added everywhere it's needed.
+- **Platform filter is not optional**: the image-updater controller's
+  registry scan defaults to filtering discovered tags by its own pod's
+  runtime platform. On this cluster the controller pod is `arm64`, but
+  these images are `amd64`-only (see the `nodeSelector` patches under
+  `k8s/overlays/homelab/patches/`) - without the explicit
+  `platforms: [linux/amd64]` above, tag discovery silently returns zero
+  eligible tags and the updater never fires (confirmed via
+  `argocd-image-updater test <image> --update-strategy newest-build
+  --platforms linux/amd64` vs. without the flag).
 
 ## MCP Server Hosting (Host on Cloud)
 
