@@ -338,68 +338,10 @@
   }
 }
 
-// Buttons
-.primary-button {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 12px 24px;
-  background-color: var(--primary-color);
-  color: var(--text-inverse);
-  border: none;
-  border-radius: 8px;
-  font-size: 15px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  text-decoration: none;
-
-  mat-icon {
-    font-size: 20px;
-    width: 20px;
-    height: 20px;
-  }
-
-  &:hover {
-    background-color: var(--primary-hover);
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-  }
-
-  &:active {
-    transform: scale(0.98);
-  }
-}
-
-.secondary-button {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 12px 24px;
-  background-color: var(--surface-color);
-  color: var(--text-primary);
-  border: 1px solid var(--border-medium);
-  border-radius: 8px;
-  font-size: 15px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  text-decoration: none;
-
-  mat-icon {
-    font-size: 20px;
-    width: 20px;
-    height: 20px;
-  }
-
-  &:hover {
-    background-color: var(--surface-alt);
-    border-color: var(--border-dark);
-  }
-
-  &:active {
-    transform: scale(0.98);
-  }
-}
+// Buttons: .mcp-btn-primary / .mcp-btn-secondary (styles/_buttons.scss) are
+// the canonical hand-rolled button classes - this page no longer defines its
+// own .primary-button/.secondary-button. (.new-chat-button, nested under
+// .page-header above, only adds this page's shrink/wrap layout tweak.)
 
 // Servers Grid
 .servers-grid {

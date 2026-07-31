@@ -239,6 +239,12 @@
       color: var(--text-tertiary);
     }
   }
+
+  .field-hint {
+    margin: 6px 0 0 0;
+    font-size: 12px;
+    color: var(--text-tertiary);
+  }
 }
 
 // Input with Button
@@ -709,6 +715,10 @@
         color: var(--text-secondary);
       }
 
+      // Pro/Enterprise gradients are an intentional, fixed "premium" brand
+      // accent (matches the same purple/pink gradients used for these tiers
+      // elsewhere in the app, e.g. chat.component.scss) - not a themeable
+      // status color, so left as literal hex rather than a CSS variable.
       &.pro {
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         color: var(--text-inverse);
@@ -722,7 +732,7 @@
 
     .plan-status {
       font-size: 13px;
-      color: #22c55e;
+      color: var(--success-text);
       font-weight: 500;
     }
   }
@@ -753,16 +763,22 @@
 
     .progress-bar-fill {
       height: 100%;
+      // Default/brand accent gradient - intentionally fixed, matches the
+      // Pro/Enterprise premium gradient above rather than a themeable token.
       background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
       border-radius: 4px;
       transition: width 0.3s ease;
 
       &.warning {
+        // No solid "warning" text/fill token exists yet (only the pale
+        // --warning-bg/-border banner washes) - kept as a literal amber
+        // gradient rather than reusing one of those, which would be too
+        // low-contrast as a progress-bar fill.
         background: linear-gradient(90deg, #f59e0b 0%, #d97706 100%);
       }
 
       &.critical {
-        background: linear-gradient(90deg, #ef4444 0%, #dc2626 100%);
+        background: var(--error-text);
       }
     }
   }
@@ -797,7 +813,7 @@
       color: var(--text-primary);
 
       mat-icon {
-        color: #22c55e;
+        color: var(--success-text);
       }
     }
   }
@@ -839,7 +855,7 @@
 
       .save-badge {
         padding: 2px 8px;
-        background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+        background: var(--success-text);
         color: var(--text-inverse);
         border-radius: 12px;
         font-size: 11px;

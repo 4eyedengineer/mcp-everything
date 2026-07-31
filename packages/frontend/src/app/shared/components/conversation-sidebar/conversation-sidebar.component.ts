@@ -10,6 +10,7 @@ import { MatDialog, MatDialogModule } from '@angular/material/dialog';
 import { Observable } from 'rxjs';
 import { sidebarAnimations } from '../../animations/sidebar.animations';
 import { SubscriptionService, UsageInfo } from '../../../core/services/subscription.service';
+import { AuthService } from '../../../core/services/auth.service';
 import { ConfirmDialogComponent, ConfirmDialogData } from '../confirm-dialog/confirm-dialog.component';
 import { RenameDialogComponent, RenameDialogData } from '../rename-dialog/rename-dialog.component';
 
@@ -51,14 +52,22 @@ export class ConversationSidebarComponent implements OnInit {
   constructor(
     private router: Router,
     private subscriptionService: SubscriptionService,
+    private authService: AuthService,
     private dialog: MatDialog
   ) {
     this.usage$ = this.subscriptionService.usage$;
   }
 
   ngOnInit(): void {
-    // Load usage data when sidebar opens
-    this.subscriptionService.getUsage().subscribe();
+    // Only fetch usage once auth is actually ready - this component is part
+    // of the persistent app shell and mounts before login resolves, so
+    // firing this unconditionally on every load hit the API pre-auth and
+    // logged a 401 to the backend error_log on every page load.
+    this.authService.isAuthenticated$.subscribe(isAuthenticated => {
+      if (isAuthenticated) {
+        this.subscriptionService.getUsage().subscribe();
+      }
+    });
   }
 
   isUnlimited(limit: number): boolean {
@@ -69,14 +78,18 @@ export class ConversationSidebarComponent implements OnInit {
     this.close.emit();
   }
 
+  // NOTE: these deliberately do NOT also emit `close` - the parent
+  // (AppComponent) decides whether to close the sidebar after a
+  // new-chat/select action based on viewport width (see
+  // closeSidebarOnMobile there). Emitting close here as well previously
+  // force-closed the sidebar unconditionally, even on desktop where it's
+  // meant to stay open as a persistent panel.
   onNewChat(): void {
     this.newChat.emit();
-    this.close.emit();
   }
 
   onSelectConversation(conversationId: string): void {
     this.selectConversation.emit(conversationId);
-    this.close.emit();
   }
 
   onSettings(): void {

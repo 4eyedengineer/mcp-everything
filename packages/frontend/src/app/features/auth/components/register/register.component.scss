@@ -76,6 +76,22 @@
     width: 20px;
     height: 20px;
   }
+
+  // Google's branding guidelines require the multicolor "G" mark to always
+  // sit on a light/white tile so its official colors stay legible
+  // regardless of the surrounding button/theme color - see
+  // src/assets/logos/google-logo.svg for source notes. Styled directly on
+  // the mat-icon (rather than a wrapping element) so it stays in Material's
+  // dedicated leading-icon projection slot and keeps the button's flex gap.
+  mat-icon.google-icon-tile {
+    box-sizing: border-box;
+    width: 20px;
+    height: 20px;
+    padding: 2px;
+    border-radius: 3px;
+    background: #ffffff;
+    flex-shrink: 0;
+  }
 }
 
 .divider {
@@ -103,6 +119,28 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
+
+  // The password field can show two mat-error lines at once (e.g. "must be
+  // at least 8 characters" + "must contain uppercase, lowercase, and a
+  // number" both failing simultaneously). Material's default (fixed
+  // subscriptSizing) renders .mat-mdc-form-field-error-wrapper with
+  // `position: absolute` so hint/error text never affects layout - which is
+  // exactly the bug: a second error line just floats there, overlapping the
+  // Confirm Password field below instead of pushing it down. Taking the
+  // error wrapper out of absolute positioning lets it participate in normal
+  // flow again, so the subscript area (now `height: auto`) actually grows
+  // and the rest of the form shifts down to make room.
+  ::ng-deep mat-form-field {
+    .mat-mdc-form-field-subscript-wrapper {
+      height: auto;
+      margin-bottom: 4px;
+    }
+
+    .mat-mdc-form-field-error-wrapper {
+      position: static;
+      padding: 0;
+    }
+  }
 }
 
 .full-width {
@@ -160,12 +198,11 @@
   }
 }
 
-.submit-button {
-  width: 100%;
-  padding: 12px 24px;
-  font-size: 16px;
-  font-weight: 500;
-  border-radius: 8px;
+// Submit CTA uses the shared .mcp-btn-primary (styles/_buttons.scss) + the
+// .full-width utility above rather than a bespoke block - this used to be
+// one of four near-identical `.submit-button` definitions duplicated across
+// login/register/forgot-password/reset-password.
+.mcp-btn-primary {
   margin-top: 8px;
 
   mat-spinner {

@@ -1,13 +1,16 @@
 <div class="servers-page">
   <header class="servers-header">
-    <h1>My Servers</h1>
+    <div class="header-text">
+      <h1>My Servers</h1>
+      <p class="subtitle">Your generated MCP servers and their deployment status</p>
+    </div>
     <div class="header-actions">
       <button mat-icon-button (click)="refreshServers()" class="refresh-button" title="Refresh" aria-label="Refresh servers">
         <mat-icon>refresh</mat-icon>
       </button>
       <button mat-raised-button routerLink="/chat" class="btn-primary">
         <mat-icon>add</mat-icon>
-        New Chat
+        New chat
       </button>
     </div>
   </header>
@@ -39,7 +42,7 @@
     </div>
     <button mat-raised-button routerLink="/chat" class="btn-primary">
       <mat-icon>add</mat-icon>
-      New Chat
+      New chat
     </button>
   </div>
 

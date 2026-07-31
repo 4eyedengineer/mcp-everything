@@ -111,8 +111,13 @@
                   </div>
                 }
 
-                <!-- Deployment Actions (when generatedCode exists and not yet deployed) -->
-                @if (message.generatedCode && !message.deploymentResult) {
+                <!-- Deployment Actions - shown whenever generatedCode exists, EXCEPT
+                     after a successful deploy (which replaces this row with its own
+                     result-specific actions like "View on GitHub" below). A failed
+                     deploy must NOT hide these - the user needs to be able to retry
+                     via any of the options, not just the ones offered on the error
+                     card. -->
+                @if (message.generatedCode && !message.deploymentResult?.success) {
                   <div class="deployment-actions">
                     <button mat-raised-button color="primary"
                             (click)="deployToGitHub(message)"
@@ -316,16 +321,11 @@
             </div>
           }
 
-          <!-- Deployment Error -->
-          @if (chatService.latestDeployment()?.status === 'failed') {
-            <div class="deployment-error">
-              <div class="deployment-header">
-                <mat-icon>error_outline</mat-icon>
-                <span>Deployment failed</span>
-              </div>
-              <p class="error-message">{{ chatService.latestDeployment()?.errorMessage }}</p>
-            </div>
-          }
+          <!-- Deployment failures are shown exactly once, via the per-message
+               deployment-error-card above (contextual, right next to the
+               retry actions). This global banner + the failure toast were
+               a triple-redundant repeat of the same text and have been
+               removed - see chat.component.ts deployToGitHub/deployToGist. -->
         </div>
       }
     </div>

@@ -60,6 +60,19 @@ function isHandledElsewhere(req: HttpRequest<unknown>, authService: AuthService,
   }
 
   const isNonRetriedAuthEndpoint = NON_RETRIED_AUTH_ENDPOINTS.some(endpoint => req.url.includes(endpoint));
+
+  // An explicit auth attempt (login/register/forgot-password/reset-password/
+  // OAuth callback) made from a public /auth/* page already surfaces its
+  // failure as an inline form/page error - a global toast on top of that is
+  // redundant noise. Checked ahead of the unconditional non-retried-endpoint
+  // branch below so it applies ONLY to this specific case; a non-retried
+  // endpoint 401 from OUTSIDE an auth page (e.g. a mid-session token refresh
+  // failure while the user is browsing the app) falls through to that branch
+  // unchanged, so the session-expiry flow keeps behaving as before.
+  if (isNonRetriedAuthEndpoint && router.url.startsWith('/auth')) {
+    return true;
+  }
+
   if (isNonRetriedAuthEndpoint) {
     return false;
   }

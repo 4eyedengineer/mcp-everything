@@ -8,6 +8,11 @@ import { McpServer } from '../entities/mcp-server.entity';
  * Creates demo/test data for local development.
  * This seed should only be run in development environments.
  *
+ * NOT wired into app bootstrap: this function only runs when explicitly
+ * invoked via `npm run seed` (packages/backend/src/database/seeds/run-seeds.ts).
+ * It does NOT run automatically on backend boot/start - if the marketplace or
+ * demo accounts look empty, that's why. See DEVELOPMENT.md "Seeding Demo Data".
+ *
  * Demo Accounts:
  * - demo@mcp-everything.local (Pro tier, for testing paid features)
  * - free@mcp-everything.local (Free tier, for testing limits)
@@ -17,7 +22,7 @@ import { McpServer } from '../entities/mcp-server.entity';
  * - Seeds ~6 realistic MCP server listings so the Explore page has real rows
  *   to render instead of an empty state. Each server is checked by slug and
  *   skipped individually if it already exists, so this function is safe to
- *   run multiple times (e.g. on every backend boot).
+ *   run multiple times (idempotent) whenever `npm run seed` is invoked.
  */
 export async function seedDatabase(dataSource: DataSource): Promise<void> {
   const userRepository = dataSource.getRepository(User);

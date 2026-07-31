@@ -11,7 +11,11 @@ export const routes: Routes = [
     path: 'auth',
     loadChildren: () => import('./features/auth/auth.routes').then(m => m.AUTH_ROUTES),
     canActivate: [noAuthGuard],
-    title: 'Sign In - MCP Everything',
+    // No static `title` here on purpose: each child in auth.routes.ts now
+    // sets its own real `title` (Sign In / Sign Up / Forgot Password / Reset
+    // Password / Signing In) - a title on this parent would only matter if
+    // resolution ever stopped here without reaching a child, which doesn't
+    // happen (path: '' redirects into 'login').
     data: {
       title: 'Authentication',
       description: 'Sign in or create an account'

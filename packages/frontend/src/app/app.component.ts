@@ -141,14 +141,28 @@ export class AppComponent implements OnInit {
   }
 
   /**
-   * Closes the sidebar without persisting a preference - this is also called
-   * automatically after selecting/creating/deleting a conversation (mainly
-   * so mobile's off-canvas overlay dismisses itself), which shouldn't be
-   * treated as the user manually opting to keep the sidebar closed forever.
-   * Explicit opens/closes via the hamburger toggle are persisted instead.
+   * Closes the sidebar without persisting a preference - used for explicit
+   * close actions (the sidebar's own close button, or clicking the mobile
+   * overlay). Explicit opens/closes via the hamburger toggle are persisted
+   * instead (see toggleSidebar).
    */
   closeSidebar(): void {
     this.sidebarOpen.set(false);
+  }
+
+  /**
+   * Auto-close after selecting/creating a conversation - but only below the
+   * desktop breakpoint. On mobile/tablet the sidebar is an off-canvas
+   * overlay covering the content, so it should dismiss itself once the user
+   * has acted on it. On desktop it's a persistent panel alongside the
+   * content (the ChatGPT/Claude convention), so selecting or creating a
+   * conversation there should leave it open rather than force-closing it on
+   * every click.
+   */
+  private closeSidebarOnMobile(): void {
+    if (typeof window !== 'undefined' && window.innerWidth < DESKTOP_BREAKPOINT_PX) {
+      this.closeSidebar();
+    }
   }
 
   /**
@@ -193,36 +207,19 @@ export class AppComponent implements OnInit {
   }
 
   /**
-   * Create a new conversation and navigate to it
+   * Start a new chat. This does NOT create a conversation row up front -
+   * the backend creates one lazily on the first message (see ChatService),
+   * which already updates the URL/sidebar once that happens (see the
+   * `chatService.conversationId()` effect in the constructor). Eagerly
+   * creating a DB row here left an orphan "New conversation" in the sidebar
+   * whenever the user clicked "New chat" but never actually sent a message.
    */
   onNewChat(): void {
-    this.isLoadingConversations.set(true);
-
-    this.conversationService.createConversation(this.sessionId).subscribe({
-      next: (conversation) => {
-        // Add new conversation to the list
-        this.conversations.update(current => [conversation, ...current]);
-
-        // Clear current chat messages
-        this.chatService.clearMessages();
-
-        // Navigate to the new conversation
-        this.router.navigate(['/chat', conversation.id]);
-
-        // Close sidebar
-        this.closeSidebar();
-        this.isLoadingConversations.set(false);
-      },
-      error: (error) => {
-        console.error('Error creating new conversation:', error);
-        this.isLoadingConversations.set(false);
-
-        // Fallback: navigate to chat without conversationId (will create on first message)
-        this.chatService.clearMessages();
-        this.router.navigate(['/chat']);
-        this.closeSidebar();
-      }
-    });
+    this.chatService.setConversationId(undefined);
+    this.chatService.setLatestDeployment(null);
+    this.chatService.clearMessages();
+    this.router.navigate(['/chat']);
+    this.closeSidebarOnMobile();
   }
 
   /**
@@ -276,15 +273,15 @@ export class AppComponent implements OnInit {
         // Navigate to the conversation
         this.router.navigate(['/chat', conversationId]);
 
-        // Close sidebar
-        this.closeSidebar();
+        // Close sidebar (mobile/tablet only - see closeSidebarOnMobile)
+        this.closeSidebarOnMobile();
       },
       error: (error) => {
         console.error('Error loading conversation:', error);
 
         // Still navigate even if loading fails
         this.router.navigate(['/chat', conversationId]);
-        this.closeSidebar();
+        this.closeSidebarOnMobile();
       }
     });
   }

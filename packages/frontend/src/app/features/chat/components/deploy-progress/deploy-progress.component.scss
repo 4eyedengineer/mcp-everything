@@ -1,13 +1,16 @@
 .deploy-progress-card {
   margin-top: 16px;
-  background: linear-gradient(135deg, #f5f7fa 0%, #e4e8ec 100%);
-  border: 1px solid #d0d5dd;
+  background: linear-gradient(135deg, var(--surface-alt) 0%, var(--background-hover) 100%);
+  border: 1px solid var(--border-medium);
   border-radius: 12px;
 
   mat-card-header {
     .progress-icon {
+      // Purple accent kept as-is: this is the "Host on Cloud" premium flow's
+      // signature color, intentionally not tokenized (matches the gradient
+      // on the cloud-button/retry-button in chat.component.scss).
       background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      color: white;
+      color: var(--text-inverse);
       display: flex;
       align-items: center;
       justify-content: center;
@@ -16,11 +19,11 @@
       height: 40px;
 
       &.success {
-        background: linear-gradient(135deg, #4caf50 0%, #2e7d32 100%);
+        background: var(--success-text);
       }
 
       &.error {
-        background: linear-gradient(135deg, #f44336 0%, var(--error-text) 100%);
+        background: var(--error-text);
       }
     }
 
@@ -96,35 +99,38 @@
 
         &.completed {
           .step-indicator mat-icon {
-            color: #4caf50;
+            color: var(--success-text);
           }
 
           .step-label {
-            color: #4caf50;
+            color: var(--success-text);
           }
 
           .step-line {
-            background: #4caf50;
+            background: var(--success-text);
           }
         }
 
         &.error {
           .step-indicator mat-icon {
-            color: #f44336;
+            color: var(--error-text);
           }
 
           .step-label {
-            color: #f44336;
+            color: var(--error-text);
           }
         }
 
         &.pending {
           .step-indicator mat-icon {
-            color: #e0e0e0;
+            // Was a fixed light gray (#e0e0e0) picked for a white card -
+            // on the dark theme's card it read as a near-white blob.
+            // --border-medium tracks the card surface in both themes.
+            color: var(--border-medium);
           }
 
           .step-label {
-            color: #9e9e9e;
+            color: var(--text-tertiary);
           }
         }
       }
@@ -208,6 +214,8 @@
 
         .config-code {
           position: relative;
+          // Intentionally dark regardless of app theme - same "always-dark
+          // code block" convention as chat.component.scss's message pre.
           background: #1e1e1e;
           border-radius: 8px;
           overflow: hidden;
@@ -229,10 +237,10 @@
             position: absolute;
             top: 8px;
             right: 8px;
-            color: #9e9e9e;
+            color: var(--text-tertiary);
 
             &:hover {
-              color: white;
+              color: var(--text-inverse);
             }
           }
         }

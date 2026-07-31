@@ -10,6 +10,7 @@ import { errorInterceptor } from './core/interceptors/error.interceptor';
 import { loadingInterceptor } from './core/interceptors/loading.interceptor';
 import { ThemeService } from './core/services/theme.service';
 import { AuthService } from './core/services/auth.service';
+import { IconRegistryService } from './core/services/icon-registry.service';
 
 export const appConfig: ApplicationConfig = {
   providers: [
@@ -30,6 +31,8 @@ export const appConfig: ApplicationConfig = {
     provideAnimations(),
     // Apply the persisted/system theme before the app renders.
     provideAppInitializer(() => inject(ThemeService).init()),
+    // Register brand SVG icons (GitHub/Google OAuth marks) before first paint.
+    provideAppInitializer(() => inject(IconRegistryService).init()),
     // Restore the auth session outside AuthService's constructor - the auth
     // interceptor injects AuthService, so the restore request must not run
     // while the service is still being instantiated (circular DI).

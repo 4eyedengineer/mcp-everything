@@ -6,6 +6,7 @@ import {
   Patch,
   Body,
   Param,
+  ParseUUIDPipe,
   NotFoundException,
 } from '@nestjs/common';
 import { ConversationService } from './conversation.service';
@@ -74,7 +75,7 @@ export class ConversationController {
    * FIX #130: Include state field for frontend to access generatedCode
    */
   @Get(':id')
-  async getConversation(@CurrentUser() user: User, @Param('id') id: string) {
+  async getConversation(@CurrentUser() user: User, @Param('id', ParseUUIDPipe) id: string) {
     const conversation = await this.getOwnedConversationOrFail(id, user.id);
     return {
       conversation: {
@@ -120,7 +121,7 @@ export class ConversationController {
    * Get messages for a specific conversation
    */
   @Get(':id/messages')
-  async getConversationMessages(@CurrentUser() user: User, @Param('id') id: string) {
+  async getConversationMessages(@CurrentUser() user: User, @Param('id', ParseUUIDPipe) id: string) {
     const conversation = await this.getOwnedConversationOrFail(id, user.id);
     const messages = Array.isArray(conversation.messages) ? conversation.messages : [];
 
@@ -147,7 +148,7 @@ export class ConversationController {
    * Get deployments for a specific conversation
    */
   @Get(':id/deployments')
-  async getConversationDeployments(@CurrentUser() user: User, @Param('id') id: string) {
+  async getConversationDeployments(@CurrentUser() user: User, @Param('id', ParseUUIDPipe) id: string) {
     await this.getOwnedConversationOrFail(id, user.id);
     const deployments = await this.deploymentService.getDeploymentsByConversation(id);
     return {
@@ -171,7 +172,7 @@ export class ConversationController {
    * Get the latest deployment for a specific conversation
    */
   @Get(':id/deployments/latest')
-  async getLatestDeployment(@CurrentUser() user: User, @Param('id') id: string) {
+  async getLatestDeployment(@CurrentUser() user: User, @Param('id', ParseUUIDPipe) id: string) {
     await this.getOwnedConversationOrFail(id, user.id);
     const deployment = await this.deploymentService.getLatestDeployment(id);
     if (!deployment) {
@@ -198,7 +199,7 @@ export class ConversationController {
    * Delete a conversation
    */
   @Delete(':id')
-  async deleteConversation(@CurrentUser() user: User, @Param('id') id: string) {
+  async deleteConversation(@CurrentUser() user: User, @Param('id', ParseUUIDPipe) id: string) {
     await this.getOwnedConversationOrFail(id, user.id);
     await this.conversationService.delete(id);
     return { success: true };
@@ -210,7 +211,7 @@ export class ConversationController {
   @Patch(':id')
   async updateConversationTitle(
     @CurrentUser() user: User,
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateConversationDto,
   ) {
     await this.getOwnedConversationOrFail(id, user.id);

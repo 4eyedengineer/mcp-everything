@@ -1,5 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { NotFoundException } from '@nestjs/common';
+import { INestApplication, NotFoundException } from '@nestjs/common';
+import request from 'supertest';
 import { ConversationController } from './conversation.controller';
 import { ConversationService } from './conversation.service';
 import { DeploymentService } from '../database/services/deployment.service';
@@ -179,5 +180,87 @@ describe('ConversationController', () => {
         NotFoundException,
       );
     });
+  });
+});
+
+/**
+ * HTTP-level coverage for ParseUUIDPipe on every :id route.
+ *
+ * The controller-level unit tests above call methods directly, which bypasses
+ * Nest's param pipes entirely - they'd pass even if ParseUUIDPipe were removed.
+ * These tests boot a real Nest HTTP pipeline (no global JWT guard registered
+ * here, since none of this depends on auth) and hit the routes with a
+ * non-UUID id to confirm garbage ids are rejected with 400 Bad Request
+ * instead of reaching the service layer and causing a Postgres error / 500
+ * with a dev stack trace.
+ */
+describe('ConversationController (HTTP - ParseUUIDPipe on :id routes)', () => {
+  let app: INestApplication;
+
+  const mockConversationService = {
+    findAllByUser: jest.fn(),
+    findByIdForUser: jest.fn(),
+    create: jest.fn(),
+    delete: jest.fn(),
+    updateTitle: jest.fn(),
+  };
+
+  const mockDeploymentService = {
+    getDeploymentsByConversation: jest.fn(),
+    getLatestDeployment: jest.fn(),
+  };
+
+  beforeAll(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      controllers: [ConversationController],
+      providers: [
+        { provide: ConversationService, useValue: mockConversationService },
+        { provide: DeploymentService, useValue: mockDeploymentService },
+        PipelineStatusService,
+      ],
+    }).compile();
+
+    app = module.createNestApplication();
+    await app.init();
+  });
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  const NOT_A_UUID = 'not-a-uuid';
+
+  it.each([
+    ['GET', '/api/conversations/:id', () => request(app.getHttpServer()).get(`/api/conversations/${NOT_A_UUID}`)],
+    [
+      'GET',
+      '/api/conversations/:id/messages',
+      () => request(app.getHttpServer()).get(`/api/conversations/${NOT_A_UUID}/messages`),
+    ],
+    [
+      'GET',
+      '/api/conversations/:id/deployments',
+      () => request(app.getHttpServer()).get(`/api/conversations/${NOT_A_UUID}/deployments`),
+    ],
+    [
+      'GET',
+      '/api/conversations/:id/deployments/latest',
+      () => request(app.getHttpServer()).get(`/api/conversations/${NOT_A_UUID}/deployments/latest`),
+    ],
+    [
+      'DELETE',
+      '/api/conversations/:id',
+      () => request(app.getHttpServer()).delete(`/api/conversations/${NOT_A_UUID}`),
+    ],
+    [
+      'PATCH',
+      '/api/conversations/:id',
+      () => request(app.getHttpServer()).patch(`/api/conversations/${NOT_A_UUID}`).send({ title: 'x' }),
+    ],
+  ])('returns 400 (not a 500/stack trace) for %s %s given a non-UUID id', async (_method, _route, makeRequest) => {
+    const res = await makeRequest();
+
+    expect(res.status).toBe(400);
+    expect(mockConversationService.findByIdForUser).not.toHaveBeenCalled();
   });
 });

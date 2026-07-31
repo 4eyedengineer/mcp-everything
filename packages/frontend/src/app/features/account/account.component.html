@@ -48,28 +48,31 @@
                 type="email"
                 class="form-input"
                 [(ngModel)]="editableEmail"
-                [disabled]="!isEditingProfile"
+                disabled
                 placeholder="Enter your email">
+              <p class="field-hint">Email address can't be changed.</p>
             </div>
 
             <div class="form-actions">
               <button
                 *ngIf="!isEditingProfile"
-                class="action-button primary"
+                class="mcp-btn-primary"
                 (click)="editProfile()">
                 <mat-icon>edit</mat-icon>
                 <span>Edit Profile</span>
               </button>
               <button
                 *ngIf="isEditingProfile"
-                class="action-button primary"
+                class="mcp-btn-primary"
+                [disabled]="isSavingProfile"
                 (click)="saveProfile()">
                 <mat-icon>check</mat-icon>
-                <span>Save Changes</span>
+                <span>{{ isSavingProfile ? 'Saving...' : 'Save Changes' }}</span>
               </button>
               <button
                 *ngIf="isEditingProfile"
-                class="action-button secondary"
+                class="mcp-btn-secondary"
+                [disabled]="isSavingProfile"
                 (click)="cancelEdit()">
                 <span>Cancel</span>
               </button>
@@ -365,10 +368,11 @@
 
           <div class="form-actions">
             <button
-              class="action-button danger"
+              class="mcp-btn-danger"
+              [disabled]="isDeletingAccount"
               (click)="deleteAccount()">
               <mat-icon>delete_forever</mat-icon>
-              <span>Delete Account</span>
+              <span>{{ isDeletingAccount ? 'Deleting...' : 'Delete Account' }}</span>
             </button>
           </div>
         </div>

@@ -21,8 +21,8 @@ import { SafeMarkdownPipe } from '../../shared/pipes/safe-markdown.pipe';
 import { DeployModalComponent, DeployModalResult } from './components/deploy-modal/deploy-modal.component';
 import { DeployProgressComponent, DeploymentCompleteEvent } from './components/deploy-progress/deploy-progress.component';
 import { RepoPickerModalComponent, RepoPickerResult } from './components/repo-picker-modal/repo-picker-modal.component';
+import { downloadServerZip } from '../../shared/utils/server-zip.util';
 import { Subscription } from 'rxjs';
-import * as JSZip from 'jszip';
 
 type DeploymentState = 'idle' | 'deploying' | 'success' | 'failed';
 type CloudDeploymentState = 'idle' | 'configuring' | 'deploying' | 'success' | 'failed';
@@ -207,15 +207,16 @@ export class ChatComponent implements OnInit, OnDestroy {
               this.chatService.setLatestDeployment(deployment);
             }
           });
-        } else {
-          this.snackBar.open(response.error || 'Deployment failed', 'Close', { duration: 5000 });
         }
+        // No toast on failure - the per-message deployment-error-card below
+        // already shows this same error, contextually, with retry actions.
+        // A toast here duplicated it a third time alongside the (now-removed)
+        // global banner.
       },
       error: (error: DeploymentResponse) => {
         this.deploymentState.set('failed');
         message.deploymentResult = error;
         this.deployingMessageIndex.set(undefined);
-        this.snackBar.open(error.error || 'Deployment failed', 'Close', { duration: 5000 });
       }
     });
   }
@@ -248,82 +249,30 @@ export class ChatComponent implements OnInit, OnDestroy {
               this.chatService.setLatestDeployment(deployment);
             }
           });
-        } else {
-          this.snackBar.open(response.error || 'Deployment failed', 'Close', { duration: 5000 });
         }
+        // No toast on failure - see the comment in deployToGitHub() above.
       },
       error: (error: DeploymentResponse) => {
         this.deploymentState.set('failed');
         message.deploymentResult = error;
         this.deployingMessageIndex.set(undefined);
-        this.snackBar.open(error.error || 'Deployment failed', 'Close', { duration: 5000 });
       }
     });
   }
 
   /**
-   * Download generated MCP server as ZIP file
+   * Download generated MCP server as ZIP file. Delegates to the shared
+   * server-zip util (also used by the My Servers page) so root-level files
+   * like Dockerfile/.dockerignore land at the zip root instead of being
+   * force-nested under src/, which broke `docker build .` on the extracted
+   * zip.
    */
   async downloadAsZip(message: ChatMessage): Promise<void> {
     if (!message.generatedCode) {
       return;
     }
 
-    const zip = new JSZip();
-    const files = message.generatedCode.supportingFiles || {};
-    const mainFile = message.generatedCode.mainFile || '';
-    const documentation = message.generatedCode.documentation || '';
-
-    // Add main file (usually index.ts)
-    if (mainFile) {
-      zip.file('src/index.ts', mainFile);
-    }
-
-    // Add supporting files
-    for (const [filename, content] of Object.entries(files)) {
-      if (typeof content === 'string') {
-        // Preserve file paths or put in src directory
-        const filePath = filename.startsWith('src/') ? filename : `src/${filename}`;
-        zip.file(filePath, content);
-      }
-    }
-
-    // Add documentation as README
-    if (documentation) {
-      zip.file('README.md', documentation);
-    }
-
-    // Add package.json if not present
-    if (!files['package.json']) {
-      const packageJson = {
-        name: 'mcp-server',
-        version: '1.0.0',
-        type: 'module',
-        main: 'dist/index.js',
-        scripts: {
-          build: 'tsc',
-          start: 'node dist/index.js'
-        },
-        dependencies: {
-          '@modelcontextprotocol/sdk': '^1.0.0'
-        },
-        devDependencies: {
-          typescript: '^5.0.0',
-          '@types/node': '^20.0.0'
-        }
-      };
-      zip.file('package.json', JSON.stringify(packageJson, null, 2));
-    }
-
-    // Generate and download ZIP
-    const content = await zip.generateAsync({ type: 'blob' });
-    const url = URL.createObjectURL(content);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = 'mcp-server.zip';
-    link.click();
-    URL.revokeObjectURL(url);
-
+    await downloadServerZip(message.generatedCode);
     this.snackBar.open('ZIP file downloaded', 'Close', { duration: 2000 });
   }
 

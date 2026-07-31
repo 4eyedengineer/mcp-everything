@@ -14,6 +14,7 @@ export const AUTH_ROUTES: Routes = [
   {
     path: 'login',
     component: LoginComponent,
+    title: 'Sign In - MCP Everything',
     data: {
       title: 'Sign In',
       description: 'Sign in to your MCP Everything account'
@@ -22,6 +23,7 @@ export const AUTH_ROUTES: Routes = [
   {
     path: 'register',
     component: RegisterComponent,
+    title: 'Sign Up - MCP Everything',
     data: {
       title: 'Sign Up',
       description: 'Create your MCP Everything account'
@@ -30,6 +32,7 @@ export const AUTH_ROUTES: Routes = [
   {
     path: 'callback',
     component: OAuthCallbackComponent,
+    title: 'Signing In - MCP Everything',
     data: {
       title: 'Signing In',
       description: 'Completing authentication'
@@ -38,6 +41,7 @@ export const AUTH_ROUTES: Routes = [
   {
     path: 'forgot-password',
     component: ForgotPasswordComponent,
+    title: 'Forgot Password - MCP Everything',
     data: {
       title: 'Forgot Password',
       description: 'Reset your password'
@@ -46,6 +50,7 @@ export const AUTH_ROUTES: Routes = [
   {
     path: 'reset-password',
     component: ResetPasswordComponent,
+    title: 'Reset Password - MCP Everything',
     data: {
       title: 'Reset Password',
       description: 'Set a new password'

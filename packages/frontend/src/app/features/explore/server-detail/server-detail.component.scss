@@ -279,7 +279,7 @@
   .install-card {
     .install-command {
       display: flex;
-      align-items: center;
+      align-items: flex-start;
       background-color: var(--text-primary);
       border-radius: 8px;
       padding: 16px;
@@ -290,7 +290,8 @@
         font-family: 'Fira Code', 'Monaco', monospace;
         font-size: 14px;
         color: #22c55e;
-        word-break: break-all;
+        word-break: break-word;
+        white-space: pre-wrap;
       }
 
       .copy-button {
@@ -641,55 +642,9 @@
   }
 }
 
-// Shared Button Styles
-.primary-button,
-.secondary-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 12px 24px;
-  border-radius: 8px;
-  font-size: 15px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  border: none;
-
-  mat-icon {
-    font-size: 20px;
-    width: 20px;
-    height: 20px;
-  }
-}
-
-.primary-button {
-  background-color: var(--primary-color);
-  color: var(--text-inverse);
-
-  &:hover {
-    background-color: var(--primary-hover);
-  }
-
-  &:active {
-    transform: scale(0.98);
-  }
-}
-
-.secondary-button {
-  background-color: var(--surface-color);
-  color: var(--text-primary);
-  border: 1px solid var(--border-medium);
-
-  &:hover {
-    background-color: var(--surface-alt);
-    border-color: var(--border-dark);
-  }
-
-  &:active {
-    transform: scale(0.98);
-  }
-}
+// Buttons: .mcp-btn-primary / .mcp-btn-secondary (styles/_buttons.scss) are
+// the canonical hand-rolled button classes - this page no longer defines its
+// own .primary-button/.secondary-button.
 
 // Responsive Design
 @media (max-width: 768px) {

@@ -182,14 +182,8 @@
       }
     }
 
-    &.primary {
-      background-color: var(--primary-color);
-      color: var(--text-inverse);
-
-      &:hover:not(:disabled) {
-        background-color: var(--primary-hover);
-      }
-    }
+    // .primary was replaced by the shared .mcp-btn-primary (styles/_buttons.scss)
+    // on the "Create key"/"Create API key" buttons above.
 
     &.secondary {
       background-color: var(--surface-color);

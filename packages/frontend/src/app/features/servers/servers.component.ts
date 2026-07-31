@@ -7,7 +7,6 @@ import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { forkJoin, Subject, interval } from 'rxjs';
 import { takeUntil, startWith, switchMap } from 'rxjs/operators';
-import * as JSZip from 'jszip';
 
 import { HostingApiService, HostedServer } from '../../core/services/hosting-api.service';
 import { MyServersApiService, MyServerEntry } from '../../core/services/my-servers-api.service';
@@ -15,6 +14,7 @@ import { ConversationService } from '../../core/services/conversation.service';
 import { ServerManagementCardComponent } from './components/server-management-card/server-management-card.component';
 import { LogsModalComponent } from './components/logs-modal/logs-modal.component';
 import { ConfirmModalComponent } from './components/confirm-modal/confirm-modal.component';
+import { downloadServerZip, GeneratedServerCode } from '../../shared/utils/server-zip.util';
 
 /**
  * A "My Servers" row: the lifecycle-ladder entry from the aggregation
@@ -177,61 +177,14 @@ export class ServersComponent implements OnInit, OnDestroy {
   }
 
   /**
-   * Builds and downloads a ZIP for a generated server. Mirrors
-   * ChatComponent.downloadAsZip (features/chat/chat.component.ts) so the
-   * download behaves identically whether triggered from the conversation or
-   * from this page.
+   * Builds and downloads a ZIP for a generated server via the shared
+   * server-zip util (shared/utils/server-zip.util.ts) - the same builder
+   * ChatComponent.downloadAsZip uses, so root-level files (Dockerfile,
+   * package.json, etc.) land at the zip root instead of nested under src/.
    */
-  private async buildAndDownloadZip(generatedCode: any, serverName: string): Promise<void> {
-    const zip = new JSZip();
-    const files = generatedCode.supportingFiles || {};
-    const mainFile = generatedCode.mainFile || '';
-    const documentation = generatedCode.documentation || '';
-
-    if (mainFile) {
-      zip.file('src/index.ts', mainFile);
-    }
-
-    for (const [filename, content] of Object.entries(files)) {
-      if (typeof content === 'string') {
-        const filePath = filename.startsWith('src/') ? filename : `src/${filename}`;
-        zip.file(filePath, content);
-      }
-    }
-
-    if (documentation) {
-      zip.file('README.md', documentation);
-    }
-
-    if (!files['package.json']) {
-      const packageJson = {
-        name: 'mcp-server',
-        version: '1.0.0',
-        type: 'module',
-        main: 'dist/index.js',
-        scripts: {
-          build: 'tsc',
-          start: 'node dist/index.js'
-        },
-        dependencies: {
-          '@modelcontextprotocol/sdk': '^1.0.0'
-        },
-        devDependencies: {
-          typescript: '^5.0.0',
-          '@types/node': '^20.0.0'
-        }
-      };
-      zip.file('package.json', JSON.stringify(packageJson, null, 2));
-    }
-
-    const content = await zip.generateAsync({ type: 'blob' });
-    const url = URL.createObjectURL(content);
-    const link = document.createElement('a');
-    link.href = url;
+  private async buildAndDownloadZip(generatedCode: GeneratedServerCode, serverName: string): Promise<void> {
     const slug = (serverName || 'mcp-server').toLowerCase().replace(/[^a-z0-9]+/g, '-');
-    link.download = `${slug || 'mcp-server'}.zip`;
-    link.click();
-    URL.revokeObjectURL(url);
+    await downloadServerZip(generatedCode, `${slug || 'mcp-server'}.zip`);
 
     this.snackBar.open('ZIP file downloaded', 'Close', { duration: 2000 });
   }

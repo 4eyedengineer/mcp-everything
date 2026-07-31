@@ -152,6 +152,12 @@
 
   code {
     flex: 1;
+    // Flex items default to min-width: auto, which for a nowrap text node
+    // resolves to its full unwrapped content width - that silently defeats
+    // overflow/ellipsis below and was the actual source of the mobile
+    // horizontal overflow (it also blows out the ancestor grid/flex tracks
+    // all the way up to the page). min-width: 0 lets this shrink to fit.
+    min-width: 0;
     font-size: 13px;
     color: var(--text-primary);
     font-family: monospace;

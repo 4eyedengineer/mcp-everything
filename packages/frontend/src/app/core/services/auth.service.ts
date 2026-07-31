@@ -49,7 +49,7 @@ export interface ForgotPasswordRequest {
 
 export interface ResetPasswordRequest {
   token: string;
-  password: string;
+  newPassword: string;
 }
 
 const ACCESS_TOKEN_KEY = 'mcp-auth-token';
@@ -218,7 +218,9 @@ export class AuthService {
    * Reset password using token from email
    */
   resetPassword(token: string, password: string): Observable<{ message: string }> {
-    return this.http.post<{ message: string }>(`${this.apiUrl}/auth/reset-password`, { token, password }).pipe(
+    // Backend ResetPasswordDto requires `newPassword` and whitelist-rejects
+    // any other body keys (e.g. a plain `password`) - it must match exactly.
+    return this.http.post<{ message: string }>(`${this.apiUrl}/auth/reset-password`, { token, newPassword: password }).pipe(
       catchError(error => this.handleError(error))
     );
   }

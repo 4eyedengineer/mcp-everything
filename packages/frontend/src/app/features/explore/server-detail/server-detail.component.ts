@@ -126,16 +126,32 @@ export class ServerDetailComponent implements OnInit {
     this.snackBar.open('Copied to clipboard!', 'Close', { duration: 2000 });
   }
 
+  /**
+   * Real, runnable install instructions - no `npx @anthropic/mcp-install`,
+   * which does not exist. Generated/hosted MCP servers ship as source (a
+   * GitHub repo or Gist), not a published npm package, so the honest path is
+   * clone + build + point an MCP client at the built entrypoint.
+   */
   getInstallCommand(): string {
     if (!this.server) return '';
 
-    if (this.server.repositoryUrl) {
-      return `npx @anthropic/mcp-install ${this.server.repositoryUrl}`;
+    const sourceUrl = this.server.repositoryUrl || this.server.gistUrl;
+    if (sourceUrl) {
+      const folderName =
+        sourceUrl.replace(/\.git$/, '').replace(/\/+$/, '').split('/').pop() || this.server.slug;
+      return [
+        `git clone ${sourceUrl}`,
+        `cd ${folderName}`,
+        'npm install && npm run build',
+        '',
+        '# Then add it to your MCP client config (e.g. claude_desktop_config.json):',
+        '# "mcpServers": {',
+        `#   "${this.server.slug}": { "command": "node", "args": ["${folderName}/dist/index.js"] }`,
+        '# }',
+      ].join('\n');
     }
-    if (this.server.gistUrl) {
-      return `npx @anthropic/mcp-install ${this.server.gistUrl}`;
-    }
-    return `npm install ${this.server.slug}`;
+
+    return `# Source for "${this.server.name}" is not published yet - no install command available.`;
   }
 
   getCategoryIcon(): string {

@@ -63,12 +63,24 @@
 
       <button
         mat-icon-button
-        routerLink="/account"
+        [matMenuTriggerFor]="accountMenu"
         matTooltip="Account"
-        aria-label="Account"
+        aria-label="Account menu"
         class="nav-icon-button">
         <mat-icon>account_circle</mat-icon>
       </button>
+
+      <mat-menu #accountMenu="matMenu">
+        <button mat-menu-item routerLink="/account" aria-label="Account settings">
+          <mat-icon>settings</mat-icon>
+          <span>Account settings</span>
+        </button>
+        <mat-divider></mat-divider>
+        <button mat-menu-item (click)="logout()" aria-label="Log out">
+          <mat-icon>logout</mat-icon>
+          <span>Log out</span>
+        </button>
+      </mat-menu>
     </div>
   </div>
 </nav>

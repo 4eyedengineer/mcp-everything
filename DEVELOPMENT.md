@@ -92,6 +92,21 @@ CREATE DATABASE mcp_everything;
 npm run dev:backend
 ```
 
+### Seeding Demo Data
+
+Demo users and 6 marketplace listings (so Explore isn't empty) are **not** created
+automatically — seeding is a manual, idempotent script, not something that runs on
+backend boot:
+
+```bash
+cd packages/backend
+npm run build
+npm run seed
+```
+
+Safe to re-run: each user/server is looked up by email/slug first and skipped if it
+already exists. Do not run in `NODE_ENV=production` (the script refuses to run there).
+
 ## Running Locally
 
 ### Development Mode (Recommended)

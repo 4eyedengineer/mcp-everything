@@ -131,13 +131,13 @@
     margin-bottom: 16px;
     font-weight: 600;
     font-size: 16px;
-    color: #2e7d32;
+    color: var(--success-text);
 
     mat-icon {
       font-size: 24px;
       width: 24px;
       height: 24px;
-      color: #4caf50;
+      color: var(--success-text);
     }
   }
 
@@ -158,43 +158,6 @@
         height: 18px;
       }
     }
-  }
-}
-
-// Deployment Error Section
-.deployment-error {
-  max-width: 800px;
-  margin: 16px auto;
-  padding: 20px;
-  background: linear-gradient(135deg, var(--error-bg) 0%, var(--error-bg-alt) 100%);
-  border: 1px solid var(--error-border);
-  border-radius: 12px;
-  width: calc(100% - 32px);
-
-  .deployment-header {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    margin-bottom: 12px;
-    font-weight: 600;
-    font-size: 16px;
-    color: var(--error-text);
-
-    mat-icon {
-      font-size: 24px;
-      width: 24px;
-      height: 24px;
-      color: #ef5350;
-    }
-  }
-
-  .error-message {
-    margin: 0;
-    font-size: 14px;
-    color: var(--error-text);
-    background-color: rgba(0, 0, 0, 0.06);
-    padding: 12px;
-    border-radius: 6px;
   }
 }
 
@@ -224,8 +187,15 @@
     border-bottom-color: var(--warning-border);
 
     .avatar-circle {
+      // Intentionally NOT tokenized: styles.scss has no vivid "warning
+      // accent" color (--warning-bg/-bg-alt/-border are pale card-fill
+      // tones, not designed to sit behind a white icon), and reusing
+      // --warn-color here would make this read identically to the
+      // "pending" gray state below, losing the running-vs-pending
+      // distinction. This amber reads fine unchanged on both themes'
+      // --warning-bg card background.
       background-color: #fbbf24;
-      color: white;
+      color: var(--text-inverse);
     }
 
     .spinning {
@@ -238,8 +208,8 @@
     border-bottom-color: var(--error-border);
 
     .avatar-circle {
-      background-color: #ef4444;
-      color: white;
+      background-color: var(--error-text);
+      color: var(--text-inverse);
     }
   }
 
@@ -331,6 +301,11 @@
     }
 
     pre {
+      // Intentionally NOT tokenized to --surface-color/--text-primary: code
+      // blocks are deliberately dark regardless of app theme (the common
+      // "terminal" convention, matched by deploy-progress's .config-code) -
+      // in light mode, tokenizing this would make code blocks a nearly
+      // invisible white-on-white box instead of a clearly delineated one.
       background-color: #1f1f1f;
       color: #e5e5e5;
       padding: 16px;
@@ -396,7 +371,7 @@
       font-size: 16px;
       width: 16px;
       height: 16px;
-      color: #ef5350;
+      color: var(--error-text);
     }
 
     .retry-inline-button {
@@ -416,7 +391,7 @@
       }
 
       &:hover {
-        background-color: rgba(198, 40, 40, 0.1);
+        background-color: color-mix(in srgb, var(--error-text) 10%, transparent);
       }
     }
   }
@@ -449,12 +424,18 @@
       }
     }
 
+    // Outlined per the canonical .mcp-btn-secondary spec (styles/_buttons.scss)
+    // - previously an ad hoc solid near-black, indistinguishable from the
+    // primary "Deploy as Repo" action. "Deploy as Repo" stays the one solid
+    // primary action in this row.
     .gist-button {
-      background-color: var(--primary-color);
-      color: white;
+      background-color: transparent;
+      color: var(--text-primary);
+      border: 1px solid var(--border-medium);
 
       &:hover:not(:disabled) {
-        background-color: var(--primary-hover);
+        background-color: var(--background-hover);
+        border-color: var(--border-dark);
       }
     }
 
@@ -507,13 +488,13 @@
       margin-bottom: 16px;
       font-weight: 600;
       font-size: 16px;
-      color: #2e7d32;
+      color: var(--success-text);
 
       .success-icon {
         font-size: 24px;
         width: 24px;
         height: 24px;
-        color: #4caf50;
+        color: var(--success-text);
       }
     }
 
@@ -521,7 +502,7 @@
       margin-bottom: 16px;
 
       a {
-        color: #1565c0;
+        color: var(--link-color);
         font-size: 14px;
         word-break: break-all;
         text-decoration: none;
@@ -556,7 +537,12 @@
       display: flex;
       align-items: center;
       gap: 8px;
-      background-color: rgba(255, 255, 255, 0.7);
+      // Was a flat rgba(255,255,255,0.7) - a translucent white card-on-card
+      // that looked correct against the light-mode success gradient but
+      // turned into a washed-out pale box against the dark-mode gradient.
+      // Mixing with --surface-color keeps it a translucent "surface" panel
+      // in either theme.
+      background-color: color-mix(in srgb, var(--surface-color) 70%, transparent);
       padding: 12px 16px;
       border-radius: 8px;
       border: 1px solid var(--success-border);
@@ -595,7 +581,7 @@
       gap: 12px;
       margin-top: 16px;
       padding: 12px 16px;
-      background-color: rgba(255, 255, 255, 0.7);
+      background-color: color-mix(in srgb, var(--surface-color) 70%, transparent);
       border-radius: 8px;
       border: 1px solid var(--success-border);
 
@@ -619,14 +605,14 @@
         .tools-count {
           font-size: 12px;
           font-weight: 400;
-          color: #666;
+          color: var(--text-secondary);
         }
 
         &.validation-passed {
-          color: #2e7d32;
+          color: var(--success-text);
 
           mat-icon {
-            color: #4caf50;
+            color: var(--success-text);
           }
         }
 
@@ -634,10 +620,14 @@
           color: var(--error-text);
 
           mat-icon {
-            color: #ef5350;
+            color: var(--error-text);
           }
         }
 
+        // Not tokenized - see the .progress-message .avatar-circle comment
+        // above re: no vivid warning-accent token existing; reusing
+        // --warn-color here would make "running" indistinguishable from
+        // "pending" below.
         &.validation-running {
           color: #f57c00;
 
@@ -648,24 +638,24 @@
         }
 
         &.validation-pending {
-          color: #757575;
+          color: var(--text-secondary);
 
           mat-icon {
-            color: #9e9e9e;
+            color: var(--text-tertiary);
           }
         }
 
         &.validation-skipped {
-          color: #757575;
+          color: var(--text-secondary);
 
           mat-icon {
-            color: #9e9e9e;
+            color: var(--text-tertiary);
           }
         }
       }
 
       .revalidate-button {
-        color: #1565c0;
+        color: var(--link-color);
         font-size: 13px;
 
         mat-icon {
@@ -676,7 +666,7 @@
         }
 
         &:hover {
-          background-color: rgba(21, 101, 192, 0.1);
+          background-color: color-mix(in srgb, var(--link-color) 10%, transparent);
         }
       }
     }
@@ -703,7 +693,7 @@
         font-size: 24px;
         width: 24px;
         height: 24px;
-        color: #ef5350;
+        color: var(--error-text);
       }
     }
 
@@ -732,7 +722,7 @@
         }
 
         &:hover {
-          background-color: rgba(198, 40, 40, 0.1);
+          background-color: color-mix(in srgb, var(--error-text) 10%, transparent);
         }
       }
     }

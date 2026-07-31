@@ -27,17 +27,8 @@
     }
 
     .url-form {
-      display: flex;
-      align-items: flex-start;
-      gap: 12px;
-
       mat-form-field {
-        flex: 1;
-      }
-
-      .use-url-button {
-        margin-top: 4px;
-        white-space: nowrap;
+        width: 100%;
       }
     }
 
@@ -207,12 +198,11 @@
     min-width: unset;
     width: 100%;
 
-    mat-dialog-content .url-form {
+    mat-dialog-actions {
       flex-direction: column;
 
-      .use-url-button {
+      button {
         width: 100%;
-        margin-top: 0;
       }
     }
   }

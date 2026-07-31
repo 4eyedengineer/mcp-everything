@@ -220,7 +220,7 @@ export class DeploymentOrchestratorService {
       const result = await this.gitHubRepoProvider.deploy(
         serverName,
         files,
-        options.description || `MCP Server generated from conversation ${conversationId}`,
+        options.description || `MCP server generated from conversation ${conversationId}`,
         options.isPrivate ?? true,
         options.envVars, // Pass environment variables for secret creation
       );
@@ -373,7 +373,7 @@ export class DeploymentOrchestratorService {
       const result = await this.gistProvider.deploySingleFile(
         serverName,
         files,
-        options.description || `MCP Server generated from conversation ${conversationId}`,
+        options.description || `MCP server generated from conversation ${conversationId}`,
         tools,
         !options.isPrivate, // Gist uses isPublic, not isPrivate
       );
@@ -934,7 +934,7 @@ export class DeploymentOrchestratorService {
       serverName,
       localPath: join(this.generatedServersDir, conversationId),
       description:
-        options.description || `MCP Server generated from conversation ${conversationId}`,
+        options.description || `MCP server generated from conversation ${conversationId}`,
       tools,
       envVars,
     });

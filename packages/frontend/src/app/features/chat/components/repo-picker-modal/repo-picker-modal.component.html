@@ -5,7 +5,10 @@
   </h2>
 
   <mat-dialog-content>
-    <!-- Paste a URL directly -->
+    <!-- Paste a URL directly. A single-text-input form still submits on
+         Enter per the HTML implicit-submission rule even with its submit
+         button moved down into the dialog's footer (below), so the
+         keyboard flow is unchanged. -->
     <form [formGroup]="urlForm" (ngSubmit)="submitUrl()" class="url-form">
       <mat-form-field appearance="outline" class="full-width">
         <mat-label>GitHub repository URL</mat-label>
@@ -22,15 +25,6 @@
           Must look like github.com/owner/repo
         </mat-error>
       </mat-form-field>
-      <button
-        mat-raised-button
-        color="primary"
-        type="submit"
-        [disabled]="urlForm.invalid"
-        class="use-url-button"
-      >
-        Use this repo
-      </button>
     </form>
 
     <div class="divider"><span>or search</span></div>
@@ -107,5 +101,15 @@
 
   <mat-dialog-actions align="end">
     <button mat-button (click)="cancel()">Cancel</button>
+    <button
+      mat-raised-button
+      color="primary"
+      type="button"
+      [disabled]="urlForm.invalid"
+      (click)="submitUrl()"
+      class="use-url-button"
+    >
+      Use this repo
+    </button>
   </mat-dialog-actions>
 </div>

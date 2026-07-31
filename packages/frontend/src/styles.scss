@@ -1,12 +1,49 @@
 /* Global Styles for MCP Everything */
 @use '@angular/material' as mat;
+@use 'styles/buttons';
 
 // Include core Material styles - required for Angular 18
 @include mat.core();
 
-// Custom theme colors for Angular 18
-$mcp-primary: mat.m2-define-palette(mat.$m2-indigo-palette, 600);
-$mcp-accent: mat.m2-define-palette(mat.$m2-cyan-palette, 500);
+// Custom theme colors. The app's design language is monochromatic
+// (LibreChat-inspired, near-black primary --primary-color: #2d2d2d); Material's
+// palette must agree with it or `color="primary"` buttons render stock indigo
+// next to the hand-rolled near-black ones (the app's single biggest visual
+// inconsistency, per the 2026-07 design audit).
+$mcp-neutral-palette: (
+  50: #f7f7f7,
+  100: #e3e3e3,
+  200: #c8c8c8,
+  300: #a4a4a4,
+  400: #4a4a4a, // dark-theme primary - matches the hand-rolled --primary-color there
+  500: #2d2d2d,
+  600: #262626,
+  700: #171717,
+  800: #101010,
+  900: #050505,
+  A100: #e3e3e3,
+  A200: #c8c8c8,
+  A400: #818181,
+  A700: #171717,
+  contrast: (
+    50: rgba(0, 0, 0, 0.87),
+    100: rgba(0, 0, 0, 0.87),
+    200: rgba(0, 0, 0, 0.87),
+    300: rgba(0, 0, 0, 0.87),
+    400: #ffffff,
+    500: #ffffff,
+    600: #ffffff,
+    700: #ffffff,
+    800: #ffffff,
+    900: #ffffff,
+    A100: rgba(0, 0, 0, 0.87),
+    A200: rgba(0, 0, 0, 0.87),
+    A400: #ffffff,
+    A700: #ffffff,
+  ),
+);
+$mcp-primary: mat.m2-define-palette($mcp-neutral-palette, 500);
+$mcp-accent: mat.m2-define-palette($mcp-neutral-palette, 700);
 $mcp-warn: mat.m2-define-palette(mat.$m2-red-palette, 500);
 
 $mcp-theme: mat.m2-define-light-theme((
@@ -27,10 +64,13 @@ $mcp-theme: mat.m2-define-light-theme((
 // toggles on <html>. Because that class lives on documentElement, this also
 // covers Material CDK overlays (dialogs, menus, snackbars, autocomplete
 // panes) which are appended as descendants of <body>.
+// Dark theme: mid-gray primary with white text (hue 400 = #4a4a4a),
+// matching the hand-rolled buttons' --primary-color in .dark-theme.
+$mcp-dark-primary: mat.m2-define-palette($mcp-neutral-palette, 400);
 $mcp-dark-theme: mat.m2-define-dark-theme((
   color: (
-    primary: $mcp-primary,
-    accent: $mcp-accent,
+    primary: $mcp-dark-primary,
+    accent: $mcp-dark-primary,
     warn: $mcp-warn,
   ),
 ));
