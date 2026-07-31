@@ -7,7 +7,7 @@ metadata:
     app.kubernetes.io/name: mcp-backend
     app.kubernetes.io/component: backend
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: mcp-backend
@@ -18,68 +18,76 @@ spec:
         app.kubernetes.io/name: mcp-backend
         app.kubernetes.io/component: backend
     spec:
+      securityContext:
+        fsGroup: 1001
+      # Runs migrations to completion before the API starts accepting traffic.
+      # Production disables TypeORM `synchronize` (see app.module.ts), so the
+      # schema - including `CREATE EXTENSION vector` - only exists once this
+      # has run against the postgres service below.
+      initContainers:
+        - name: migrate
+          image: mcp-everything/backend:latest
+          imagePullPolicy: IfNotPresent
+          command: ['npm', 'run', 'migration:run']
+          envFrom:
+            - configMapRef:
+                name: backend-config
+            - secretRef:
+                name: mcp-everything-secrets
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1001
+            allowPrivilegeEscalation: false
       containers:
         - name: backend
-          image: ghcr.io/4eyedengineer/mcp-everything/backend:latest
-          imagePullPolicy: Always
+          image: mcp-everything/backend:latest
+          imagePullPolicy: IfNotPresent
           ports:
             - name: http
               containerPort: 3000
               protocol: TCP
           envFrom:
-            - secretRef:
-                name: mcp-secrets
             - configMapRef:
-                name: mcp-config
-          env:
-            - name: NODE_ENV
-              value: production
-            - name: DATABASE_HOST
-              value: mcp-postgres
-            - name: DATABASE_PORT
-              value: "5432"
-            - name: DATABASE_NAME
-              valueFrom:
-                secretKeyRef:
-                  name: mcp-secrets
-                  key: DATABASE_NAME
-            - name: DATABASE_USER
-              valueFrom:
-                secretKeyRef:
-                  name: mcp-secrets
-                  key: DATABASE_USER
-            - name: DATABASE_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: mcp-secrets
-                  key: DATABASE_PASSWORD
-          resources:
-            requests:
-              memory: "256Mi"
-              cpu: "100m"
-            limits:
-              memory: "512Mi"
-              cpu: "500m"
+                name: backend-config
+            - secretRef:
+                name: mcp-everything-secrets
+          volumeMounts:
+            - name: generated-servers
+              mountPath: /data/generated-servers
+          # Resource requests/limits are cluster-specific - see
+          # overlays/homelab/patches/backend-resources.yaml.
+          # /health/ready is degraded (200) rather than unhealthy (503) when
+          # Redis/GitHub/Tavily are down or unconfigured - see health.service.ts
+          # calculateOverallStatus(). It only 503s when the database is
+          # unreachable or ANTHROPIC_API_KEY is missing, both of which really
+          # do mean "not ready for traffic". No Redis runs in this cluster, so
+          # this probe passes without it by design, not by accident.
           readinessProbe:
             httpGet:
               path: /api/v1/health/ready
-              port: 3000
+              port: http
             initialDelaySeconds: 10
-            periodSeconds: 5
+            periodSeconds: 10
             timeoutSeconds: 3
             failureThreshold: 3
           livenessProbe:
             httpGet:
               path: /api/v1/health/live
-              port: 3000
-            initialDelaySeconds: 30
-            periodSeconds: 10
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 15
             timeoutSeconds: 3
             failureThreshold: 3
           securityContext:
             runAsNonRoot: true
-            runAsUser: 1000
-            readOnlyRootFilesystem: false
+            runAsUser: 1001
             allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+      volumes:
+        # Generated MCP server source lives here transiently. Losing it on pod
+        # restart is acceptable - persist() writes the final artifact to
+        # postgres, and the pipeline can regenerate.
+        - name: generated-servers
+          emptyDir: {}
       restartPolicy: Always
       terminationGracePeriodSeconds: 30

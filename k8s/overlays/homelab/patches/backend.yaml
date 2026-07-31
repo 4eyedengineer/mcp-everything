@@ -1,0 +1,4 @@
+[
+  { "op": "add", "path": "/spec/template/spec/nodeSelector", "value": { "kubernetes.io/arch": "amd64" } },
+  { "op": "add", "path": "/spec/template/spec/containers/0/resources", "value": { "requests": { "cpu": "150m", "memory": "384Mi" }, "limits": { "cpu": "750m", "memory": "768Mi" } } }
+]

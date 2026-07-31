@@ -1,64 +1,45 @@
-# Multi-stage build for Angular frontend
-FROM node:18-alpine AS base
+# Production image for the Angular frontend.
+#
+# Build context is THIS directory (packages/frontend) - the package has no
+# dependency on @mcp-everything/shared, so it is self-contained. Build from
+# here:
+#   cd packages/frontend && docker build -t mcp-everything/frontend:local .
+#
+# There is no package-lock.json inside this directory (only the monorepo
+# root has one via npm workspaces), so `npm install` is used rather than
+# `npm ci`.
 
-# Install system dependencies
-RUN apk add --no-cache python3 make g++
-
-# Set working directory
+# ---- build ------------------------------------------------------------------
+FROM node:22-alpine AS build
 WORKDIR /app
-
-# Copy package files
 COPY package*.json ./
-COPY packages/frontend/package*.json ./packages/frontend/
-COPY packages/shared/package*.json ./packages/shared/
-
-# Install dependencies
-RUN npm ci && npm cache clean --force
-
-# Development stage
-FROM base AS development
+RUN npm install
 COPY . .
-EXPOSE 4200
-CMD ["npm", "run", "start", "--workspace=@mcp-everything/frontend"]
+# --configuration production applies angular.json's fileReplacements
+# (environment.ts -> environment.prod.ts, apiUrl: '') - see
+# src/environments/environment.prod.ts.
+RUN npm run build:prod
 
-# Build stage
-FROM base AS build
-COPY . .
+# ---- runtime: nginx serving the static SPA, no /api proxying ---------------
+FROM nginx:alpine AS runtime
 
-# Build shared package first
-RUN npm run build --workspace=@mcp-everything/shared
+COPY nginx.conf /etc/nginx/nginx.conf
 
-# Build frontend for production
-RUN npm run build:prod --workspace=@mcp-everything/frontend
+# angular.json "outputPath": "dist" (legacy @angular-devkit/build-angular:browser
+# builder - no /browser subfolder like the newer esbuild "application" builder).
+COPY --from=build /app/dist /usr/share/nginx/html
 
-# Production stage with nginx
-FROM nginx:alpine AS production
+# The stock nginx:alpine image already chowns /var/cache/nginx and the pid/log
+# directories to the "nginx" user (uid/gid 101); nginx.conf redirects every
+# other writable path (pid, temp dirs) under /tmp so nothing else needs it.
+RUN mkdir -p /tmp/client_temp /tmp/proxy_temp /tmp/fastcgi_temp /tmp/uwsgi_temp /tmp/scgi_temp && \
+    chown -R nginx:nginx /usr/share/nginx/html /tmp/client_temp /tmp/proxy_temp /tmp/fastcgi_temp /tmp/uwsgi_temp /tmp/scgi_temp
 
-# Install curl for health checks
-RUN apk add --no-cache curl
-
-# Copy nginx configuration
-COPY packages/frontend/nginx.conf /etc/nginx/nginx.conf
-
-# Copy built application
-COPY --from=build /app/packages/frontend/dist/mcp-everything-frontend /usr/share/nginx/html
-
-# Create nginx user and set permissions
-RUN chown -R nginx:nginx /usr/share/nginx/html
-RUN chown -R nginx:nginx /var/cache/nginx
-
-# Create nginx log directory
-RUN mkdir -p /var/log/nginx && chown -R nginx:nginx /var/log/nginx
-
-# Health check
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:80 || exit 1
-
-# Expose port
-EXPOSE 80
-
-# Switch to non-root user
 USER nginx
 
-# Start nginx
+EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD wget -qO- http://localhost:8080/healthz || exit 1
+
 CMD ["nginx", "-g", "daemon off;"]

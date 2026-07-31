@@ -1,3 +1,0 @@
-# This directory contains dynamically generated MCP server manifests
-# In LOCAL_DEV mode, the backend writes manifests here
-# ArgoCD watches this directory and syncs changes to the cluster

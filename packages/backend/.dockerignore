@@ -1,0 +1,16 @@
+node_modules
+dist
+coverage
+generated-servers
+*.log
+.env
+.env.*
+!.env.example
+.git
+.vscode
+.idea
+Dockerfile*
+docker-compose*.yml
+test
+*.spec.ts
+*.test.ts
