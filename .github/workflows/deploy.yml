@@ -9,15 +9,22 @@ name: Deploy
 #   - Published GitHub releases additionally tag images with the release
 #     semver (`type=semver` below) for pinning a specific version instead of
 #     `:latest`, by editing the `image:` field in the k8s manifests.
+# DISABLED (2026-07-31): this workflow targets GHCR (ghcr.io), which the k3s
+# homelab cluster cannot pull from (no imagePullSecret/anonymous access
+# configured there, and the cluster's own registry is Harbor). Automatic
+# triggers are commented out below so this doesn't run and fail on every
+# push; workflow_dispatch is kept so it can still be run manually if GHCR
+# publishing is needed again. See .github/workflows/deploy-homelab.yml for
+# the homelab (Harbor) build+push pipeline.
 on:
-  release:
-    types: [published]
-  push:
-    branches: [main]
-    paths:
-      - 'packages/backend/**'
-      - 'packages/frontend/**'
-      - '.github/workflows/deploy.yml'
+  # release:
+  #   types: [published]
+  # push:
+  #   branches: [main]
+  #   paths:
+  #     - 'packages/backend/**'
+  #     - 'packages/frontend/**'
+  #     - '.github/workflows/deploy.yml'
   workflow_dispatch: {}
 
 env:

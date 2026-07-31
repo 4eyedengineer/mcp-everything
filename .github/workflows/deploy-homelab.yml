@@ -1,0 +1,70 @@
+name: Deploy Homelab
+
+# Builds both images on the in-cluster ARC runner (arc-runner-set, bound to
+# this repo) and pushes them to the homelab Harbor registry
+# (harbor.192.168.1.240.nip.io/mcp-everything/{backend,frontend}), tagged
+# with the commit SHA. This is the k3s-homelab counterpart to deploy.yml
+# (which targets GHCR and is not reachable from the homelab cluster).
+#
+# One job builds both images sequentially on a single runner pod - the
+# cluster is capacity-conservative, so two parallel jobs (= two runner pods)
+# are avoided.
+#
+# After a successful push, update k8s/overlays/homelab/kustomization.yaml's
+# `images[].newTag` to the pushed sha tag and `kubectl apply -k` on a
+# homelab admin host to roll out.
+on:
+  push:
+    branches:
+      - rework/2026-07-review
+      - main
+    paths:
+      - 'packages/backend/**'
+      - 'packages/frontend/**'
+      - 'k8s/**'
+      - '.github/workflows/deploy-homelab.yml'
+  workflow_dispatch: {}
+
+env:
+  REGISTRY: harbor.192.168.1.240.nip.io
+  PROJECT: mcp-everything
+
+jobs:
+  build-and-push:
+    runs-on: arc-runner-set
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      # driver: docker (not the default docker-container) targets the dind
+      # sidecar's own daemon directly, so the build inherits the insecure
+      # -registries entry from /etc/docker/daemon.json (ConfigMap
+      # arc-runners/actions-runner-dind-config). A docker-container builder
+      # would run in its own nested daemon without that config and fail to
+      # push to the plain-HTTP Harbor registry.
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver: docker
+
+      - name: Log in to Harbor
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.HARBOR_USERNAME }}
+          password: ${{ secrets.HARBOR_PASSWORD }}
+
+      - name: Build and push backend image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./packages/backend
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.PROJECT }}/backend:${{ github.sha }}
+
+      - name: Build and push frontend image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./packages/frontend
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.PROJECT }}/frontend:${{ github.sha }}
