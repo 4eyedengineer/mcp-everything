@@ -1,7 +1,14 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Octokit } from '@octokit/rest';
-import { GitHubRepoEntry, GitHubReposResponse } from './types/github-repo.types';
+import { UserService } from '../user/user.service';
+import { TokenEncryptionService } from '../common/token-encryption/token-encryption.service';
+import {
+  GitHubRepoEntry,
+  GitHubReposResponse,
+  GitHubConnectionStatusDto,
+  GitHubRepoExistsResponse,
+} from './types/github-repo.types';
 
 interface CacheEntry {
   expiresAt: number;
@@ -12,32 +19,41 @@ interface CacheEntry {
  * GitHubService
  *
  * Backs the repo-picker modal on the chat page ("Analyze a GitHub
- * repository" suggestion card). Two read-only capabilities:
+ * repository" suggestion card). Capabilities:
  *
- *  - listMyRepos: the server-configured GITHUB_TOKEN's own repositories
- *    (requires a valid token; degrades gracefully otherwise)
+ *  - listMyRepos: the CALLING USER's own repositories, using their stored
+ *    GitHub OAuth token (see TokenEncryptionService / User.githubAccessTokenEncrypted).
+ *    Falls back to the server-wide GITHUB_TOKEN PAT when the caller hasn't
+ *    connected their own account - `source`/`connected` on the response let
+ *    the UI say honestly whose repos are being shown.
  *  - searchPublicRepos: GitHub's public repo search, which works even
- *    unauthenticated (at a much lower rate limit)
+ *    unauthenticated (at a much lower rate limit).
+ *  - checkRepoExists: cheap existence pre-flight for a hand-typed repo URL,
+ *    using the same credential-resolution order as listMyRepos.
+ *  - getConnectionStatus / disconnect: connect-account status and the
+ *    "Disconnect GitHub" flow (also revokes the token upstream with GitHub).
  *
- * Both degrade to `{ available: false, reason, repos: [] }` with a 200
+ * All of the above degrade to a typed "not available" result with a 200
  * status instead of throwing, so the UI can always fall back to "paste a
- * URL" without a broken error state - the configured token in this
- * environment is currently invalid, so the degradation path is the common
- * case, not an edge case.
+ * URL" without a broken error state.
  */
 @Injectable()
 export class GitHubService {
   private readonly logger = new Logger(GitHubService.name);
 
-  /** Authenticated client, or undefined when no usable token is configured. */
+  /** Server-wide fallback client, or undefined when no usable PAT is configured. */
   private readonly authedOctokit: Octokit | undefined;
-  /** Always-available unauthenticated fallback for public search. */
+  /** Always-available unauthenticated fallback for public search/existence checks. */
   private readonly publicOctokit: Octokit;
 
   private readonly cache = new Map<string, CacheEntry>();
   private readonly CACHE_TTL_MS = 60_000;
 
-  constructor(private readonly configService: ConfigService) {
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly userService: UserService,
+    private readonly tokenEncryption: TokenEncryptionService,
+  ) {
     const token = this.configService.get<string>('GITHUB_TOKEN');
     const hasToken = Boolean(token && token !== 'your-github-token-here');
 
@@ -48,18 +64,98 @@ export class GitHubService {
   }
 
   /**
-   * List repositories owned by (or accessible to) the configured
-   * GITHUB_TOKEN's user. Returns `available: false` (200, not an error) when
-   * no token is configured or the token is invalid/expired.
+   * Resolve a per-user Octokit client from the caller's stored (encrypted)
+   * GitHub token, if any. Returns `connected: true` whenever the user has a
+   * stored token at all - even if it couldn't be decrypted or used to build
+   * a client - so callers can distinguish "not connected" from "connected,
+   * but currently unusable".
    */
-  async listMyRepos(page = 1, perPage = 30): Promise<GitHubReposResponse> {
-    if (!this.authedOctokit) {
-      return { available: false, reason: 'github_not_configured', repos: [] };
+  private async resolveUserOctokit(
+    userId: string | undefined,
+  ): Promise<{ octokit: Octokit | undefined; connected: boolean }> {
+    if (!userId) {
+      return { octokit: undefined, connected: false };
     }
 
-    const cacheKey = `repos:${page}:${perPage}`;
+    const user = await this.userService.findByIdWithGithubToken(userId);
+    const encrypted = user?.githubAccessTokenEncrypted;
+    if (!encrypted) {
+      return { octokit: undefined, connected: false };
+    }
+
+    const token = this.tokenEncryption.decrypt(encrypted);
+    if (!token) {
+      this.logger.warn(
+        `Stored GitHub token for user ${userId} could not be decrypted - degrading as if not connected`,
+      );
+      return { octokit: undefined, connected: true };
+    }
+
+    return {
+      octokit: new Octokit({ auth: token, request: { timeout: 15_000 } }),
+      connected: true,
+    };
+  }
+
+  /**
+   * List the calling user's own repositories. Tries the user's stored
+   * GitHub token first; falls back to the server-configured GITHUB_TOKEN PAT
+   * (labeled via `source: 'server'`) when the user hasn't connected their
+   * own account. Returns `available: false` (200, not an error) when
+   * neither is usable.
+   */
+  async listMyRepos(
+    userId: string | undefined,
+    page = 1,
+    perPage = 30,
+  ): Promise<GitHubReposResponse> {
+    const { octokit: userOctokit, connected } = await this.resolveUserOctokit(userId);
+
+    if (userOctokit) {
+      const cacheKey = `repos:user:${userId}:${page}:${perPage}`;
+      const cached = this.getCached(cacheKey);
+      if (cached) return cached;
+
+      try {
+        const response = await userOctokit.rest.repos.listForAuthenticatedUser({
+          page,
+          per_page: perPage,
+          sort: 'updated',
+        });
+
+        const result: GitHubReposResponse = {
+          available: true,
+          source: 'user',
+          connected: true,
+          repos: response.data.map((repo) => this.toRepoEntry(repo)),
+        };
+        this.setCached(cacheKey, result);
+        return result;
+      } catch (error) {
+        const status = (error as { status?: number })?.status;
+        if (status === 401 || status === 403) {
+          this.logger.warn(
+            `Stored GitHub token for user ${userId} rejected by GitHub API (status ${status})`,
+          );
+          return { available: false, reason: 'user_token_invalid', connected: true, repos: [] };
+        }
+        this.logger.error(
+          `Failed to list repositories for user ${userId}: ${(error as Error).message}`,
+        );
+        return { available: false, reason: 'error', connected: true, repos: [] };
+      }
+    }
+
+    // No usable per-user token - fall back to the server-configured PAT, if
+    // any, but always report the caller's real connection state so the UI
+    // can tell "these are the server account's repos" from "these are yours".
+    if (!this.authedOctokit) {
+      return { available: false, reason: 'not_connected', connected, repos: [] };
+    }
+
+    const cacheKey = `repos:server:${page}:${perPage}`;
     const cached = this.getCached(cacheKey);
-    if (cached) return cached;
+    if (cached) return { ...cached, connected };
 
     try {
       const response = await this.authedOctokit.rest.repos.listForAuthenticatedUser({
@@ -70,6 +166,8 @@ export class GitHubService {
 
       const result: GitHubReposResponse = {
         available: true,
+        source: 'server',
+        connected,
         repos: response.data.map((repo) => this.toRepoEntry(repo)),
       };
       this.setCached(cacheKey, result);
@@ -78,13 +176,13 @@ export class GitHubService {
       const status = (error as { status?: number })?.status;
       if (status === 401 || status === 403) {
         this.logger.warn(
-          `GITHUB_TOKEN rejected by GitHub API (status ${status}) - degrading to unconfigured`,
+          `Server GITHUB_TOKEN rejected by GitHub API (status ${status}) - degrading to unconfigured`,
         );
         // Not cached: a fixed token doesn't need a 60s TTL to recover from.
-        return { available: false, reason: 'github_not_configured', repos: [] };
+        return { available: false, reason: 'not_connected', connected, repos: [] };
       }
       this.logger.error(`Failed to list repositories: ${(error as Error).message}`);
-      return { available: false, reason: 'error', repos: [] };
+      return { available: false, reason: 'error', connected, repos: [] };
     }
   }
 
@@ -150,6 +248,160 @@ export class GitHubService {
     }
   }
 
+  /**
+   * Cheap existence/metadata pre-flight for a repo the user typed in by
+   * hand, so the repo-picker modal can refuse to kick off a (paid)
+   * generation run against a repo that doesn't exist. Uses the same
+   * credential-resolution order as listMyRepos (user token -> server PAT ->
+   * unauthenticated), since `repos.get` works unauthenticated for public repos.
+   *
+   * If the resolved (authenticated) client fails for a reason unrelated to
+   * "doesn't exist" or rate limiting - e.g. an invalid token, which is the
+   * live state of the server PAT in this environment - retries once
+   * unauthenticated before giving up, exactly like `searchPublicRepos`. This
+   * matters a lot here specifically: a false "not_found"/"unknown" caused by
+   * a bad *server* credential must never block the user from analyzing a
+   * repo that actually exists.
+   */
+  async checkRepoExists(
+    userId: string | undefined,
+    owner: string,
+    repo: string,
+  ): Promise<GitHubRepoExistsResponse> {
+    const { octokit: userOctokit } = await this.resolveUserOctokit(userId);
+    const client = userOctokit ?? this.authedOctokit ?? this.publicOctokit;
+
+    try {
+      return await this.fetchRepoExists(client, owner, repo);
+    } catch (error) {
+      const status = (error as { status?: number })?.status;
+      if (status === 404) {
+        return { status: 'not_found' };
+      }
+      if (this.isRateLimitError(error)) {
+        this.logger.warn(`repo-exists check rate-limited for ${owner}/${repo}`);
+        return { status: 'unknown', reason: 'rate_limited' };
+      }
+
+      if (client !== this.publicOctokit) {
+        try {
+          return await this.fetchRepoExists(this.publicOctokit, owner, repo);
+        } catch (fallbackError) {
+          const fallbackStatus = (fallbackError as { status?: number })?.status;
+          if (fallbackStatus === 404) {
+            return { status: 'not_found' };
+          }
+          if (this.isRateLimitError(fallbackError)) {
+            return { status: 'unknown', reason: 'rate_limited' };
+          }
+          this.logger.warn(
+            `repo-exists check failed for ${owner}/${repo}: ${(fallbackError as Error).message}`,
+          );
+          return { status: 'unknown', reason: 'error' };
+        }
+      }
+
+      this.logger.warn(
+        `repo-exists check failed for ${owner}/${repo}: ${(error as Error).message}`,
+      );
+      return { status: 'unknown', reason: 'error' };
+    }
+  }
+
+  private async fetchRepoExists(
+    client: Octokit,
+    owner: string,
+    repo: string,
+  ): Promise<GitHubRepoExistsResponse> {
+    const response = await client.rest.repos.get({ owner, repo });
+    return {
+      status: 'exists',
+      repo: {
+        fullName: response.data.full_name,
+        description: response.data.description ?? null,
+        defaultBranch: response.data.default_branch,
+        private: response.data.private,
+        stars: response.data.stargazers_count ?? 0,
+      },
+    };
+  }
+
+  /** Whether the given user has a GitHub account connected (a stored token), and their username. */
+  async getConnectionStatus(userId: string): Promise<GitHubConnectionStatusDto> {
+    const user = await this.userService.findByIdWithGithubToken(userId);
+    return {
+      connected: Boolean(user?.githubAccessTokenEncrypted),
+      username: user?.githubUsername ?? null,
+    };
+  }
+
+  /**
+   * Disconnect the user's GitHub account: revoke the token upstream with
+   * GitHub (best-effort - a failure here doesn't block clearing our copy,
+   * since a stale local credential is worse than a token GitHub couldn't
+   * confirm revoking), then clear the stored (encrypted) token locally.
+   */
+  async disconnect(userId: string): Promise<void> {
+    const user = await this.userService.findByIdWithGithubToken(userId);
+    const encrypted = user?.githubAccessTokenEncrypted;
+
+    if (encrypted) {
+      const token = this.tokenEncryption.decrypt(encrypted);
+      if (token) {
+        await this.revokeTokenUpstream(token);
+      }
+    }
+
+    await this.userService.clearGithubToken(userId);
+    this.clearUserCache(userId);
+    this.logger.log(`GitHub account disconnected for user ${userId}`);
+  }
+
+  /**
+   * Ask GitHub to revoke an OAuth App token (DELETE /applications/{client_id}/token,
+   * authenticated with the app's client id/secret via HTTP Basic auth - this is
+   * NOT the same as calling the API with the token itself). Best-effort: logs
+   * and returns on failure rather than throwing, so disconnect always still
+   * clears our local copy.
+   */
+  private async revokeTokenUpstream(token: string): Promise<void> {
+    const clientId = this.configService.get<string>('GITHUB_CLIENT_ID');
+    const clientSecret = this.configService.get<string>('GITHUB_CLIENT_SECRET');
+
+    if (!clientId || !clientSecret) {
+      this.logger.warn(
+        'GITHUB_CLIENT_ID/GITHUB_CLIENT_SECRET not configured - skipping upstream token ' +
+          'revocation, only the locally stored copy will be removed',
+      );
+      return;
+    }
+
+    try {
+      const basicAuth = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
+      const response = await fetch(`https://api.github.com/applications/${clientId}/token`, {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Basic ${basicAuth}`,
+          Accept: 'application/vnd.github+json',
+          'Content-Type': 'application/json',
+          'X-GitHub-Api-Version': '2022-11-28',
+        },
+        body: JSON.stringify({ access_token: token }),
+      });
+
+      if (!response.ok && response.status !== 404) {
+        this.logger.warn(
+          `GitHub token revocation returned status ${response.status} - removing the local copy anyway`,
+        );
+      }
+    } catch (error) {
+      this.logger.warn(
+        `Failed to reach GitHub to revoke the token upstream: ${(error as Error).message} - ` +
+          'removing the local copy anyway',
+      );
+    }
+  }
+
   private isRateLimitError(error: unknown): boolean {
     const status = (error as { status?: number })?.status;
     if (status !== 403 && status !== 429) return false;
@@ -192,5 +444,14 @@ export class GitHubService {
 
   private setCached(key: string, response: GitHubReposResponse): void {
     this.cache.set(key, { expiresAt: Date.now() + this.CACHE_TTL_MS, response });
+  }
+
+  private clearUserCache(userId: string): void {
+    const prefix = `repos:user:${userId}:`;
+    for (const key of this.cache.keys()) {
+      if (key.startsWith(prefix)) {
+        this.cache.delete(key);
+      }
+    }
   }
 }

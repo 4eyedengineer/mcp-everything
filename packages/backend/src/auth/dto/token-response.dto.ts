@@ -1,3 +1,4 @@
+import { IsNotEmpty, IsString } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
 export class UserResponseDto {
@@ -33,5 +34,7 @@ export class TokenResponseDto {
 
 export class RefreshTokenDto {
   @ApiProperty({ description: 'The refresh token to exchange for new tokens' })
+  @IsString()
+  @IsNotEmpty()
   refreshToken: string;
 }

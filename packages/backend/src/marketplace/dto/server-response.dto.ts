@@ -62,6 +62,9 @@ export interface ServerSummaryResponse {
   category: McpServerCategory;
   tags?: string[];
   author?: AuthorResponse;
+  /** Real source link, if any. Populated so list/marketplace views can offer a genuine "view source" action instead of a fake download. */
+  repositoryUrl?: string;
+  gistUrl?: string;
   downloadCount: number;
   rating: number;
   ratingCount: number;

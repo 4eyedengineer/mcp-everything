@@ -125,6 +125,23 @@ export class AuthService {
   }
 
   /**
+   * Route prefixes that do NOT require authentication (kept in sync with
+   * `app.routes.ts` - `/explore/**` has no `canActivate: [authGuard]`, and
+   * `/auth/**` is inherently public/pre-login). `logout()` must not force
+   * navigation away from these: a user reading the public /explore
+   * marketplace (or already on an /auth page) whose background token
+   * refresh happens to fail must not be yanked to the login screen.
+   */
+  private readonly publicRoutePrefixes = ['/explore', '/auth'];
+
+  private isCurrentRoutePublic(): boolean {
+    const url = this.router.url;
+    return this.publicRoutePrefixes.some(
+      prefix => url === prefix || url.startsWith(`${prefix}/`) || url.startsWith(`${prefix}?`)
+    );
+  }
+
+  /**
    * Logout the current user
    */
   logout(): void {
@@ -132,7 +149,11 @@ export class AuthService {
     this.clearTokens();
     this.currentUserSubject.next(null);
     this.isAuthenticatedSubject.next(false);
-    this.router.navigate(['/auth/login']);
+    // Only redirect if the user is actually somewhere that requires auth -
+    // don't hijack a public page just because a session teardown happened.
+    if (!this.isCurrentRoutePublic()) {
+      this.router.navigate(['/auth/login']);
+    }
   }
 
   /**

@@ -115,6 +115,8 @@ export class MarketplaceService {
             githubUsername: server.author.githubUsername,
           }
         : undefined,
+      repositoryUrl: server.repositoryUrl,
+      gistUrl: server.gistUrl,
       downloadCount: server.downloadCount,
       rating: Number(server.rating),
       ratingCount: server.ratingCount,

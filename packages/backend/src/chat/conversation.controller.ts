@@ -9,6 +9,7 @@ import {
   ParseUUIDPipe,
   NotFoundException,
 } from '@nestjs/common';
+import { IsNotEmpty, IsString, MaxLength } from 'class-validator';
 import { ConversationService } from './conversation.service';
 import { DeploymentService } from '../database/services/deployment.service';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -17,11 +18,25 @@ import { Conversation } from '../database/entities/conversation.entity';
 import { PipelineStatusService } from './pipeline-status.service';
 // Note: All routes protected by global JWT guard - user authenticated automatically
 
-interface CreateConversationDto {
+// NOTE: these MUST be classes (not `interface`s). The global ValidationPipe
+// (whitelist: true, forbidNonWhitelisted: true) only validates/whitelists
+// `@Body()` params whose *runtime* metatype isn't one of
+// [String, Boolean, Number, Array, Object]. A TS `interface` has no runtime
+// representation, so Nest sees `Object` and silently skips validation
+// entirely - the body passes through completely unchecked (no type
+// coercion, no stripping of unexpected fields). Using a real class with
+// class-validator decorators is what makes this body actually validated.
+class CreateConversationDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(255)
   sessionId: string;
 }
 
-interface UpdateConversationDto {
+class UpdateConversationDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(500)
   title: string;
 }
 

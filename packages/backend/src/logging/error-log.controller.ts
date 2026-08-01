@@ -11,6 +11,7 @@ import {
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
+import { IsArray, IsNotEmpty, IsString, ArrayMinSize } from 'class-validator';
 import { ErrorLoggingService, ErrorStats } from './error-logging.service';
 import { ErrorLog } from '../database/entities';
 
@@ -18,6 +19,8 @@ import { ErrorLog } from '../database/entities';
  * DTO for marking an error as resolved
  */
 class ResolveErrorDto {
+  @IsString()
+  @IsNotEmpty()
   resolution: string;
 }
 
@@ -25,7 +28,13 @@ class ResolveErrorDto {
  * DTO for marking multiple errors as resolved
  */
 class ResolveMultipleErrorsDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  @IsString({ each: true })
   ids: string[];
+
+  @IsString()
+  @IsNotEmpty()
   resolution: string;
 }
 

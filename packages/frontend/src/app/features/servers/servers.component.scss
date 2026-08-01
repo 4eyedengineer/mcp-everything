@@ -45,26 +45,6 @@
       color: var(--text-primary);
     }
   }
-
-  .btn-primary {
-    background-color: var(--primary-color);
-    color: var(--text-inverse);
-    border-radius: 8px;
-    padding: 8px 16px;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-
-    mat-icon {
-      font-size: 20px;
-      width: 20px;
-      height: 20px;
-    }
-
-    &:hover {
-      background-color: var(--primary-hover);
-    }
-  }
 }
 
 .loading-state,
@@ -77,7 +57,13 @@
   padding: 80px 24px;
   text-align: center;
 
-  mat-icon {
+  // Direct-child combinator, not a bare descendant selector: this is only
+  // meant to size each state's single top-level status icon (error_outline
+  // in .error-state; .empty-icon below overrides this for .empty-state).
+  // As a descendant selector it also matched the "New chat" button's icon
+  // and the empty-ladder step arrows nested further down, blowing them up
+  // to 64px - that was the oversized plus-icon bug on this page.
+  > mat-icon {
     font-size: 64px;
     width: 64px;
     height: 64px;
@@ -125,19 +111,11 @@
     margin: 0 0 8px 0;
   }
 
-  .btn-primary {
+  // .mcp-btn-primary (styles/_buttons.scss) is the canonical hand-rolled
+  // button class and already sizes its own icon correctly - this page no
+  // longer defines its own .btn-primary.
+  .mcp-btn-primary {
     margin-top: 24px;
-    background-color: var(--primary-color);
-    color: var(--text-inverse);
-    border-radius: 8px;
-    padding: 12px 24px;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-
-    &:hover {
-      background-color: var(--primary-hover);
-    }
   }
 }
 

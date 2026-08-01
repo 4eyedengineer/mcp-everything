@@ -35,6 +35,58 @@ export class UserService {
     return this.userRepository.findOne({ where: { googleId } });
   }
 
+  /**
+   * Explicit opt-in fetch of a user WITH their encrypted GitHub token
+   * (`githubAccessTokenEncrypted` is `select: false` on the entity - see
+   * database/entities/user.entity.ts - so ordinary `findById` never returns
+   * it). The only caller is GitHubService, to build a per-user Octokit
+   * client; never expose the returned entity's token field in an API
+   * response.
+   */
+  async findByIdWithGithubToken(id: string): Promise<User | null> {
+    return this.userRepository
+      .createQueryBuilder('user')
+      .addSelect('user.githubAccessTokenEncrypted')
+      .where('user.id = :id', { id })
+      .getOne();
+  }
+
+  /**
+   * Store (or refresh) a user's encrypted GitHub access token. `encryptedToken`
+   * must already be encrypted (see TokenEncryptionService) - this method never
+   * touches plaintext and never logs the value.
+   */
+  async setGithubToken(userId: string, encryptedToken: string, scope: string): Promise<void> {
+    await this.userRepository.update(userId, {
+      githubAccessTokenEncrypted: encryptedToken,
+      githubTokenScope: scope,
+      githubTokenUpdatedAt: new Date(),
+    });
+  }
+
+  /**
+   * Clear a user's stored GitHub token (local copy only - callers
+   * responsible for revoking it upstream with GitHub first, see
+   * GitHubService.disconnect).
+   */
+  async clearGithubToken(userId: string): Promise<void> {
+    // IMPORTANT: TypeORM's Repository#update() *omits* any property whose
+    // value is `undefined` from the generated SQL (it does NOT set the
+    // column to NULL) - only an explicit `null` clears it at the database
+    // level. Verified against a live row while building this: passing
+    // `undefined` here left `githubAccessTokenEncrypted` populated after
+    // "successful" disconnect, which would be a real security bug (the
+    // stored token silently surviving a user-initiated disconnect). Using
+    // `null` (cast, since the entity declares these columns as `string?`/
+    // `Date?` rather than `| null`) is required for this to actually clear.
+    await this.userRepository.update(userId, {
+      githubAccessTokenEncrypted: null,
+      githubTokenScope: null,
+      githubTokenUpdatedAt: null,
+    } as unknown as Partial<User>);
+    this.logger.log(`Cleared stored GitHub token for user: ${userId}`);
+  }
+
   async createUser(dto: CreateUserDto): Promise<User> {
     const email = dto.email.toLowerCase();
     const existing = await this.findByEmail(email);
@@ -361,10 +413,14 @@ export class UserService {
    * Clear password reset token after successful reset or expiry.
    */
   async clearPasswordResetToken(userId: string): Promise<void> {
+    // Must be `null`, not `undefined` - see the note on clearGithubToken().
+    // With `undefined` these columns were never actually cleared, leaving a
+    // used reset token valid until its expiry window elapsed, so a single
+    // reset link could be redeemed more than once.
     await this.userRepository.update(userId, {
-      passwordResetTokenHash: undefined,
-      passwordResetExpiresAt: undefined,
-    });
+      passwordResetTokenHash: null,
+      passwordResetExpiresAt: null,
+    } as unknown as Partial<User>);
 
     this.logger.log(`Password reset token cleared for user: ${userId}`);
   }

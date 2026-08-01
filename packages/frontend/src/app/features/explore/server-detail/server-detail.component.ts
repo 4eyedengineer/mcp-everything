@@ -16,6 +16,7 @@ import {
   McpResourceResponse,
 } from '../../../core/services/marketplace.service';
 import { NotificationService } from '../../../core/services/notification.service';
+import { buildInstallCommand } from './install-command.util';
 
 @Component({
   selector: 'mcp-server-detail',
@@ -76,20 +77,18 @@ export class ServerDetailComponent implements OnInit {
     });
   }
 
+  /**
+   * The Download button is only rendered (see template) when
+   * `server.downloadUrl` is a real, direct download artifact - distinct
+   * from the GitHub/Gist buttons, which open the source instead.
+   */
   downloadServer(): void {
-    if (!this.server) return;
+    if (!this.server?.downloadUrl) return;
+    const downloadUrl = this.server.downloadUrl;
 
     this.marketplaceService.recordDownload(this.server.id).subscribe({
       next: () => {
-        if (this.server?.downloadUrl) {
-          window.open(this.server.downloadUrl, '_blank');
-        } else if (this.server?.gistUrl) {
-          window.open(this.server.gistUrl, '_blank');
-        } else if (this.server?.repositoryUrl) {
-          window.open(this.server.repositoryUrl, '_blank');
-        } else {
-          this.notificationService.info(`Download started for ${this.server?.name}`);
-        }
+        window.open(downloadUrl, '_blank', 'noopener');
 
         // Update local count
         if (this.server) {
@@ -98,8 +97,11 @@ export class ServerDetailComponent implements OnInit {
       },
       error: (err) => {
         // The global error interceptor already shows a toast for the failed
-        // request - avoid showing a second, redundant one here.
+        // request - avoid showing a second, redundant one here. The user
+        // should still be able to reach the real download even if recording
+        // the click-through failed.
         console.error('Failed to record download:', err);
+        window.open(downloadUrl, '_blank', 'noopener');
       },
     });
   }
@@ -128,30 +130,14 @@ export class ServerDetailComponent implements OnInit {
 
   /**
    * Real, runnable install instructions - no `npx @anthropic/mcp-install`,
-   * which does not exist. Generated/hosted MCP servers ship as source (a
-   * GitHub repo or Gist), not a published npm package, so the honest path is
-   * clone + build + point an MCP client at the built entrypoint.
+   * which does not exist. For the official modelcontextprotocol/servers
+   * reference servers (whose `repositoryUrl` points at a subdirectory of
+   * that monorepo), this resolves to the actual documented npx/uvx
+   * invocation rather than a `git clone` of the non-clonable tree URL. See
+   * `install-command.util.ts` for the full rationale.
    */
   getInstallCommand(): string {
-    if (!this.server) return '';
-
-    const sourceUrl = this.server.repositoryUrl || this.server.gistUrl;
-    if (sourceUrl) {
-      const folderName =
-        sourceUrl.replace(/\.git$/, '').replace(/\/+$/, '').split('/').pop() || this.server.slug;
-      return [
-        `git clone ${sourceUrl}`,
-        `cd ${folderName}`,
-        'npm install && npm run build',
-        '',
-        '# Then add it to your MCP client config (e.g. claude_desktop_config.json):',
-        '# "mcpServers": {',
-        `#   "${this.server.slug}": { "command": "node", "args": ["${folderName}/dist/index.js"] }`,
-        '# }',
-      ].join('\n');
-    }
-
-    return `# Source for "${this.server.name}" is not published yet - no install command available.`;
+    return buildInstallCommand(this.server);
   }
 
   getCategoryIcon(): string {

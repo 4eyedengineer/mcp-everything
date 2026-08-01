@@ -47,6 +47,9 @@ export interface ServerSummaryResponse {
   category: McpServerCategory;
   tags?: string[];
   author?: AuthorResponse;
+  /** Real source link, if any - used to power the "View Source" action (no fabricated downloadUrl exists at list-summary granularity). */
+  repositoryUrl?: string;
+  gistUrl?: string;
   downloadCount: number;
   rating: number;
   ratingCount: number;

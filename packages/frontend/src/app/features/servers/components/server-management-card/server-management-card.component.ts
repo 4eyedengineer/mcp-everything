@@ -24,6 +24,12 @@ import { TimeAgoPipe } from '../../../../shared/pipes/time-ago.pipe';
 })
 export class ServerManagementCardComponent {
   @Input() server!: HostedServer;
+  /**
+   * When true, renders without its own border/background/shadow - used by
+   * the My Servers ladder, which already supplies that card chrome, so the
+   * two don't stack into a "card within a card" with doubled borders.
+   */
+  @Input() embedded = false;
   @Output() start = new EventEmitter<HostedServer>();
   @Output() stop = new EventEmitter<HostedServer>();
   @Output() delete = new EventEmitter<HostedServer>();

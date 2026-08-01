@@ -15,6 +15,7 @@ import { GoogleAuthGuard } from './guards/google-auth.guard';
 import { UserModule } from '../user/user.module';
 import { EmailModule } from '../email/email.module';
 import { ApiKeyModule } from '../api-key/api-key.module';
+import { TokenEncryptionModule } from '../common/token-encryption/token-encryption.module';
 
 @Module({
   imports: [
@@ -23,6 +24,7 @@ import { ApiKeyModule } from '../api-key/api-key.module';
     // JwtAuthGuard (provided below) needs ApiKeyService to authenticate
     // requests that present an X-API-Key / Bearer mcpe_... key instead of a JWT.
     ApiKeyModule,
+    TokenEncryptionModule,
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({
       imports: [ConfigModule],

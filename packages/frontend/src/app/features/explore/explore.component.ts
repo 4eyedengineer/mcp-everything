@@ -16,6 +16,7 @@ import {
   SearchParams,
   McpServerCategory,
   SortField,
+  SortOrder,
 } from '../../core/services/marketplace.service';
 import { ServerCardComponent } from '../../shared/components/server-card/server-card.component';
 import { NotificationService } from '../../core/services/notification.service';
@@ -63,6 +64,14 @@ export class ExploreComponent implements OnInit, OnDestroy {
   // Search debounce
   private searchSubject = new Subject<string>();
   private destroy$ = new Subject<void>();
+
+  // Fields that should sort ascending by default (e.g. "Name (A-Z)"). Every
+  // other field (downloads, rating, recency) reads most-relevant-first, i.e.
+  // descending. Without this, every sort field - including name - was forced
+  // to 'desc', so "Name (A-Z)" actually rendered Z->A.
+  private static readonly ASCENDING_SORT_FIELDS: ReadonlySet<SortField> = new Set<SortField>([
+    'name',
+  ]);
 
   constructor(
     private marketplaceService: MarketplaceService,
@@ -124,7 +133,7 @@ export class ExploreComponent implements OnInit, OnDestroy {
       page: this.currentPage,
       limit: this.pageSize,
       sortBy: this.selectedSort,
-      sortOrder: 'desc',
+      sortOrder: this.sortOrderFor(this.selectedSort),
     };
 
     if (this.searchQuery) {
@@ -165,6 +174,11 @@ export class ExploreComponent implements OnInit, OnDestroy {
     this.loadServers();
   }
 
+  /** Name sorts A-Z (ascending); every other field is most-relevant-first (descending). */
+  private sortOrderFor(field: SortField): SortOrder {
+    return ExploreComponent.ASCENDING_SORT_FIELDS.has(field) ? 'asc' : 'desc';
+  }
+
   onPageChange(event: PageEvent): void {
     this.currentPage = event.pageIndex + 1;
     this.pageSize = event.pageSize;
@@ -175,16 +189,24 @@ export class ExploreComponent implements OnInit, OnDestroy {
     this.router.navigate(['/explore', server.slug]);
   }
 
+  /**
+   * These marketplace entries are source-only (real GitHub repos, no
+   * downloadable artifact), so this opens the real source instead of
+   * pretending a download happened. `mcp-server-card` only renders the
+   * action button when `sourceUrlFor()` returns something, so the
+   * `!sourceUrl` branch below is a defensive fallback, not the common case.
+   */
   downloadServer(server: ServerSummaryResponse): void {
-    // Record the download
+    const sourceUrl = server.repositoryUrl || server.gistUrl;
+    if (!sourceUrl) {
+      this.notificationService.info(`No public source is available yet for ${server.name}.`);
+      return;
+    }
+
+    // Record the click-through, then open the real source.
     this.marketplaceService.recordDownload(server.id).subscribe({
       next: () => {
-        // If there's a download URL, use it
-        if ((server as any).downloadUrl) {
-          window.open((server as any).downloadUrl, '_blank');
-        } else {
-          this.notificationService.info(`Download started for ${server.name}`);
-        }
+        window.open(sourceUrl, '_blank', 'noopener');
 
         // Update the download count locally
         const servers = this.servers$.value;
@@ -196,8 +218,11 @@ export class ExploreComponent implements OnInit, OnDestroy {
       },
       error: (err) => {
         // The global error interceptor already shows a toast for the failed
-        // request - avoid showing a second, redundant one here.
+        // request - avoid showing a second, redundant one here. The user
+        // should still be able to reach the real source even if recording
+        // the click-through failed.
         console.error('Failed to record download:', err);
+        window.open(sourceUrl, '_blank', 'noopener');
       },
     });
   }
@@ -212,5 +237,16 @@ export class ExploreComponent implements OnInit, OnDestroy {
 
   get hasFilters(): boolean {
     return !!this.searchQuery || !!this.selectedCategory || this.selectedSort !== 'downloads';
+  }
+
+  /**
+   * The Featured section is a curated view of the *unfiltered* catalog. Once
+   * a search or category filter is active, showing it verbatim alongside a
+   * filtered (or empty) main grid makes non-matching featured servers look
+   * like they matched the filter - so hide it whenever either is active.
+   * (Sort order doesn't affect this - only search/category narrow results.)
+   */
+  get showFeatured(): boolean {
+    return !this.searchQuery && !this.selectedCategory;
   }
 }

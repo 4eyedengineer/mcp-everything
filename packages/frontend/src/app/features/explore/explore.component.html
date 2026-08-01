@@ -13,8 +13,8 @@
       </a>
     </div>
 
-    <!-- Featured Section -->
-    <section class="featured-section" *ngIf="(featuredServers$ | async)?.length">
+    <!-- Featured Section (hidden while a search/category filter is active - see showFeatured) -->
+    <section class="featured-section" *ngIf="showFeatured && (featuredServers$ | async)?.length">
       <div class="section-header">
         <h2>
           <mat-icon>star</mat-icon>

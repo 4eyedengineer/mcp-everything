@@ -8,10 +8,10 @@
       <button mat-icon-button (click)="refreshServers()" class="refresh-button" title="Refresh" aria-label="Refresh servers">
         <mat-icon>refresh</mat-icon>
       </button>
-      <button mat-raised-button routerLink="/chat" class="btn-primary">
+      <a routerLink="/chat" class="mcp-btn-primary">
         <mat-icon>add</mat-icon>
         New chat
-      </button>
+      </a>
     </div>
   </header>
 
@@ -40,7 +40,7 @@
       <mat-icon>arrow_forward</mat-icon>
       <span class="empty-ladder-step">3. Deploy or host it from its conversation</span>
     </div>
-    <button mat-raised-button routerLink="/chat" class="btn-primary">
+    <button class="mcp-btn-primary" routerLink="/chat">
       <mat-icon>add</mat-icon>
       New chat
     </button>
@@ -80,14 +80,32 @@
         </div>
       </div>
 
-      <!-- Rung detail: hosted servers get the full management card -->
+      <!--
+        Rung detail: hosted servers get the full management card, embedded
+        (no border/background of its own - the ladder card already supplies
+        that chrome) so the two nested cards don't stack a second set of
+        borders + a second action-row divider on top of each other.
+        Open chat / Download ZIP are projected into its single action row
+        instead of repeating in a separate .ladder-card-actions block below.
+      -->
       <mcp-server-management-card
         *ngIf="row.entry.status === 'hosted' && row.hostedServer as hosted"
         [server]="hosted"
+        [embedded]="true"
         (start)="startServer($event)"
         (stop)="stopServer($event)"
         (delete)="openDeleteConfirmation($event)"
         (viewLogs)="openLogs($event)">
+        <ng-container cardActions>
+          <button mat-button (click)="openChat(row.entry.conversationId)" class="action-btn">
+            <mat-icon>chat_bubble_outline</mat-icon>
+            Open chat
+          </button>
+          <button mat-button (click)="downloadZip(row)" class="action-btn">
+            <mat-icon>download</mat-icon>
+            Download ZIP
+          </button>
+        </ng-container>
       </mcp-server-management-card>
 
       <!-- Rung detail: deployed (not yet hosted) -->
@@ -99,8 +117,12 @@
         </div>
       </div>
 
-      <!-- Actions available at every rung -->
-      <div class="ladder-card-actions">
+      <!--
+        Actions for the generated/deployed rungs (hosted rows render their
+        Open chat / Download ZIP inside the embedded management card above
+        instead, so there's a single action row/divider per card, not two).
+      -->
+      <div class="ladder-card-actions" *ngIf="row.entry.status !== 'hosted'">
         <button mat-button (click)="openChat(row.entry.conversationId)" class="action-btn">
           <mat-icon>chat_bubble_outline</mat-icon>
           Open chat

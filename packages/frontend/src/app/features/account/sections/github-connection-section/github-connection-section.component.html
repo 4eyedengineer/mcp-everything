@@ -1,0 +1,59 @@
+<!-- Connected Accounts (GitHub) Section -->
+<div class="settings-section github-connection-section">
+  <div class="section-header">
+    <div class="section-icon">
+      <mat-icon>code</mat-icon>
+    </div>
+    <div class="section-title">
+      <h2>Connected Accounts</h2>
+      <p>Connect GitHub to browse and analyze your own repositories from the chat page</p>
+    </div>
+  </div>
+
+  <div class="section-content">
+    <p class="coming-soon-note" *ngIf="loading()">Checking your GitHub connection...</p>
+
+    <p class="field-error" *ngIf="error() && !loading()">{{ error() }}</p>
+
+    <ng-container *ngIf="!loading() && !error() && status() as s">
+      <!-- Not connected -->
+      <div class="connection-row" *ngIf="!s.connected">
+        <div class="connection-info">
+          <div class="connection-status">
+            <mat-icon>link_off</mat-icon>
+            <span>Not connected</span>
+          </div>
+          <p class="connection-detail">
+            Connect your GitHub account to list your own repositories when picking one to analyze.
+            We request read-only access to your public repositories only.
+          </p>
+        </div>
+        <button class="mcp-btn-primary" (click)="connect()">
+          <mat-icon>link</mat-icon>
+          <span>Connect GitHub</span>
+        </button>
+      </div>
+
+      <!-- Connected -->
+      <div class="connection-row" *ngIf="s.connected">
+        <div class="connection-info">
+          <div class="connection-status connected">
+            <mat-icon>check_circle</mat-icon>
+            <span>Connected{{ s.username ? ' as ' : '' }}<strong *ngIf="s.username">&#64;{{ s.username }}</strong></span>
+          </div>
+          <p class="connection-detail">
+            MCP Everything can list your public repositories. Disconnecting revokes this access with GitHub.
+          </p>
+        </div>
+        <button
+          class="mcp-btn-danger"
+          [disabled]="isDisconnecting()"
+          (click)="disconnect()">
+          <mat-icon *ngIf="!isDisconnecting()">link_off</mat-icon>
+          <mat-icon *ngIf="isDisconnecting()" class="spinning">sync</mat-icon>
+          <span>{{ isDisconnecting() ? 'Disconnecting...' : 'Disconnect GitHub' }}</span>
+        </button>
+      </div>
+    </ng-container>
+  </div>
+</div>

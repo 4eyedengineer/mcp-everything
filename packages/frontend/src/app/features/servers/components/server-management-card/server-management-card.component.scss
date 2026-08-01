@@ -40,6 +40,26 @@
   &.status-unknown .status-indicator {
     background-color: #9e9e9e;
   }
+
+  // Used inside the My Servers ladder card, which already provides the
+  // outer border/background/padding - without this, a hosted rung stacked
+  // two full card frames (and two action-row dividers) on top of each
+  // other, which is the "very stripey" look reported on that page.
+  &.embedded {
+    border: none;
+    border-radius: 0;
+    background: transparent;
+    padding: 0 4px 0 16px;
+
+    &:hover {
+      box-shadow: none;
+      transform: none;
+    }
+
+    .status-indicator {
+      border-radius: 0;
+    }
+  }
 }
 
 .server-info {

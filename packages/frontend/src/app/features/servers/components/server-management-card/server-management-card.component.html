@@ -1,4 +1,4 @@
-<div class="server-card" [ngClass]="statusClass">
+<div class="server-card" [ngClass]="statusClass" [class.embedded]="embedded">
   <div class="status-indicator"></div>
 
   <div class="server-info">
@@ -97,5 +97,6 @@
       <mat-icon>delete</mat-icon>
       Delete
     </button>
+    <ng-content select="[cardActions]"></ng-content>
   </div>
 </div>

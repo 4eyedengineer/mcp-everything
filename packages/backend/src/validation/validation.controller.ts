@@ -12,6 +12,7 @@ import {
 } from '@nestjs/common';
 import { Observable, Subject, takeUntil } from 'rxjs';
 import { map, finalize } from 'rxjs/operators';
+import { IsOptional, IsString, IsNumber, IsBoolean, Min } from 'class-validator';
 
 import { ValidationService } from './validation.service';
 import {
@@ -25,10 +26,26 @@ import {
  * DTO for validation request
  */
 class ValidateDeploymentDto {
+  @IsOptional()
+  @IsString()
   cpuLimit?: string;
+
+  @IsOptional()
+  @IsString()
   memoryLimit?: string;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
   timeout?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
   toolTimeout?: number;
+
+  @IsOptional()
+  @IsBoolean()
   forceRevalidate?: boolean;
 }
 

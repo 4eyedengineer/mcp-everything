@@ -9,7 +9,21 @@ resources:
   # JWT_REFRESH_SECRET, DATABASE_PASSWORD. Decrypted in-cluster by the
   # sealed-secrets controller into a plain Secret named
   # mcp-everything-secrets, which base/backend/deployment.yaml and
-  # base/postgres/statefulset.yaml both reference directly.
+  # base/postgres/statefulset.yaml both reference directly via envFrom.secretRef
+  # (so any key added to the decrypted Secret is automatically exposed as an
+  # env var to the backend container - no deployment.yaml change needed).
+  #
+  # TODO(GitHub OAuth token encryption): this Secret is MISSING
+  # `TOKEN_ENCRYPTION_KEY` (see src/common/token-encryption/token-encryption.service.ts
+  # and packages/backend/.env.example). Without it the backend does NOT crash
+  # (fails gracefully: GitHub login still works, but the user's access token
+  # is not persisted, so per-user GitHub repo listing is unavailable here).
+  # To finish: generate a value with
+  #   node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+  # then seal it with `kubeseal` (same flow as the other four keys below) and
+  # add the resulting `TOKEN_ENCRYPTION_KEY` entry to sealed-secret.yaml's
+  # `encryptedData` - it cannot be sealed from this workstation, a human with
+  # `kubeseal` access to the cluster's public cert must do it.
   - sealed-secret.yaml
 
 images:

@@ -19,10 +19,12 @@ import { McpServer } from '../entities/mcp-server.entity';
  * - enterprise@mcp-everything.local (Enterprise tier, for testing enterprise features)
  *
  * Marketplace Servers:
- * - Seeds ~6 realistic MCP server listings so the Explore page has real rows
- *   to render instead of an empty state. Each server is checked by slug and
- *   skipped individually if it already exists, so this function is safe to
- *   run multiple times (idempotent) whenever `npm run seed` is invoked.
+ * - Seeds the 6 official MCP reference servers (github.com/modelcontextprotocol/servers)
+ *   so the Explore page has real, verifiable rows instead of an empty state
+ *   or fabricated listings. Each server is checked by slug and skipped
+ *   individually if it already exists, so this function is safe to run
+ *   multiple times (idempotent) whenever `npm run seed` is invoked - it will
+ *   never create duplicate rows for the same slug.
  */
 export async function seedDatabase(dataSource: DataSource): Promise<void> {
   const userRepository = dataSource.getRepository(User);
@@ -85,180 +87,248 @@ export async function seedDatabase(dataSource: DataSource): Promise<void> {
     console.log('Seed data created successfully!');
   }
 
-  await seedMarketplaceServers(serverRepository, demoUser, freeUser, enterpriseUser);
+  await seedMarketplaceServers(serverRepository);
 }
 
 /**
- * Seed the marketplace with a handful of realistic MCP server listings.
+ * Seed the marketplace with real, independently-verifiable MCP servers.
  *
- * These are honest, illustrative entries (not tied to real published
- * packages) covering common MCP server categories - API integrations,
- * database connectors, communication tools, and utilities - so the
- * marketplace/Explore UI has real data to render during local development
- * and demos. Download counts are small, plausible numbers; 0 would also be
- * honest but non-zero values exercise the "popular" sort.
+ * IMPORTANT - honesty constraint: this marketplace will have real users, so
+ * seed rows must never fabricate social proof. Every entry below is one of
+ * the official reference servers maintained in the
+ * https://github.com/modelcontextprotocol/servers monorepo - the
+ * `repositoryUrl` for each points at the real `src/<name>` subdirectory
+ * (verified to resolve with a 200 as of 2026-07-29), and the `tools` list is
+ * taken from that server's actual README, not invented. `downloadCount`,
+ * `rating`, and `ratingCount` all start at their honest zero/default value -
+ * they are never seeded with a number, and will only ever change via real
+ * recorded activity (marketplace downloads/ratings). No `authorId` is set,
+ * since none of these were authored by an MCP Everything user account - the
+ * demo/free/enterprise seed users exist for testing tiers/quotas, not to be
+ * misattributed as the author of third-party open-source servers.
  */
 async function seedMarketplaceServers(
   serverRepository: import('typeorm').Repository<McpServer>,
-  demoUser: User | null,
-  freeUser: User | null,
-  enterpriseUser: User | null,
 ): Promise<void> {
+  // Honest timestamp: these rows really are being published right now, as
+  // opposed to the fabricated download/rating counts this replaces.
   const now = new Date();
 
   const servers: Array<Partial<McpServer>> = [
     {
-      name: 'GitHub Integration Server',
-      slug: 'github-integration-server',
+      name: 'Filesystem Reference Server',
+      slug: 'filesystem-reference-server',
       description:
-        'Browse repositories, read files, search code, and manage issues and pull requests directly from your MCP client.',
+        'Official MCP reference server for secure, sandboxed file operations - read, write, edit, and search files within explicitly allowed directories.',
       longDescription:
-        'Exposes GitHub REST API operations as MCP tools: repository search, file content retrieval, issue/PR listing and creation, and commit history. Requires a GitHub personal access token with repo scope.',
-      category: 'devtools',
-      tags: ['github', 'git', 'repository', 'issues', 'pull-requests'],
-      visibility: 'public',
-      authorId: demoUser?.id,
-      repositoryUrl: 'https://github.com/example/mcp-github-server',
-      tools: [
-        { name: 'search_repositories', description: 'Search GitHub repositories by query' , inputSchema: {} },
-        { name: 'get_file_contents', description: 'Read a file from a repository at a given ref' , inputSchema: {} },
-        { name: 'list_issues', description: 'List issues for a repository' , inputSchema: {} },
-        { name: 'create_pull_request', description: 'Open a new pull request' , inputSchema: {} },
-      ],
-      envVars: ['GITHUB_TOKEN'],
-      language: 'typescript',
-      downloadCount: 342,
-      rating: 4.8,
-      ratingCount: 51,
-      status: 'approved',
-      featured: true,
-      publishedAt: now,
-    },
-    {
-      name: 'Stripe Payments Server',
-      slug: 'stripe-payments-server',
-      description:
-        'Query customers, charges, subscriptions, and invoices, and create test-mode payments from your MCP client.',
-      longDescription:
-        'Wraps the Stripe API for read-heavy MCP workflows: look up customers and subscriptions, inspect recent charges, and create test-mode payment intents. Ships with sandbox-safe defaults; production use requires a live secret key.',
-      category: 'api',
-      tags: ['stripe', 'payments', 'billing', 'subscriptions'],
-      visibility: 'public',
-      authorId: demoUser?.id,
-      repositoryUrl: 'https://github.com/example/mcp-stripe-server',
-      tools: [
-        { name: 'get_customer', description: 'Retrieve a customer by ID or email' , inputSchema: {} },
-        { name: 'list_charges', description: 'List recent charges with optional filters' , inputSchema: {} },
-        { name: 'create_payment_intent', description: 'Create a payment intent (test mode)' , inputSchema: {} },
-      ],
-      envVars: ['STRIPE_SECRET_KEY'],
-      language: 'typescript',
-      downloadCount: 210,
-      rating: 4.6,
-      ratingCount: 34,
-      status: 'approved',
-      featured: true,
-      publishedAt: now,
-    },
-    {
-      name: 'PostgreSQL Connector',
-      slug: 'postgresql-connector',
-      description:
-        'Run read-only SQL queries, inspect table schemas, and explore relationships in a PostgreSQL database.',
-      longDescription:
-        'Connects to a PostgreSQL instance and exposes schema introspection and parameterized read-only query tools. Write operations are disabled by default for safety; enable them explicitly via configuration.',
-      category: 'database',
-      tags: ['postgresql', 'sql', 'database', 'schema'],
-      visibility: 'public',
-      authorId: freeUser?.id,
-      repositoryUrl: 'https://github.com/example/mcp-postgres-server',
-      tools: [
-        { name: 'list_tables', description: 'List tables in the connected database/schema' , inputSchema: {} },
-        { name: 'describe_table', description: 'Get column definitions for a table' , inputSchema: {} },
-        { name: 'run_query', description: 'Execute a read-only parameterized SQL query' , inputSchema: {} },
-      ],
-      envVars: ['DATABASE_URL'],
-      language: 'typescript',
-      downloadCount: 156,
-      rating: 4.4,
-      ratingCount: 22,
-      status: 'approved',
-      featured: false,
-      publishedAt: now,
-    },
-    {
-      name: 'Slack Notifications Server',
-      slug: 'slack-notifications-server',
-      description:
-        'Post messages, read channel history, and search conversations in Slack workspaces.',
-      longDescription:
-        'Uses a Slack bot token to post and read messages, list channels, and search conversation history. Useful for notification workflows and lightweight team-chat automation from an MCP client.',
-      category: 'communication',
-      tags: ['slack', 'chat', 'notifications', 'messaging'],
-      visibility: 'public',
-      authorId: enterpriseUser?.id,
-      repositoryUrl: 'https://github.com/example/mcp-slack-server',
-      tools: [
-        { name: 'post_message', description: 'Post a message to a channel or user' , inputSchema: {} },
-        { name: 'list_channels', description: 'List channels the bot has access to' , inputSchema: {} },
-        { name: 'search_messages', description: 'Search message history across channels' , inputSchema: {} },
-      ],
-      envVars: ['SLACK_BOT_TOKEN'],
-      language: 'typescript',
-      downloadCount: 98,
-      rating: 4.2,
-      ratingCount: 15,
-      status: 'approved',
-      featured: false,
-      publishedAt: now,
-    },
-    {
-      name: 'Weather Data Server',
-      slug: 'weather-data-server',
-      description:
-        'Get current conditions and short-term forecasts for any location by coordinates or city name.',
-      longDescription:
-        'Fetches current weather and multi-day forecasts from a public weather API. Supports lookup by city name, postal code, or latitude/longitude, with optional unit conversion (metric/imperial).',
-      category: 'api',
-      tags: ['weather', 'forecast', 'api'],
-      visibility: 'public',
-      authorId: freeUser?.id,
-      repositoryUrl: 'https://github.com/example/mcp-weather-server',
-      tools: [
-        { name: 'get_current_weather', description: 'Get current conditions for a location' , inputSchema: {} },
-        { name: 'get_forecast', description: 'Get a multi-day forecast for a location' , inputSchema: {} },
-      ],
-      envVars: ['WEATHER_API_KEY'],
-      language: 'python',
-      downloadCount: 47,
-      rating: 4.0,
-      ratingCount: 9,
-      status: 'approved',
-      featured: false,
-      publishedAt: now,
-    },
-    {
-      name: 'Filesystem Tools Server',
-      slug: 'filesystem-tools-server',
-      description:
-        'Read, write, and search files within a sandboxed directory - list contents, grep for text, and edit files safely.',
-      longDescription:
-        'Exposes a restricted set of filesystem operations scoped to a configured root directory: list/read/write files, recursive search, and diff-based edits. All paths are resolved and validated against the root to prevent traversal outside the sandbox.',
+        'This is the official "filesystem" reference server maintained by the Model Context Protocol project (github.com/modelcontextprotocol/servers). It is listed here as a real, runnable example, not authored or hosted by MCP Everything. Access is restricted to directories passed on the command line or granted via the MCP Roots protocol.',
       category: 'utility',
-      tags: ['filesystem', 'files', 'search', 'sandbox'],
+      tags: ['filesystem', 'files', 'reference', 'mcp-official'],
       visibility: 'public',
-      authorId: demoUser?.id,
-      repositoryUrl: 'https://github.com/example/mcp-filesystem-server',
+      repositoryUrl: 'https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem',
       tools: [
-        { name: 'read_file', description: 'Read the contents of a file' , inputSchema: {} },
-        { name: 'write_file', description: 'Write or overwrite a file' , inputSchema: {} },
-        { name: 'search_files', description: 'Search for text across files in the sandbox root' , inputSchema: {} },
+        {
+          name: 'read_text_file',
+          description:
+            'Read complete file contents as UTF-8 text, with optional head/tail filtering',
+          inputSchema: {},
+        },
+        {
+          name: 'write_file',
+          description: 'Create a new file or overwrite an existing file with provided content',
+          inputSchema: {},
+        },
+        {
+          name: 'edit_file',
+          description: 'Make selective edits using pattern matching, with dry-run preview support',
+          inputSchema: {},
+        },
+        {
+          name: 'search_files',
+          description: 'Recursively search for files matching glob-style patterns',
+          inputSchema: {},
+        },
+        {
+          name: 'list_directory',
+          description: 'List directory contents, with [FILE]/[DIR] prefixes',
+          inputSchema: {},
+        },
       ],
-      envVars: ['MCP_SANDBOX_ROOT'],
       language: 'typescript',
-      downloadCount: 289,
-      rating: 4.7,
-      ratingCount: 41,
+      downloadCount: 0,
+      rating: 0,
+      ratingCount: 0,
+      status: 'approved',
+      featured: false,
+      publishedAt: now,
+    },
+    {
+      name: 'Fetch Reference Server',
+      slug: 'fetch-reference-server',
+      description:
+        'Official MCP reference server that fetches a URL and converts its content to markdown for efficient LLM consumption.',
+      longDescription:
+        'This is the official "fetch" reference server maintained by the Model Context Protocol project (github.com/modelcontextprotocol/servers). It is listed here as a real, runnable example, not authored or hosted by MCP Everything.',
+      category: 'api',
+      tags: ['web', 'fetch', 'http', 'reference', 'mcp-official'],
+      visibility: 'public',
+      repositoryUrl: 'https://github.com/modelcontextprotocol/servers/tree/main/src/fetch',
+      tools: [
+        {
+          name: 'fetch',
+          description: 'Fetch a URL from the internet and extract its contents as markdown',
+          inputSchema: {},
+        },
+      ],
+      language: 'python',
+      downloadCount: 0,
+      rating: 0,
+      ratingCount: 0,
+      status: 'approved',
+      featured: false,
+      publishedAt: now,
+    },
+    {
+      name: 'Git Reference Server',
+      slug: 'git-reference-server',
+      description:
+        'Official MCP reference server exposing Git operations - status, diff, commit, log, branch, and checkout - against a local repository.',
+      longDescription:
+        'This is the official "git" reference server maintained by the Model Context Protocol project (github.com/modelcontextprotocol/servers). It is listed here as a real, runnable example, not authored or hosted by MCP Everything. Takes a `--repository` path at startup.',
+      category: 'devtools',
+      tags: ['git', 'version-control', 'reference', 'mcp-official'],
+      visibility: 'public',
+      repositoryUrl: 'https://github.com/modelcontextprotocol/servers/tree/main/src/git',
+      tools: [
+        {
+          name: 'git_status',
+          description: 'Show the current working tree status of a repository',
+          inputSchema: {},
+        },
+        {
+          name: 'git_diff',
+          description: 'Compare the current state against specified branches or commits',
+          inputSchema: {},
+        },
+        {
+          name: 'git_commit',
+          description: 'Record staged changes to the repository with a message',
+          inputSchema: {},
+        },
+        {
+          name: 'git_log',
+          description: 'Retrieve commit history with optional date range filtering',
+          inputSchema: {},
+        },
+        {
+          name: 'git_checkout',
+          description: 'Switch the working directory to a different branch',
+          inputSchema: {},
+        },
+      ],
+      language: 'python',
+      downloadCount: 0,
+      rating: 0,
+      ratingCount: 0,
+      status: 'approved',
+      featured: false,
+      publishedAt: now,
+    },
+    {
+      name: 'Memory Reference Server',
+      slug: 'memory-reference-server',
+      description:
+        'Official MCP reference server implementing a persistent, knowledge-graph-based memory system of entities, relations, and observations.',
+      longDescription:
+        'This is the official "memory" reference server maintained by the Model Context Protocol project (github.com/modelcontextprotocol/servers). It is listed here as a real, runnable example, not authored or hosted by MCP Everything.',
+      category: 'ai',
+      tags: ['memory', 'knowledge-graph', 'ai', 'reference', 'mcp-official'],
+      visibility: 'public',
+      repositoryUrl: 'https://github.com/modelcontextprotocol/servers/tree/main/src/memory',
+      tools: [
+        {
+          name: 'create_entities',
+          description: 'Create multiple new entities in the knowledge graph',
+          inputSchema: {},
+        },
+        {
+          name: 'create_relations',
+          description: 'Create multiple new relations between entities',
+          inputSchema: {},
+        },
+        {
+          name: 'search_nodes',
+          description: 'Search for nodes in the knowledge graph based on a query',
+          inputSchema: {},
+        },
+        { name: 'read_graph', description: 'Read the entire knowledge graph', inputSchema: {} },
+      ],
+      envVars: ['MEMORY_FILE_PATH'],
+      language: 'typescript',
+      downloadCount: 0,
+      rating: 0,
+      ratingCount: 0,
+      status: 'approved',
+      featured: false,
+      publishedAt: now,
+    },
+    {
+      name: 'Sequential Thinking Reference Server',
+      slug: 'sequential-thinking-reference-server',
+      description:
+        'Official MCP reference server for dynamic, reflective problem-solving through revisable, branching thought sequences.',
+      longDescription:
+        'This is the official "sequentialthinking" reference server maintained by the Model Context Protocol project (github.com/modelcontextprotocol/servers). It is listed here as a real, runnable example, not authored or hosted by MCP Everything.',
+      category: 'ai',
+      tags: ['reasoning', 'planning', 'ai', 'reference', 'mcp-official'],
+      visibility: 'public',
+      repositoryUrl:
+        'https://github.com/modelcontextprotocol/servers/tree/main/src/sequentialthinking',
+      tools: [
+        {
+          name: 'sequential_thinking',
+          description:
+            'Structured, step-by-step problem-solving that can revise and branch as understanding develops',
+          inputSchema: {},
+        },
+      ],
+      envVars: ['DISABLE_THOUGHT_LOGGING'],
+      language: 'typescript',
+      downloadCount: 0,
+      rating: 0,
+      ratingCount: 0,
+      status: 'approved',
+      featured: false,
+      publishedAt: now,
+    },
+    {
+      name: 'Time Reference Server',
+      slug: 'time-reference-server',
+      description:
+        'Official MCP reference server for getting the current time and converting times between IANA timezones.',
+      longDescription:
+        'This is the official "time" reference server maintained by the Model Context Protocol project (github.com/modelcontextprotocol/servers). It is listed here as a real, runnable example, not authored or hosted by MCP Everything.',
+      category: 'utility',
+      tags: ['time', 'timezone', 'utility', 'reference', 'mcp-official'],
+      visibility: 'public',
+      repositoryUrl: 'https://github.com/modelcontextprotocol/servers/tree/main/src/time',
+      tools: [
+        {
+          name: 'get_current_time',
+          description: 'Get the current time in a specific timezone or the system timezone',
+          inputSchema: {},
+        },
+        {
+          name: 'convert_time',
+          description: 'Convert a time from one IANA timezone to another',
+          inputSchema: {},
+        },
+      ],
+      envVars: ['LOCAL_TIMEZONE'],
+      language: 'python',
+      downloadCount: 0,
+      rating: 0,
+      ratingCount: 0,
       status: 'approved',
       featured: false,
       publishedAt: now,

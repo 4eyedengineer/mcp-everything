@@ -22,10 +22,15 @@
           Enter a GitHub repository URL
         </mat-error>
         <mat-error *ngIf="urlForm.get('url')?.hasError('invalidGithubUrl')">
-          Must look like github.com/owner/repo
+          Must look like github.com/owner/repo (or just owner/repo)
         </mat-error>
       </mat-form-field>
     </form>
+
+    <div class="url-check-error" *ngIf="urlCheckError()">
+      <mat-icon>error_outline</mat-icon>
+      {{ urlCheckError() }}
+    </div>
 
     <div class="divider"><span>or search</span></div>
 
@@ -70,33 +75,82 @@
       No repositories found. Try a different search term or paste a URL above.
     </div>
 
-    <!-- Your repositories (only when GitHub is configured server-side) -->
-    <ng-container *ngIf="githubConfigured() && myRepos().length > 0">
-      <div class="divider"><span>your repositories</span></div>
-      <div class="repo-list">
-        <button
-          *ngFor="let repo of myRepos()"
-          type="button"
-          class="repo-item"
-          (click)="selectRepo(repo)"
-        >
-          <div class="repo-item-main">
-            <span class="repo-name">{{ repo.fullName }}</span>
-            <span class="repo-stars" *ngIf="repo.stars">
-              <mat-icon>star</mat-icon>{{ repo.stars }}
-            </span>
-          </div>
-          <div class="repo-description" *ngIf="repo.description">{{ repo.description }}</div>
-          <div class="repo-language" *ngIf="repo.language">{{ repo.language }}</div>
-        </button>
-      </div>
-    </ng-container>
+    <!-- Your repositories - four honest states, see GithubRepoPanelState -->
+    <ng-container *ngIf="!isLoadingMyRepos()">
+      <ng-container [ngSwitch]="githubPanelState()">
+        <!-- (i) Not connected at all -->
+        <div class="connect-note" *ngSwitchCase="'not_connected'">
+          <mat-icon>info_outline</mat-icon>
+          <span>Connect your GitHub account to list your own repositories here.</span>
+          <button type="button" class="mcp-btn-secondary connect-button" (click)="connectGithub()">
+            <mat-icon>link</mat-icon>
+            <span>Connect GitHub</span>
+          </button>
+        </div>
 
-    <!-- Subtle hint when no personal token is configured -->
-    <div class="connect-note" *ngIf="!isLoadingMyRepos() && !githubConfigured()">
-      <mat-icon>info_outline</mat-icon>
-      Connecting a GitHub account/token enables listing your own repositories here.
-    </div>
+        <!-- (ii) Connected, but GitHub rejected (or we can't use) the stored token -->
+        <div class="connect-note connect-note-warning" *ngSwitchCase="'needs_reconnect'">
+          <mat-icon>warning_amber</mat-icon>
+          <span>Your GitHub connection needs to be re-authorized before we can list your repositories.</span>
+          <button type="button" class="mcp-btn-secondary connect-button" (click)="connectGithub()">
+            <mat-icon>link</mat-icon>
+            <span>Reconnect GitHub</span>
+          </button>
+        </div>
+
+        <!-- (iii) Falling back to the server-configured account - label truthfully -->
+        <ng-container *ngSwitchCase="'server_fallback'">
+          <div class="connect-note" *ngIf="myRepos().length > 0">
+            <mat-icon>info_outline</mat-icon>
+            <span>Showing repositories for this server's configured GitHub account, not yours.</span>
+            <button type="button" class="mcp-btn-secondary connect-button" (click)="connectGithub()">
+              <mat-icon>link</mat-icon>
+              <span>Connect your account</span>
+            </button>
+          </div>
+          <div class="divider" *ngIf="myRepos().length > 0"><span>server account's repositories</span></div>
+          <div class="repo-list" *ngIf="myRepos().length > 0">
+            <button
+              *ngFor="let repo of myRepos()"
+              type="button"
+              class="repo-item"
+              (click)="selectRepo(repo)"
+            >
+              <div class="repo-item-main">
+                <span class="repo-name">{{ repo.fullName }}</span>
+                <span class="repo-stars" *ngIf="repo.stars">
+                  <mat-icon>star</mat-icon>{{ repo.stars }}
+                </span>
+              </div>
+              <div class="repo-description" *ngIf="repo.description">{{ repo.description }}</div>
+              <div class="repo-language" *ngIf="repo.language">{{ repo.language }}</div>
+            </button>
+          </div>
+        </ng-container>
+
+        <!-- (iv) Connected and working -->
+        <ng-container *ngSwitchCase="'connected'">
+          <div class="divider" *ngIf="myRepos().length > 0"><span>your repositories</span></div>
+          <div class="repo-list" *ngIf="myRepos().length > 0">
+            <button
+              *ngFor="let repo of myRepos()"
+              type="button"
+              class="repo-item"
+              (click)="selectRepo(repo)"
+            >
+              <div class="repo-item-main">
+                <span class="repo-name">{{ repo.fullName }}</span>
+                <span class="repo-stars" *ngIf="repo.stars">
+                  <mat-icon>star</mat-icon>{{ repo.stars }}
+                </span>
+              </div>
+              <div class="repo-description" *ngIf="repo.description">{{ repo.description }}</div>
+              <div class="repo-language" *ngIf="repo.language">{{ repo.language }}</div>
+            </button>
+          </div>
+        </ng-container>
+      </ng-container>
+    </ng-container>
   </mat-dialog-content>
 
   <mat-dialog-actions align="end">
@@ -105,11 +159,12 @@
       mat-raised-button
       color="primary"
       type="button"
-      [disabled]="urlForm.invalid"
+      [disabled]="urlForm.invalid || isCheckingUrl()"
       (click)="submitUrl()"
       class="use-url-button"
     >
-      Use this repo
+      <mat-spinner *ngIf="isCheckingUrl()" diameter="16"></mat-spinner>
+      <span>{{ isCheckingUrl() ? 'Checking...' : 'Use this repo' }}</span>
     </button>
   </mat-dialog-actions>
 </div>

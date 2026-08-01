@@ -13,6 +13,7 @@ import { SubscriptionService, TierInfo, SubscriptionInfo, UsageInfo } from '../.
 import { AuthService, User, userDisplayName } from '../../core/services/auth.service';
 import { ApiKeySectionComponent } from './sections/api-key-section/api-key-section.component';
 import { UsageStatsSectionComponent } from './sections/usage-stats-section/usage-stats-section.component';
+import { GithubConnectionSectionComponent } from './sections/github-connection-section/github-connection-section.component';
 import { ThemeToggleComponent } from '../../shared/components/theme-toggle/theme-toggle.component';
 import { ConfirmDialogComponent, ConfirmDialogData } from '../../shared/components/confirm-dialog/confirm-dialog.component';
 
@@ -45,6 +46,7 @@ interface AccountDto {
     MatDialogModule,
     ApiKeySectionComponent,
     UsageStatsSectionComponent,
+    GithubConnectionSectionComponent,
     ThemeToggleComponent
   ],
   templateUrl: './account.component.html',

@@ -9,6 +9,8 @@ import { User } from '../database/entities/user.entity';
 import { RegisterDto } from './dto/register.dto';
 import { TokenResponseDto } from './dto/token-response.dto';
 import { JwtPayload } from './strategies/jwt.strategy';
+import { GITHUB_OAUTH_SCOPES } from './strategies/github.strategy';
+import { TokenEncryptionService } from '../common/token-encryption/token-encryption.service';
 
 @Injectable()
 export class AuthService {
@@ -21,6 +23,7 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
     private readonly emailService: EmailService,
+    private readonly tokenEncryptionService: TokenEncryptionService,
   ) {}
 
   /**
@@ -161,9 +164,42 @@ export class AuthService {
       });
     }
 
+    // Persist the GitHub access token (encrypted) on every GitHub login -
+    // new user, newly-linked existing user, or an existing GitHub-linked
+    // user logging in again (refreshes the stored token each time, since
+    // GitHub OAuth App tokens don't expire but may be reissued/rotated).
+    // Deliberately NOT done for Google (GoogleStrategy never requests a
+    // token here and nothing downstream needs one).
+    if (data.provider === 'github' && data.accessToken) {
+      await this.persistGithubToken(user.id, data.accessToken);
+    }
+
     await this.userService.updateLastLogin(user.id);
     this.logger.log(`OAuth user authenticated: ${user.id}`);
     return this.generateTokens(user);
+  }
+
+  /**
+   * Encrypt and persist a user's GitHub OAuth access token. Never logs the
+   * token itself. If `TOKEN_ENCRYPTION_KEY` is not configured (or invalid),
+   * `TokenEncryptionService.encrypt` returns `undefined` and this degrades
+   * to a warning - the user is still logged in, they just won't get
+   * per-user repository listing until the server is configured with a key.
+   */
+  private async persistGithubToken(userId: string, accessToken: string): Promise<void> {
+    const encrypted = this.tokenEncryptionService.encrypt(accessToken);
+
+    if (!encrypted) {
+      this.logger.warn(
+        `Not persisting GitHub access token for user ${userId}: TOKEN_ENCRYPTION_KEY is not ` +
+          'configured (or invalid) on this server. GitHub login still succeeds; per-user ' +
+          'repository listing will be unavailable until a valid key is configured.',
+      );
+      return;
+    }
+
+    await this.userService.setGithubToken(userId, encrypted, GITHUB_OAUTH_SCOPES.join(' '));
+    this.logger.log(`Stored GitHub access token for user ${userId} (never logged in plaintext)`);
   }
 
   /**
