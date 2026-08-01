@@ -42,20 +42,16 @@ configMapGenerator:
       - PIPELINE_INTENT_CONFIDENCE_MIN=0.75
       # GitHubStrategy/GoogleStrategy (src/auth/strategies/*.ts) are
       # unconditionally instantiated by AuthModule and call
-      # passport-oauth2's Strategy constructor, which throws synchronously
-      # ("OAuth2Strategy requires a clientID option") if these are unset -
-      # that crashes the whole Nest app at boot, not just OAuth login.
-      # Verified locally: the image exits immediately without these. Real
-      # GitHub/Google OAuth apps are not set up for this homelab deployment,
-      # so these are inert placeholders that satisfy the constructor only -
-      # the /auth/github and /auth/google routes will not work until real
-      # OAuth app credentials replace them.
-      - GITHUB_CLIENT_ID=unset-homelab-placeholder
-      - GITHUB_CLIENT_SECRET=unset-homelab-placeholder
-      - GITHUB_CALLBACK_URL=http://mcp.192.168.1.240.nip.io/api/v1/auth/github/callback
-      - GOOGLE_CLIENT_ID=unset-homelab-placeholder
-      - GOOGLE_CLIENT_SECRET=unset-homelab-placeholder
-      - GOOGLE_CALLBACK_URL=http://mcp.192.168.1.240.nip.io/api/v1/auth/google/callback
+      # Real OAuth apps for the public domain. Client IDs are public by
+      # design; the matching GITHUB_CLIENT_SECRET / GOOGLE_CLIENT_SECRET live
+      # in sealed-secret.yaml (Secret mcp-everything-secrets), not here.
+      # GitHub: production OAuth app "MCP Everything" (a separate dev app
+      # covers localhost). Google: one shared web client whose authorized
+      # redirect URIs include both localhost and mcpeverything.com.
+      - GITHUB_CLIENT_ID=Ov23li387fiJNgIKyKA9
+      - GITHUB_CALLBACK_URL=https://mcpeverything.com/api/v1/auth/github/callback
+      - GOOGLE_CLIENT_ID=673009220775-mebimjt3cta9iscemnt274h2absh504m.apps.googleusercontent.com
+      - GOOGLE_CALLBACK_URL=https://mcpeverything.com/api/v1/auth/google/callback
 
 patches:
   - path: patches/backend.yaml
