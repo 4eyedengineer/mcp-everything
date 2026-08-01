@@ -1,3 +1,45 @@
 [
-  { "op": "replace", "path": "/spec/rules/0/host", "value": "mcp.192.168.1.240.nip.io" }
+  { "op": "replace", "path": "/spec/rules/0/host", "value": "mcp.192.168.1.240.nip.io" },
+  {
+    "op": "add",
+    "path": "/spec/rules/-",
+    "value": {
+      "host": "mcpeverything.com",
+      "http": {
+        "paths": [
+          {
+            "path": "/api",
+            "pathType": "Prefix",
+            "backend": { "service": { "name": "mcp-backend", "port": { "name": "http" } } }
+          },
+          {
+            "path": "/",
+            "pathType": "Prefix",
+            "backend": { "service": { "name": "mcp-frontend", "port": { "name": "http" } } }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "op": "add",
+    "path": "/spec/rules/-",
+    "value": {
+      "host": "www.mcpeverything.com",
+      "http": {
+        "paths": [
+          {
+            "path": "/api",
+            "pathType": "Prefix",
+            "backend": { "service": { "name": "mcp-backend", "port": { "name": "http" } } }
+          },
+          {
+            "path": "/",
+            "pathType": "Prefix",
+            "backend": { "service": { "name": "mcp-frontend", "port": { "name": "http" } } }
+          }
+        ]
+      }
+    }
+  }
 ]
