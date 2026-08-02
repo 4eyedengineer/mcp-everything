@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { HostingService } from './hosting.service';
 import { UserService } from '../user/user.service';
+import { TokenEncryptionService } from '../common/token-encryption/token-encryption.service';
 import { UserTier } from '../subscription/tier-config';
 import { HostedServer } from '../database/entities/hosted-server.entity';
 import { Deployment } from '../database/entities/deployment.entity';
@@ -23,7 +24,13 @@ describe('HostingService', () => {
   };
   let userService: { findById: jest.Mock };
   let deploymentRepo: { findOne: jest.Mock };
-  let containerRegistryService: { buildAndPush: jest.Mock; deleteImage: jest.Mock };
+  let tokenEncryptionService: { encrypt: jest.Mock; decrypt: jest.Mock };
+  let containerRegistryService: {
+    buildAndPush: jest.Mock;
+    buildImage: jest.Mock;
+    pushImage: jest.Mock;
+    deleteImage: jest.Mock;
+  };
   let manifestGeneratorService: { buildAll: jest.Mock; getDomain: jest.Mock };
   let k8sControlPlane: {
     isEnabled: jest.Mock;
@@ -76,7 +83,18 @@ describe('HostingService', () => {
       findById: jest.fn().mockResolvedValue({ id: 'user-1', tier: UserTier.FREE }),
     };
     deploymentRepo = { findOne: jest.fn() };
-    containerRegistryService = { buildAndPush: jest.fn(), deleteImage: jest.fn() };
+    tokenEncryptionService = {
+      encrypt: jest.fn((v: string) => `enc(${v})`),
+      decrypt: jest.fn((v: string) => (v?.startsWith('enc(') ? v.slice(4, -1) : undefined)),
+    };
+    containerRegistryService = {
+      buildAndPush: jest.fn(),
+      // buildImage/pushImage are the real deploy path now - they were split
+      // apart so the 'pushing' status the UI renders can actually be reached.
+      buildImage: jest.fn().mockResolvedValue('ghcr.io/owner/repo/x:latest'),
+      pushImage: jest.fn().mockResolvedValue(undefined),
+      deleteImage: jest.fn(),
+    };
     manifestGeneratorService = {
       buildAll: jest.fn().mockReturnValue({ deployment: {}, service: {}, secret: undefined }),
       getDomain: jest.fn().mockReturnValue('mcp.example.com'),
@@ -119,6 +137,7 @@ describe('HostingService', () => {
         { provide: LocalDockerHostingService, useValue: localDockerHostingService },
         { provide: ConfigService, useValue: mockConfigService },
         { provide: UserService, useValue: userService },
+        { provide: TokenEncryptionService, useValue: tokenEncryptionService },
       ],
     }).compile();
 
@@ -173,14 +192,15 @@ describe('HostingService', () => {
         expect(body.message).toContain('Free');
       });
 
-      it('blocks before doing any expensive work (no image build, no GitOps commit, no row written)', async () => {
+      it('blocks before doing any expensive work (no image build, no cluster apply, no row written)', async () => {
         hostedServerRepo.count.mockResolvedValue(1);
 
         await expect(service.deployToCloud('conv-1', 'user-1')).rejects.toThrow(ForbiddenException);
 
         expect(hostedServerRepo.save).not.toHaveBeenCalled();
         expect(containerRegistryService.buildAndPush).not.toHaveBeenCalled();
-        expect(gitOpsService.deployServer).not.toHaveBeenCalled();
+        expect(containerRegistryService.buildImage).not.toHaveBeenCalled();
+        expect(k8sControlPlane.applyServer).not.toHaveBeenCalled();
       });
 
       it('applies the pro tier limit (10), not the free tier limit', async () => {
@@ -242,17 +262,20 @@ describe('HostingService', () => {
     describe('kubernetes mode (default)', () => {
       it('builds, pushes and applies the server to the cluster', async () => {
         deploymentRepo.findOne.mockResolvedValue(baseDeployment);
-        containerRegistryService.buildAndPush.mockResolvedValue('ghcr.io/owner/repo/x:latest');
+        containerRegistryService.buildImage.mockResolvedValue('ghcr.io/owner/repo/x:latest');
 
         const result = await service.deployToCloud('conv-1', 'user-1');
 
         expect(result.success).toBe(true);
         expect(result.endpointUrl).toMatch(/^https:\/\//);
-        expect(containerRegistryService.buildAndPush).toHaveBeenCalledWith(
+        // Build and push are separate calls so the 'pushing' stage the UI
+        // renders is actually reachable.
+        expect(containerRegistryService.buildImage).toHaveBeenCalledWith(
           baseDeployment.localPath,
           result.serverId,
           'latest',
         );
+        expect(containerRegistryService.pushImage).toHaveBeenCalledWith('ghcr.io/owner/repo/x:latest');
         expect(k8sControlPlane.applyServer).toHaveBeenCalledWith(
           expect.objectContaining({
             serverId: result.serverId,
@@ -320,7 +343,7 @@ describe('HostingService', () => {
 
       it('reports failed with the real error when the registry build fails', async () => {
         deploymentRepo.findOne.mockResolvedValue(baseDeployment);
-        containerRegistryService.buildAndPush.mockRejectedValue(
+        containerRegistryService.buildImage.mockRejectedValue(
           new Error('Docker build failed: docker: not found'),
         );
 
