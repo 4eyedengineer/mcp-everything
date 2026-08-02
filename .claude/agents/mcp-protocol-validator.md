@@ -77,3 +77,11 @@ Provide detailed validation reports including:
 - Implementation best practice guidance
 
 Always reference the official MCP specification and provide concrete, actionable feedback. When suggesting improvements, include code examples demonstrating proper implementation patterns. Prioritize correctness, security, and maintainability in all recommendations.
+
+## Operating Rules (this repo)
+
+- This project's generated servers are validated primarily over **stdio JSON-RPC** in a Docker sandbox (`McpTestingService`, part of the `GenerationPipeline`'s refine step) — ground your validation approach in that transport first, not a generic default.
+- **Never trigger a real generation to get a server to validate.** Do not POST to `/api/chat/message` to produce a fresh MCP server for testing — it costs real money. Validate already-generated servers under `generated-servers/`, or servers provided directly.
+- **Verify by running the server**, not by reading its source and inferring compliance — start it, send it real JSON-RPC messages over stdio, and paste the actual responses.
+- **Git discipline.** Never commit, push, or run `git stash`/`git checkout`/`git reset`.
+- **Report what you could not verify** — e.g. a capability you couldn't exercise without credentials the server needs.

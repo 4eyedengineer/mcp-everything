@@ -706,6 +706,35 @@ Each generated server now emits its own `Dockerfile` and `.dockerignore` (previo
 
 **Unvalidated**: Kubernetes manifests exist under `k8s/` (base + overlays for production/development, monitoring stack, cert-manager, ingress) and CI publishes images, but the actual cloud/k8s deploy path has not been exercised end-to-end.
 
+### Generated MCP Server Transport
+
+Generated servers are **dual-transport**, selected at container start via
+the `MCP_TRANSPORT` env var:
+- unset or `stdio` (**default**): `StdioServerTransport` - what Claude
+  Desktop and the GitHub/Gist download path use, unchanged.
+- `http`: `StreamableHTTPServerTransport`, serving real MCP Streamable HTTP
+  on `POST /mcp` (`PORT`, default 3000), plus `GET /health` for container
+  probes. A new `McpServer` + transport pair is created per
+  `Mcp-Session-Id`.
+
+Codegen (`RefinementService`'s reference implementation and prompts) targets
+the high-level `McpServer` + `registerTool` API from
+`@modelcontextprotocol/sdk` (pinned to `1.30.0` in generated `package.json`s),
+not the low-level `Server` + `setRequestHandler` API. Internal MCP clients
+(hosting handshake, Docker-sandboxed testing, protocol validator) speak
+protocol version `2025-11-25` - the newest revision this SDK implements.
+Spec revision `2026-07-28` is a breaking change (drops the `initialize`
+handshake in favor of per-request `_meta` protocol versions, adds a
+mandatory `server/discover` RPC) that SDK `1.30.0` predates and does not
+implement; `2025-11-25` is used deliberately, not by oversight.
+
+`ManifestGeneratorService` sets `MCP_TRANSPORT=http` on every generated K8s
+Deployment so its liveness/readiness probes target a transport the
+container actually opens. This closes what was previously a guaranteed
+failure mode (stdio-only containers behind HTTP probes) - it does not by
+itself mean the K8s path has been run against a real cluster; see the
+"Unvalidated" note above, which still holds.
+
 ### Environment Configuration
 
 ```typescript

@@ -14,9 +14,10 @@ AI-native conversational platform for automatically generating and hosting Model
 - Global JWT guard with ownership checks on conversations/deployments/hosting; single-use 60s SSE stream tickets; Docker-sandboxed code execution (`npm --ignore-scripts`, no host env, resource limits); the 5 unauthenticated debug endpoints have been deleted
 - Real marketplace backend, seeded with 6 servers; Explore page connects to the real API
 - **Validated on 2026-07-29**: the pipeline generated two working MCP servers (JSONPlaceholder, 7/7 and 10/10 tools passing), independently verified via stdio JSON-RPC
+- **Dual-transport generated servers**: `MCP_TRANSPORT` env var selects `stdio` (default - Claude Desktop, GitHub/Gist downloads) or `http` (real MCP Streamable HTTP on `POST /mcp` + `GET /health`, protocol `2025-11-25`, high-level `McpServer`/`registerTool` API, `@modelcontextprotocol/sdk` pinned to `1.30.0`); K8s manifests now set `MCP_TRANSPORT=http` so liveness/readiness probes target a real listener
 
 ### ⚠️ What Still Needs Validation
-- **Cloud/Kubernetes deploy path** - manifests exist under `k8s/` but the deploy has never been exercised end-to-end
+- **Cloud/Kubernetes deploy path** - manifests exist under `k8s/` and generated servers now implement the HTTP transport those manifests' probes expect, but the deploy has never been exercised end-to-end against a real cluster; there's also no Docker daemon on the dev machine, so the container build/run path itself is unverified
 - **Quota enforcement** - tier-based monthly usage limits are in progress
 - **Payments** - no Stripe/billing integration yet
 
@@ -200,6 +201,16 @@ mcp-server-example/
 ├── Dockerfile            # Container configuration
 └── .dockerignore
 ```
+
+Servers are **dual-transport**, controlled by `MCP_TRANSPORT`:
+- unset / `stdio` (default) - `StdioServerTransport`, for Claude Desktop and
+  the GitHub/Gist download path
+- `http` - `StreamableHTTPServerTransport` on `POST /mcp` (`PORT`, default
+  3000) plus `GET /health`, for hosting (K8s manifests set this
+  automatically)
+
+Built on the high-level `McpServer` + `registerTool` API from
+`@modelcontextprotocol/sdk` (pinned `1.30.0`), protocol version `2025-11-25`.
 
 ## API Endpoints
 

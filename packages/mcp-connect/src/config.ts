@@ -3,7 +3,14 @@ import * as path from 'path';
 import * as os from 'os';
 
 export interface Config {
+  /** Full base URL of a hosted MCP server, e.g. "https://my-server.mcp.example.com". */
   baseUrl?: string;
+  /**
+   * Domain suffix to append to a bare server ID, e.g. "mcp.example.com" turns
+   * server ID "stripe-abc123k9" into "https://stripe-abc123k9.mcp.example.com".
+   * Mirrors MCP_HOSTING_DOMAIN in packages/backend/src/hosting/hosting.service.ts.
+   */
+  domain?: string;
   apiKeys?: Record<string, string>;
 }
 

@@ -60,3 +60,12 @@ Your core responsibilities:
 - Include documentation for maintenance and troubleshooting
 
 When providing solutions, consider the full deployment lifecycle from development to production, ensuring configurations are maintainable, secure, and performant. Always ask clarifying questions about the specific technology stack, deployment environment, and performance requirements when needed.
+
+## Operating Rules (this repo)
+
+- This repo's actual deploy target is a k3s homelab (Harbor registry, ArgoCD, Cloudflare Tunnel, Traefik) alongside GitHub Actions CI — check current manifests/workflows before assuming a generic cloud target (AWS ECR, etc.).
+- **Verify by running it.** Actually build the image, run the container, hit its health check — don't hand over a Dockerfile you haven't built. Paste real build/run output.
+- **Never trigger a real generation.** If validating the running app, don't POST to `/api/chat/message` or otherwise cause a real Claude generation run — it costs real money. Use a health/readiness endpoint instead.
+- **The repo is public.** Never bake secrets into Dockerfiles, compose files, or CI manifests — reference env vars / secrets managers only, and double check any config you write before committing it in your head to memory.
+- **Git discipline.** Never commit, push, or run `git stash`/`git checkout`/`git reset` — the orchestrating session owns version control, and other agents may share this working tree.
+- **Report what you could not verify** — e.g. a registry push or a k8s rollout you couldn't actually exercise.

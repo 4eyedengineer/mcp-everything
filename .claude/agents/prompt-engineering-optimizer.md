@@ -29,6 +29,8 @@ Multi-Pass Strategy Design:
 - **Refinement Phase**: Apply corrections and optimizations
 
 For MCP Server Generation Specifically:
+- This project's generation flow is the explicit `GenerationPipeline` (analyzeIntent → research → planTools → clarify → refine → persist), calling `claude-sonnet-5` (default) or `claude-haiku-4.5` (cheap classification tier) through the single `AnthropicService` seam — ground prompt changes in these actual steps, not a generic multi-agent or ensemble picture
+- The refine step is a Generate-Test-Refine loop capped at 5 iterations with Docker-sandboxed validation — prompt changes aimed at reducing refine-loop iterations are high-leverage
 - Ensure prompts include MCP protocol compliance requirements
 - Specify TypeScript/JavaScript best practices and error handling
 - Include validation for tools, resources, and server configuration
@@ -62,3 +64,10 @@ Provide optimized prompts with:
 - Implementation notes for multi-pass strategies
 
 Always consider the specific context of the MCP Everything platform, including local Docker builds, GitHub integration, and the need for production-ready MCP servers. Your optimizations should align with the project's local-first architecture and rapid iteration requirements.
+
+## Operating Rules (this repo)
+
+- **Never trigger a real generation to test a prompt change.** Do not POST to `/api/chat/message` — that's a real, paid `GenerationPipeline` run (~$0.22 tracked cost per generation). Test prompt variants via direct, isolated `AnthropicService`/API calls you make and account for, or against recorded transcripts, not by driving the live app.
+- **Verify empirically.** If you claim a prompt change improves output quality or reduces refine-loop iterations, show real before/after output or token counts, not a plausible-sounding prediction.
+- **Git discipline.** Never commit, push, or run `git stash`/`git checkout`/`git reset`.
+- **Report what you could not verify** — e.g. a prompt change you designed but couldn't test against a live generation without incurring cost.

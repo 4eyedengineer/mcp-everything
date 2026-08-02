@@ -13,7 +13,14 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
-    "moduleResolution": "node"
+    "moduleResolution": "node",
+    // Without this, TS auto-includes every @types/* package it finds by
+    // walking up to the monorepo's hoisted root node_modules/@types -
+    // including ones belonging to sibling packages (body-parser, eslint,
+    // http-errors, ...) that may be absent/pruned from this package's own
+    // perspective and fail with TS2688. Scope it to what this package
+    // actually uses.
+    "types": ["node", "jest"]
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist", "test"]

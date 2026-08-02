@@ -80,39 +80,6 @@
       }
     }
 
-    .cost-estimate {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 12px 16px;
-      // Was a hardcoded light-blue-to-green gradient with a hardcoded blue
-      // border - correct in light mode but a jarring pastel patch against
-      // the dark theme. Now fully token-based/dark-aware.
-      background: linear-gradient(135deg, var(--success-bg) 0%, var(--success-bg-alt) 100%);
-      border-radius: 8px;
-      border: 1px solid var(--success-border);
-
-      .cost-label {
-        font-size: 14px;
-        color: var(--text-secondary);
-      }
-
-      .cost-value {
-        font-size: 16px;
-        color: var(--text-primary);
-
-        strong {
-          color: var(--success-text);
-        }
-
-        .cost-note {
-          font-size: 12px;
-          color: var(--text-secondary);
-          margin-left: 4px;
-        }
-      }
-    }
-
     .error-message {
       display: flex;
       align-items: center;

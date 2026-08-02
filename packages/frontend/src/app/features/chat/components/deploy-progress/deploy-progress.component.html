@@ -47,12 +47,15 @@
       <!-- Endpoint URL -->
       <div class="endpoint-info">
         <label>Endpoint URL:</label>
-        <div class="endpoint-value">
+        <div class="endpoint-value" *ngIf="endpointUrl; else noEndpoint">
           <code>{{ endpointUrl }}</code>
           <button mat-icon-button (click)="copyEndpoint()" matTooltip="Copy URL" aria-label="Copy endpoint URL">
             <mat-icon>content_copy</mat-icon>
           </button>
         </div>
+        <ng-template #noEndpoint>
+          <span class="endpoint-unavailable">Endpoint not available yet.</span>
+        </ng-template>
       </div>
 
       <!-- Claude Desktop Config -->

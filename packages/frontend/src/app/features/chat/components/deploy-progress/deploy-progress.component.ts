@@ -10,6 +10,7 @@ import {
   HostedServerStatus,
   ServerStatusResponse
 } from '../../../../core/services/hosting-api.service';
+import { buildClaudeDesktopConfigJson } from '../../../../shared/utils/claude-desktop-config.util';
 
 /**
  * Deployment step status
@@ -122,12 +123,7 @@ export class DeployProgressComponent implements OnInit, OnDestroy {
     // Check for terminal states
     if (status.status === 'running') {
       this.deployed = true;
-      this.endpointUrl = `https://${this.serverId}.mcp.example.com`; // Placeholder
-      this.deploymentComplete.emit({
-        success: true,
-        serverId: this.serverId,
-        endpointUrl: this.endpointUrl
-      });
+      this.loadEndpointUrl();
     } else if (status.status === 'failed') {
       this.failed = true;
       this.error = status.message || 'Deployment failed';
@@ -137,6 +133,36 @@ export class DeployProgressComponent implements OnInit, OnDestroy {
         error: this.error
       });
     }
+  }
+
+  /**
+   * The `/status` polling response (`ServerStatusResponse`) intentionally
+   * does not carry `endpointUrl` - only the full server record
+   * (`GET /servers/:serverId`, via `getServer`) does. Fetch that once the
+   * server reaches 'running' rather than fabricating a URL. If this call
+   * fails, the deployment itself still succeeded (status polling already
+   * confirmed 'running'); we just honestly show no endpoint rather than
+   * inventing one.
+   */
+  private loadEndpointUrl(): void {
+    this.hostingApiService.getServer(this.serverId).subscribe({
+      next: (server) => {
+        this.endpointUrl = server.endpointUrl || undefined;
+        this.emitComplete();
+      },
+      error: () => {
+        this.endpointUrl = undefined;
+        this.emitComplete();
+      }
+    });
+  }
+
+  private emitComplete(): void {
+    this.deploymentComplete.emit({
+      success: true,
+      serverId: this.serverId,
+      endpointUrl: this.endpointUrl
+    });
   }
 
   /**
@@ -209,21 +235,13 @@ export class DeployProgressComponent implements OnInit, OnDestroy {
   }
 
   /**
-   * Get Claude Desktop configuration snippet
+   * Get Claude Desktop configuration snippet. Claude Desktop can only launch
+   * local stdio processes, so a hosted server is reached through the local
+   * `mcp-connect` proxy (see claude-desktop-config.util.ts) - this does not
+   * depend on `endpointUrl` at all, only on `serverId`.
    */
   get claudeDesktopConfig(): string {
-    return JSON.stringify(
-      {
-        mcpServers: {
-          [this.serverName.toLowerCase().replace(/\s+/g, '-')]: {
-            transport: 'sse',
-            url: this.endpointUrl
-          }
-        }
-      },
-      null,
-      2
-    );
+    return buildClaudeDesktopConfigJson(this.serverName, this.serverId);
   }
 
   /**

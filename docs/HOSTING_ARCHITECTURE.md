@@ -78,9 +78,9 @@ User: "Create Stripe MCP server" → [Generate] → [Test] → [Host on Cloud]
 │                           CLIENT CONNECTION                                  │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                              │
-│  ┌─────────────────┐     stdio      ┌─────────────────┐     HTTPS          │
-│  │ Claude Desktop  │◄──────────────►│ mcp-connect     │◄──────────────────►│
-│  │                 │                │ (local proxy)   │                     │
+│  ┌─────────────────┐     stdio      ┌─────────────────┐  MCP Streamable    │
+│  │ Claude Desktop  │◄──────────────►│ mcp-connect     │◄──────HTTP─────────►│
+│  │                 │                │ (local proxy)   │  (POST /mcp)        │
 │  └─────────────────┘                └─────────────────┘                     │
 │                                                              │              │
 │                                            https://stripe-abc.mcp.domain.com│
@@ -263,35 +263,50 @@ spec:
                   number: 80
 ```
 
-### 5. MCP HTTP Wrapper
+### 5. Generated servers speak HTTP natively (no separate wrapper process)
 
-Since MCP protocol uses stdio, we need to wrap it in HTTP for Kubernetes:
+There is no HTTP wrapper process. Generated MCP servers are dual-transport by
+construction (codegen in `refinement.service.ts`, high-level `McpServer` +
+`registerTool` API from `@modelcontextprotocol/sdk` `1.30.0`): they read
+`MCP_TRANSPORT` from the environment and either start a `StdioServerTransport`
+(default, unset or `stdio` - this is what Claude Desktop and the
+GitHub/Gist download path use unchanged) or a per-session
+`StreamableHTTPServerTransport` (`MCP_TRANSPORT=http`) that serves real MCP
+Streamable HTTP on `POST /mcp` (`PORT`, default 3000) plus `GET /health` for
+K8s probes. `ManifestGeneratorService` sets `MCP_TRANSPORT=http` on every
+generated Deployment, which is what makes the liveness/readiness probes
+below viable at all.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    MCP Server Container                      │
+│              MCP Server Container (MCP_TRANSPORT=http)       │
 ├─────────────────────────────────────────────────────────────┤
 │                                                              │
-│   ┌──────────────────┐        ┌──────────────────┐         │
-│   │ HTTP/WS Wrapper  │──stdio─│ MCP Server       │         │
-│   │ (Express)        │        │ (Generated Code) │         │
-│   │                  │        │                  │         │
-│   │ POST /mcp        │        │ tools/list       │         │
-│   │ WS   /mcp/stream │        │ tools/call       │         │
-│   │ GET  /health     │        │                  │         │
-│   └──────────────────┘        └──────────────────┘         │
+│   ┌──────────────────────────────────────────────────┐     │
+│   │ MCP Server (Generated Code)                       │     │
+│   │  McpServer + registerTool, one instance per        │     │
+│   │  Mcp-Session-Id                                    │     │
+│   │                                                    │     │
+│   │  POST /mcp    (Streamable HTTP, SSE-framed)         │     │
+│   │  GET  /health                                       │     │
+│   └──────────────────────────────────────────────────┘     │
 │          ▲                                                  │
-│          │ port 3000                                        │
+│          │ port 3000 (PORT env)                              │
 └──────────┼──────────────────────────────────────────────────┘
            │
     Kubernetes Service
 ```
 
-The wrapper is a thin Express server that:
-1. Receives HTTP/WebSocket requests
-2. Spawns MCP server as child process
-3. Pipes requests to stdin
-4. Returns stdout as HTTP response
+The previous `packages/mcp-wrapper` package (an Express process that spawned
+the stdio server as a child and bridged HTTP/WebSocket to its stdin/stdout)
+has been **deleted**. It's obsolete now that generated servers open their own
+HTTP listener directly - there's no stdio child process to bridge to in
+`http` mode.
+
+**Unverified**: there is no Docker daemon on the dev machine, so the
+container path above (build → run with `MCP_TRANSPORT=http` → probes pass)
+has not been exercised against a real container, and the K8s hosting path
+as a whole has never been run end-to-end against a real cluster.
 
 ### 6. Local Proxy (`@mcpeverything/connect`)
 
@@ -311,10 +326,20 @@ Claude Desktop config:
 }
 ```
 
-The proxy:
-1. Receives stdio from Claude Desktop
-2. Forwards to `https://{server-id}.mcp.yourdomain.com/mcp`
-3. Streams responses back
+**Intended contract** (the piece this proxy exists to provide): speak stdio
+to Claude Desktop on one side, and real MCP Streamable HTTP
+(`POST https://{server-id}.mcp.yourdomain.com/mcp`, `Accept` including
+`text/event-stream`, `Mcp-Session-Id` echoed after `initialize`) to the
+hosted server on the other - i.e. exactly the protocol generated servers
+now actually speak in `http` mode.
+
+`packages/mcp-connect` is currently being reworked to that contract; as of
+this writing its `StdioTransport` class still speaks a bespoke JSON-RPC
+protocol (`POST {serverUrl}/mcp` with a bearer token, falling back to a raw
+WebSocket for streaming methods) rather than real Streamable HTTP framing.
+Don't take the class name or current request/response shape in
+`packages/mcp-connect/src/transport.ts` as the target design - it predates
+this change and is mid-rewrite.
 
 ## Database Schema
 

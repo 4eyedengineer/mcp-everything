@@ -837,25 +837,55 @@ what's actually deployed, not this repo's `kustomization.yaml`.
 builds a generated MCP server into a container image and deploys it. There are
 two `HOSTING_MODE`s:
 
+Generated MCP servers are **dual-transport**: they read `MCP_TRANSPORT` from
+the environment and start either a `StdioServerTransport` (default, unset or
+`stdio` - what Claude Desktop and the GitHub/Gist download path use
+unchanged) or a `StreamableHTTPServerTransport` (`MCP_TRANSPORT=http`)
+serving real MCP Streamable HTTP on `POST /mcp` (`PORT`, default 3000) plus
+`GET /health`. Each `HOSTING_MODE` below now selects and verifies whichever
+transport is appropriate for it:
+
 - **`kubernetes`** (default, unset): build+push the image to a container
   registry (GHCR, or a local `localhost:5000` registry when `LOCAL_DEV=true`),
   generate K8s manifests (`ManifestGeneratorService`), and commit them to a
   GitOps repo (`GitOpsService`) for ArgoCD/a real cluster to reconcile. This
-  is the cluster-ready production path. **Its "running" status means
-  "manifests committed for a cluster to reconcile," not "verified serving
-  traffic"** - nothing in this codebase confirms a real cluster ever
-  schedules the pod, and the generated Deployment's liveness/readiness
-  probes (`GET /health` on port 3000) assume an HTTP server, while
-  `GenerationPipeline` today only ever emits **stdio**-transport MCP servers
-  (see `generated-servers/*/src/index.ts` - `StdioServerTransport`, no HTTP
-  listener at all). A real cluster deployment of a generated server as it
-  exists today would fail its probes and never go Ready; making that work
-  needs either an HTTP wrapper around generated servers or probes/manifests
-  that don't assume one.
+  is the cluster-ready production path. `ManifestGeneratorService` sets
+  `MCP_TRANSPORT=http` (and `PORT=3000`) on every generated Deployment, so
+  its `GET /health` liveness/readiness probes now target a transport the
+  container actually implements - previously they didn't (see below).
+  **Its "running" status still only means "manifests committed for a
+  cluster to reconcile," not "verified serving traffic"** - nothing in this
+  codebase confirms a real cluster has ever scheduled one of these pods; the
+  fix here removes the transport mismatch that would have guaranteed
+  failure, it does not itself prove success on a real cluster. Also
+  unresolved: `ContainerRegistryService` builds/pushes by shelling out to
+  the `docker` CLI, which cannot run as an in-cluster build step (this
+  homelab's k3s nodes use containerd, not a Docker daemon) - in-cluster
+  image building is still an open problem, not something this change
+  touches.
 - **`docker-run`**: build the image locally and run it as a real Docker
   container on the host, verifying it's an actual working MCP server via the
-  stdio `initialize`/`tools/list` handshake before ever reporting `running`
+  MCP `initialize`/`tools/list` handshake before ever reporting `running`
   (`LocalDockerHostingService`). No registry, no GitOps repo, no cluster.
+  Transport is selected per-request via `envVars.MCP_TRANSPORT` in the
+  `POST /api/hosting/deploy/:conversationId` body: absent or `stdio` (the
+  default) verifies over the raw stdio JSON-RPC handshake with no port
+  published, exactly as before; `http` publishes container port 3000 to a
+  Docker-assigned ephemeral host port, polls `GET /health` until ready, and
+  performs the handshake over `POST /mcp` - and only then does
+  `HostedServer.endpointUrl` become a real, dialable `http://localhost:<port>`
+  instead of the unconnectable `docker-exec://` placeholder used for stdio.
+
+**What changed vs. before**: previously `GenerationPipeline` only ever
+emitted stdio-transport MCP servers, so the Kubernetes Deployment's
+`GET /health` probes were checking a port no generated container ever
+opened - a real cluster deployment was guaranteed to fail its probes and
+never go Ready. Generated servers (and their prompts/reference
+implementation in `refinement.service.ts`, now on the high-level `McpServer`
++ `registerTool` API from `@modelcontextprotocol/sdk` `1.30.0`) now
+implement `MCP_TRANSPORT=http` for real, and both hosting modes verify
+whichever transport they actually start with real JSON-RPC round-trips
+before reporting `running`.
 
 ### Local hosting on WSL2
 
@@ -885,8 +915,15 @@ which is what populates the `Deployment.serverName`/`localPath` columns
 1. `docker build` the generated server's `Dockerfile` into a local
    `mcp-local/<serverId>:latest` image (no push).
 2. `docker run -i --rm --name mcp-hosted-<serverId>` the image and perform
-   the MCP `initialize` + `tools/list` handshake against its stdio transport,
-   recording the real tool list and protocol version returned.
+   the MCP `initialize` + `tools/list` handshake, recording the real tool
+   list and protocol version returned. With no `MCP_TRANSPORT` in the
+   deploy request's `envVars` (the default shown above), this is a stdio
+   JSON-RPC conversation over the container's stdin/stdout, same as before.
+   Passing `envVars: { MCP_TRANSPORT: 'http' }` in the deploy request
+   instead publishes container port 3000 to a Docker-assigned host port,
+   polls `GET /health`, and performs the same handshake over `POST /mcp` -
+   this is the path to exercise if you want to smoke-test the HTTP
+   transport locally before trusting it on a real cluster.
 3. Only then mark the `HostedServer` row `running` - a build or handshake
    failure is recorded as `failed` with the real underlying error, never
    silently treated as success.
@@ -906,12 +943,17 @@ from real cloud hosting):
   scaling - it proves the container image and the MCP server inside it are
   correct, not that the cluster deployment path works.
 - Getting from here to a real cluster deployment still needs: a reachable
-  image registry to push to, a running Kubernetes cluster (or KinD via the
-  existing `LOCAL_DEV=true` + `scripts/kind/setup.sh` workflow) for
-  `kubectl apply`/ArgoCD to reconcile against, and - independent of hosting
-  mode entirely - an HTTP transport (or a K8s-appropriate stdio exec-based
-  proxy) for generated servers, since the K8s manifests' liveness/readiness
-  probes assume one that doesn't exist today.
+  image registry to push to, and a running Kubernetes cluster (or KinD via
+  the existing `LOCAL_DEV=true` + `scripts/kind/setup.sh` workflow) for
+  `kubectl apply`/ArgoCD to reconcile against. Generated servers implementing
+  the HTTP transport the K8s manifests' probes expect is no longer the
+  blocker it used to be, but nothing in this codebase has exercised that
+  combination (real image, real push, real cluster, real probe) together -
+  the K8s hosting path remains untested end-to-end.
+- No client authentication for hosted servers either way: `HostedServer` has
+  no API key column, and the current security posture is unguessable UUIDs
+  for `serverId`/`endpointUrl`, not credentials. Hosting is also not metered
+  or billed despite UI that has advertised a price.
 
 ## Troubleshooting
 

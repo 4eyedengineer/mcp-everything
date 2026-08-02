@@ -7,6 +7,7 @@ import { MatProgressBarModule } from '@angular/material/progress-bar';
 
 import { HostedServer, HostedServerStatus } from '../../../../core/services/hosting-api.service';
 import { TimeAgoPipe } from '../../../../shared/pipes/time-ago.pipe';
+import { buildClaudeDesktopConfigJson } from '../../../../shared/utils/claude-desktop-config.util';
 
 @Component({
   selector: 'mcp-server-management-card',
@@ -92,16 +93,9 @@ export class ServerManagementCardComponent {
   }
 
   copyClaudeConfig(): void {
-    const serverSlug = this.server.serverName.toLowerCase().replace(/\s+/g, '-');
-    const config = {
-      mcpServers: {
-        [serverSlug]: {
-          command: 'mcp-connect',
-          args: [this.server.serverId]
-        }
-      }
-    };
-    navigator.clipboard.writeText(JSON.stringify(config, null, 2));
+    navigator.clipboard.writeText(
+      buildClaudeDesktopConfigJson(this.server.serverName, this.server.serverId)
+    );
   }
 
   onStart(): void {
