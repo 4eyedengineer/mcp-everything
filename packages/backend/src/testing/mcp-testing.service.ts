@@ -4,6 +4,7 @@ import { promisify } from 'util';
 import { mkdirSync, writeFileSync, rmSync, existsSync } from 'fs';
 import { join, dirname } from 'path';
 import * as os from 'os';
+import * as net from 'net';
 import { v4 as uuidv4 } from 'uuid';
 
 /**
@@ -69,6 +70,28 @@ export interface TestProgressUpdate {
 }
 
 /**
+ * Which wire transport to speak to the MCP server under test.
+ *
+ * - 'stdio': newline-delimited JSON-RPC over the child process's stdin/stdout.
+ *   This is the original, still-supported transport.
+ * - 'http': MCP Streamable HTTP — `POST /mcp` (JSON-RPC request/response,
+ *   SSE-framed) plus `GET /health`. This is the transport generated servers
+ *   are actually hosted over, so it is the default for the refine/validation
+ *   loop (see `DEFAULT_TRANSPORT` below).
+ */
+export type McpTransportMode = 'stdio' | 'http';
+
+/**
+ * Default transport used when a caller doesn't explicitly pick one. HTTP is
+ * the transport generated servers are actually deployed/hosted over, so the
+ * quality-gate loop (McpTestingService + McpProtocolValidatorService) now
+ * exercises that path by default. Set `transport: 'stdio'` explicitly to opt
+ * back into the legacy stdio-only path (e.g. for servers/fixtures that don't
+ * implement `MCP_TRANSPORT=http`).
+ */
+export const DEFAULT_MCP_TRANSPORT: McpTransportMode = 'http';
+
+/**
  * Test configuration
  */
 export interface McpTestConfig {
@@ -78,12 +101,14 @@ export interface McpTestConfig {
   toolTimeout?: number; // seconds per tool
   networkMode?: 'none' | 'bridge';
   cleanup?: boolean;
+  /** Wire transport to test over. Defaults to `DEFAULT_MCP_TRANSPORT` ('http'). */
+  transport?: McpTransportMode;
 }
 
 /**
  * MCP Protocol test message
  */
-interface McpMessage {
+export interface McpMessage {
   jsonrpc: '2.0';
   id: string | number;
   method: string;
@@ -93,7 +118,7 @@ interface McpMessage {
 /**
  * MCP Protocol response
  */
-interface McpResponse {
+export interface McpResponse {
   jsonrpc: '2.0';
   id: string | number;
   result?: any;
@@ -105,6 +130,171 @@ interface McpResponse {
 }
 
 const execAsync = promisify(exec);
+
+/**
+ * Ask the OS for an ephemeral, currently-unused TCP port by binding to port 0
+ * and reading back the port the kernel assigned, then immediately releasing
+ * it. There is an inherent (tiny) TOCTOU race between releasing the port here
+ * and the MCP server binding it, but this is the same best-effort approach
+ * used by e.g. the `get-port` package and is more than adequate for
+ * short-lived test/validation servers.
+ */
+export async function allocateFreePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.unref();
+    server.on('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address();
+      if (address && typeof address === 'object') {
+        const { port } = address;
+        server.close(() => resolve(port));
+      } else {
+        server.close(() => reject(new Error('Failed to allocate a free TCP port')));
+      }
+    });
+  });
+}
+
+/**
+ * Client for the MCP Streamable HTTP transport
+ * (`StreamableHTTPServerTransport` in `@modelcontextprotocol/sdk`). This is
+ * the ONE place the HTTP handshake is implemented — both McpTestingService
+ * (Docker-sandboxed and unsandboxed) and McpProtocolValidatorService import
+ * and reuse this class rather than each re-implementing it.
+ *
+ * Empirically-confirmed protocol details this class handles (verified
+ * against a real StreamableHTTPServerTransport server):
+ *  - Every request MUST send `Accept: application/json, text/event-stream`.
+ *    Omitting the `text/event-stream` half of that header causes the server
+ *    to respond `406 Not Acceptable`.
+ *  - On a successful `initialize` call, the server returns an
+ *    `Mcp-Session-Id` response header. Every subsequent request for that
+ *    session must echo it back as a request header, or the server responds
+ *    `400 Bad Request`.
+ *  - Responses are SSE-framed (`event: message\ndata: {...}\n\n`), not plain
+ *    JSON, even though the request body is plain JSON-RPC.
+ *  - Fire-and-forget notifications (e.g. `notifications/initialized`) get a
+ *    bare `202 Accepted` with no body.
+ */
+export class McpHttpTransportClient {
+  constructor(private readonly baseUrl: string) {}
+
+  /** Mcp-Session-Id captured from the `initialize` response, if any. */
+  private sessionId: string | undefined;
+
+  private buildHeaders(): Record<string, string> {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      // Both halves are required — the server 406s if either is missing.
+      Accept: 'application/json, text/event-stream',
+    };
+    if (this.sessionId) {
+      headers['Mcp-Session-Id'] = this.sessionId;
+    }
+    return headers;
+  }
+
+  /**
+   * One-shot, non-throwing health probe. Used by `waitForServerReady` to
+   * poll `GET /health` in place of the stdio transport's `stdin.writable`
+   * check.
+   */
+  async isHealthy(): Promise<boolean> {
+    try {
+      const res = await fetch(`${this.baseUrl}/health`, {
+        method: 'GET',
+        signal: AbortSignal.timeout(1000),
+      });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Send a JSON-RPC request expecting a response (initialize, tools/list,
+   * tools/call, ...) and return the parsed `McpResponse`.
+   */
+  async send(message: McpMessage, timeoutMs: number): Promise<McpResponse> {
+    let res: Response;
+    try {
+      res = await fetch(`${this.baseUrl}/mcp`, {
+        method: 'POST',
+        headers: this.buildHeaders(),
+        body: JSON.stringify(message),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+    } catch (error) {
+      throw new Error(
+        `MCP HTTP request failed (network/timeout): ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+
+    const newSessionId = res.headers.get('mcp-session-id');
+    if (newSessionId) {
+      this.sessionId = newSessionId;
+    }
+
+    if (!res.ok) {
+      const bodyText = await res.text().catch(() => '');
+      throw new Error(
+        `MCP HTTP request failed: ${res.status} ${res.statusText}${bodyText ? ` — ${bodyText.slice(0, 300)}` : ''}`,
+      );
+    }
+
+    const bodyText = await res.text();
+    const contentType = res.headers.get('content-type') || '';
+
+    if (contentType.includes('text/event-stream')) {
+      return this.parseSseBody(bodyText);
+    }
+
+    // Some transports may reply with plain JSON for simple requests; support
+    // that too rather than assuming SSE unconditionally.
+    return JSON.parse(bodyText);
+  }
+
+  /**
+   * Send a fire-and-forget JSON-RPC notification (no `id`, no response body
+   * expected beyond a bare `202 Accepted`).
+   */
+  async notify(method: string, timeoutMs = 5000): Promise<void> {
+    let res: Response;
+    try {
+      res = await fetch(`${this.baseUrl}/mcp`, {
+        method: 'POST',
+        headers: this.buildHeaders(),
+        body: JSON.stringify({ jsonrpc: '2.0', method }),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+    } catch (error) {
+      throw new Error(
+        `MCP HTTP notification failed (network/timeout): ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+
+    if (!res.ok && res.status !== 202) {
+      const bodyText = await res.text().catch(() => '');
+      throw new Error(
+        `MCP HTTP notification failed: ${res.status} ${res.statusText}${bodyText ? ` — ${bodyText.slice(0, 300)}` : ''}`,
+      );
+    }
+  }
+
+  /** Parse an `event: message\ndata: {...}` SSE-framed response body. */
+  private parseSseBody(body: string): McpResponse {
+    for (const line of body.split('\n')) {
+      if (line.startsWith('data:')) {
+        const jsonStr = line.slice('data:'.length).trim();
+        if (jsonStr) {
+          return JSON.parse(jsonStr);
+        }
+      }
+    }
+    throw new Error(`No "data:" line found in SSE response body: ${body.slice(0, 300)}`);
+  }
+}
 
 /**
  * Env var that re-enables the legacy, UNSANDBOXED host-execution path when
@@ -132,8 +322,19 @@ const ALLOW_UNSANDBOXED_ENV_VAR = 'MCP_TESTING_ALLOW_UNSANDBOXED';
  *     (defaults to 'bridge' so tools can call real external APIs, but callers
  *     such as the refinement loop can force `'none'`), `--read-only` root
  *     filesystem with a `tmpfs` scratch dir, and the same CPU/memory/pids
- *     limits, communicating over stdio exactly like the previous in-process
- *     child, just tunneled through `docker run -i`.
+ *     limits.
+ *
+ * TRANSPORT: generated servers speak both MCP transports, selected via
+ * `MCP_TRANSPORT` (`stdio` default in the generated server, `http` when this
+ * service starts it for testing — see `DEFAULT_MCP_TRANSPORT`):
+ *   - `stdio` (opt-in via `config.transport = 'stdio'`): newline-delimited
+ *     JSON-RPC over the child process's stdin/stdout, tunneled through
+ *     `docker run -i` when sandboxed.
+ *   - `http` (default): the server is started with `-e MCP_TRANSPORT=http`
+ *     and a published port, and this service speaks MCP Streamable HTTP
+ *     (`POST /mcp`, `GET /health`) to it via `McpHttpTransportClient`. This
+ *     is the transport generated servers are actually hosted over, so it is
+ *     the one exercised by default in the refine/quality-gate loop.
  *
  * Docker is a hard dependency for this service. If the Docker daemon is not
  * reachable, `testMcpServer` fails loudly instead of silently falling back to
@@ -154,6 +355,7 @@ export class McpTestingService implements OnModuleDestroy {
     toolTimeout: 10, // 10 seconds per tool (increased for real execution)
     networkMode: 'bridge', // Allow network for API calls
     cleanup: true,
+    transport: DEFAULT_MCP_TRANSPORT,
   };
 
   /** Base image used to run untrusted install/compile/execute steps. */
@@ -737,9 +939,25 @@ export class McpTestingService implements OnModuleDestroy {
   /**
    * Start the MCP server for testing, sandboxed inside a Docker container
    * (`docker run -i`) so that the child process's stdin/stdout are the
-   * container's stdio — the rest of this service's MCP handshake/testing
-   * logic (sendMcpMessageDirect, waitForServerReady, etc.) is unchanged and
-   * treats it exactly like the previous in-process child.
+   * container's stdio.
+   *
+   * Transport-dependent behavior (see `McpTestConfig.transport`):
+   *  - 'stdio': the container's stdin/stdout ARE the JSON-RPC channel (as
+   *    before) — the rest of this service's handshake/testing logic
+   *    (sendMcpMessageDirect, waitForServerReady, etc.) treats it exactly
+   *    like the previous in-process child.
+   *  - 'http' (default): the container is started with
+   *    `-e MCP_TRANSPORT=http -e PORT=3000` and a DYNAMIC published port
+   *    (`-p 0:3000`, host port chosen by the Docker daemon), which is read
+   *    back via `docker port <container> 3000` right after the container
+   *    starts. This service then speaks MCP Streamable HTTP to
+   *    `http://127.0.0.1:<hostPort>` via `McpHttpTransportClient`.
+   *
+   * NOTE: the HTTP branch of this Docker path is UNVERIFIED in this change —
+   * there is no Docker daemon available in the environment this was written
+   * in, so it could only be reviewed carefully, not exercised. The
+   * unsandboxed HTTP path below (`startMcpServerProcessUnsandboxed`) IS
+   * verified end-to-end.
    */
   private async startMcpServerProcess(
     testId: string,
@@ -747,9 +965,10 @@ export class McpTestingService implements OnModuleDestroy {
     config: McpTestConfig,
   ): Promise<any> {
     if (!this.dockerAvailable) {
-      return this.startMcpServerProcessUnsandboxed(testId, serverDir);
+      return this.startMcpServerProcessUnsandboxed(testId, serverDir, config);
     }
 
+    const transport: McpTransportMode = config.transport || DEFAULT_MCP_TRANSPORT;
     const memoryLimit = config.memoryLimit || this.defaultConfig.memoryLimit!;
     const cpuLimit = config.cpuLimit || this.defaultConfig.cpuLimit!;
     const networkMode = config.networkMode || this.defaultConfig.networkMode!;
@@ -774,10 +993,16 @@ export class McpTestingService implements OnModuleDestroy {
       '--read-only',
       '-e',
       'NODE_ENV=test',
-      this.dockerImage,
-      'node',
-      'dist/index.js',
     ];
+
+    if (transport === 'http') {
+      // Publish container port 3000 to a Docker-daemon-assigned ephemeral
+      // host port (`0:3000`). We read the assigned host port back below via
+      // `docker port`, once the container is running.
+      args.push('-p', '0:3000', '-e', 'MCP_TRANSPORT=http', '-e', 'PORT=3000');
+    }
+
+    args.push(this.dockerImage, 'node', 'dist/index.js');
 
     this.logger.debug(`[${testId}] Starting sandboxed MCP server: docker ${args.join(' ')}`);
     this.activeContainerNames.add(containerName);
@@ -791,6 +1016,7 @@ export class McpTestingService implements OnModuleDestroy {
       process: serverProcess,
       serverDir,
       containerName,
+      transport,
       pendingResponses: new Map<
         string | number,
         { resolve: (response: McpResponse) => void; reject: (error: Error) => void }
@@ -800,7 +1026,9 @@ export class McpTestingService implements OnModuleDestroy {
       ready: false, // Track readiness state
     });
 
-    // Set up stdout handler to parse JSON-RPC responses
+    // Set up stdout handler to parse JSON-RPC responses (stdio transport
+    // only — in http mode nothing on stdout carries JSON-RPC, so this is a
+    // harmless no-op there).
     serverProcess.stdout?.on('data', (data) => {
       const processInfo = this.runningProcesses.get(testId);
       if (!processInfo) return;
@@ -850,6 +1078,18 @@ export class McpTestingService implements OnModuleDestroy {
       this.runningProcesses.delete(testId);
     });
 
+    if (transport === 'http') {
+      // UNVERIFIED (no local Docker daemon to test against): read back the
+      // host port the daemon assigned to container port 3000. `docker port`
+      // can race the container's own startup very slightly, so retry briefly.
+      const hostPort = await this.resolveDockerHostPort(testId, containerName, 3000, 5000);
+      const processInfo = this.runningProcesses.get(testId);
+      if (processInfo) {
+        processInfo.httpClient = new McpHttpTransportClient(`http://127.0.0.1:${hostPort}`);
+        processInfo.port = hostPort;
+      }
+    }
+
     // Wait for server to be ready to accept messages
     await this.waitForServerReady(testId, 10000); // 10 second max wait
 
@@ -857,25 +1097,93 @@ export class McpTestingService implements OnModuleDestroy {
   }
 
   /**
+   * Read back the host port Docker assigned for a dynamically-published
+   * container port (`-p 0:<containerPort>`), via `docker port <name>
+   * <containerPort>`. Output looks like `0.0.0.0:54321` (and/or a second
+   * `[::]:54321` line for IPv6) — the last colon-separated segment is the
+   * port. UNVERIFIED: written carefully against documented `docker port`
+   * output but never run against a real Docker daemon.
+   */
+  private async resolveDockerHostPort(
+    testId: string,
+    containerName: string,
+    containerPort: number,
+    maxWaitMs: number,
+  ): Promise<number> {
+    const startTime = Date.now();
+    let lastError: unknown;
+
+    while (Date.now() - startTime < maxWaitMs) {
+      try {
+        const { stdout } = await execAsync(`docker port ${containerName} ${containerPort}`, {
+          timeout: 3000,
+        });
+        const firstLine = stdout.trim().split('\n')[0]?.trim();
+        const portStr = firstLine?.split(':').pop();
+        const port = portStr ? Number(portStr) : NaN;
+        if (Number.isInteger(port) && port > 0) {
+          this.logger.debug(
+            `[${testId}] Resolved Docker host port ${port} for container ${containerName}:${containerPort}`,
+          );
+          return port;
+        }
+        lastError = new Error(`Could not parse port from "docker port" output: "${stdout}"`);
+      } catch (error) {
+        lastError = error;
+      }
+      await this.delay(150);
+    }
+
+    throw new Error(
+      `Failed to resolve published host port for ${containerName}:${containerPort} within ${maxWaitMs}ms: ${
+        lastError instanceof Error ? lastError.message : String(lastError)
+      }`,
+    );
+  }
+
+  /**
    * UNSANDBOXED fallback for starting the MCP server, only reachable when
    * Docker is unavailable and MCP_TESTING_ALLOW_UNSANDBOXED=true.
+   *
+   * VERIFIED for the 'http' transport: an ephemeral free port is allocated
+   * on the host, and the server is spawned with `MCP_TRANSPORT=http` and
+   * `PORT=<that port>`. This is the same env-var contract dual-transport
+   * generated servers implement (see class doc comment).
    */
-  private async startMcpServerProcessUnsandboxed(testId: string, serverDir: string): Promise<any> {
+  private async startMcpServerProcessUnsandboxed(
+    testId: string,
+    serverDir: string,
+    config?: McpTestConfig,
+  ): Promise<any> {
     const distIndexPath = join(serverDir, 'dist', 'index.js');
+    const transport: McpTransportMode = config?.transport || DEFAULT_MCP_TRANSPORT;
+
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      NODE_ENV: 'test',
+    };
+
+    let port: number | undefined;
+    if (transport === 'http') {
+      port = await allocateFreePort();
+      env.MCP_TRANSPORT = 'http';
+      env.PORT = String(port);
+    }
 
     const serverProcess = spawn('node', [distIndexPath], {
       cwd: serverDir,
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: {
-        ...process.env,
-        NODE_ENV: 'test',
-      },
+      env,
     });
 
     // Store reference for later communication
     this.runningProcesses.set(testId, {
       process: serverProcess,
       serverDir,
+      transport,
+      port,
+      httpClient:
+        transport === 'http' ? new McpHttpTransportClient(`http://127.0.0.1:${port}`) : undefined,
       pendingResponses: new Map<
         string | number,
         { resolve: (response: McpResponse) => void; reject: (error: Error) => void }
@@ -966,8 +1274,16 @@ export class McpTestingService implements OnModuleDestroy {
         );
       }
 
-      // Check if stdin is writable
-      if (!processInfo.process.stdin?.writable) {
+      if (processInfo.transport === 'http') {
+        // HTTP transport: poll GET /health instead of checking stdin.
+        const healthy = await processInfo.httpClient.isHealthy();
+        if (!healthy) {
+          await this.delay(100);
+          continue;
+        }
+      } else if (!processInfo.process.stdin?.writable) {
+        // stdio transport: stdin must be writable before we can even attempt
+        // an initialize call.
         await this.delay(100);
         continue;
       }
@@ -1017,7 +1333,7 @@ export class McpTestingService implements OnModuleDestroy {
         id: `init-${Date.now()}`,
         method: 'initialize',
         params: {
-          protocolVersion: '2024-11-05',
+          protocolVersion: '2025-11-25',
           capabilities: {},
           clientInfo: {
             name: 'mcp-testing-service',
@@ -1033,14 +1349,7 @@ export class McpTestingService implements OnModuleDestroy {
       }
 
       // Send initialized notification
-      const notificationMessage = {
-        jsonrpc: '2.0' as const,
-        method: 'notifications/initialized',
-      };
-      const processInfo = this.runningProcesses.get(testId);
-      if (processInfo) {
-        processInfo.process.stdin.write(JSON.stringify(notificationMessage) + '\n');
-      }
+      await this.sendInitializedNotification(testId);
 
       return { success: true };
     } catch (error) {
@@ -1049,6 +1358,26 @@ export class McpTestingService implements OnModuleDestroy {
         error: error instanceof Error ? error.message : String(error),
       };
     }
+  }
+
+  /**
+   * Send the `notifications/initialized` fire-and-forget notification over
+   * whichever transport this test/validation is using.
+   */
+  private async sendInitializedNotification(testId: string): Promise<void> {
+    const processInfo = this.runningProcesses.get(testId);
+    if (!processInfo) return;
+
+    if (processInfo.transport === 'http') {
+      await processInfo.httpClient.notify('notifications/initialized');
+      return;
+    }
+
+    const notificationMessage = {
+      jsonrpc: '2.0' as const,
+      method: 'notifications/initialized',
+    };
+    processInfo.process.stdin.write(JSON.stringify(notificationMessage) + '\n');
   }
 
   /**
@@ -1120,7 +1449,8 @@ export class McpTestingService implements OnModuleDestroy {
   }
 
   /**
-   * Send a JSON-RPC message to the MCP server and wait for response
+   * Send a JSON-RPC message to the MCP server and wait for response.
+   * `timeout` is in SECONDS (matches all existing callers).
    */
   private async sendMcpMessageDirect(
     testId: string,
@@ -1130,6 +1460,10 @@ export class McpTestingService implements OnModuleDestroy {
     const processInfo = this.runningProcesses.get(testId);
     if (!processInfo) {
       throw new Error('MCP server process not running');
+    }
+
+    if (processInfo.transport === 'http') {
+      return processInfo.httpClient.send(message, timeout * 1000);
     }
 
     return new Promise((resolve, reject) => {
@@ -1186,7 +1520,7 @@ export class McpTestingService implements OnModuleDestroy {
         id: `init-${Date.now()}`,
         method: 'initialize',
         params: {
-          protocolVersion: '2024-11-05',
+          protocolVersion: '2025-11-25',
           capabilities: {},
           clientInfo: {
             name: 'mcp-testing-service',
@@ -1202,13 +1536,7 @@ export class McpTestingService implements OnModuleDestroy {
       }
 
       // Send initialized notification
-      const notificationMessage = {
-        jsonrpc: '2.0' as const,
-        method: 'notifications/initialized',
-      };
-      if (processInfo) {
-        processInfo.process.stdin.write(JSON.stringify(notificationMessage) + '\n');
-      }
+      await this.sendInitializedNotification(testId);
 
       return { success: true };
     } catch (error) {

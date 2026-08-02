@@ -5,11 +5,19 @@ import { join, dirname } from 'path';
 import * as os from 'os';
 import { v4 as uuidv4 } from 'uuid';
 import { McpSchemaValidator } from './mcp-schema-validator';
+import {
+  McpMessage,
+  McpResponse,
+  McpTransportMode,
+  DEFAULT_MCP_TRANSPORT,
+  McpHttpTransportClient,
+  allocateFreePort,
+} from '../testing/mcp-testing.service';
 
 /**
  * MCP Protocol version to validate against
  */
-const MCP_PROTOCOL_VERSION = '2024-11-05';
+const MCP_PROTOCOL_VERSION = '2025-11-25';
 
 /**
  * Individual validation check result
@@ -40,31 +48,10 @@ export interface McpProtocolValidationResult {
 }
 
 /**
- * MCP JSON-RPC Message
- */
-interface McpMessage {
-  jsonrpc: '2.0';
-  id: string | number;
-  method: string;
-  params?: any;
-}
-
-/**
- * MCP JSON-RPC Response
- */
-interface McpResponse {
-  jsonrpc: '2.0';
-  id: string | number;
-  result?: any;
-  error?: {
-    code: number;
-    message: string;
-    data?: any;
-  };
-}
-
-/**
- * Server process info
+ * Server process info. `McpMessage`/`McpResponse` are imported from
+ * `McpTestingService` rather than re-declared here — see that module's doc
+ * comment for why the HTTP transport handshake in particular is implemented
+ * exactly once and shared.
  */
 interface ServerProcessInfo {
   process: ChildProcess;
@@ -75,6 +62,25 @@ interface ServerProcessInfo {
   >;
   buffer: string;
   stderrBuffer: string;
+  /** Wire transport this server instance is speaking. */
+  transport: McpTransportMode;
+  /** Set only when `transport === 'http'`. */
+  httpClient?: McpHttpTransportClient;
+  /** Set only when `transport === 'http'`: the allocated local port the server was told to listen on via `PORT`. */
+  port?: number;
+}
+
+/**
+ * Options for {@link McpProtocolValidatorService.validateServer}.
+ */
+export interface McpProtocolValidationOptions {
+  /**
+   * Wire transport to validate over. Defaults to `DEFAULT_MCP_TRANSPORT`
+   * ('http') — the transport generated servers are actually hosted over, so
+   * that's what the refinement quality gate now exercises by default. Pass
+   * 'stdio' to validate over the legacy stdio-only transport instead.
+   */
+  transport?: McpTransportMode;
 }
 
 /**
@@ -103,6 +109,20 @@ export interface GeneratedCodeForProtocolValidation {
  *
  * Used by the generation service to verify servers before packaging
  * and by the refinement loop to determine if regeneration is needed.
+ *
+ * TRANSPORT: the server under validation is run directly on the host (this
+ * service has no Docker sandbox, unlike McpTestingService — it's meant to
+ * exercise the exact deployed artifact, not to sandbox untrusted execution).
+ * It is spoken to over either MCP transport, selected via
+ * `McpProtocolValidationOptions.transport` (default: `DEFAULT_MCP_TRANSPORT`,
+ * currently 'http' — the transport generated servers are actually hosted
+ * over):
+ *   - 'stdio': newline-delimited JSON-RPC over the child process's
+ *     stdin/stdout (the original, still-supported path).
+ *   - 'http' (default): the server is spawned with `MCP_TRANSPORT=http` and
+ *     `PORT=<an allocated free port>`, and this service speaks MCP
+ *     Streamable HTTP (`POST /mcp`, `GET /health`) to it via the shared
+ *     `McpHttpTransportClient` (see `../testing/mcp-testing.service`).
  */
 @Injectable()
 export class McpProtocolValidatorService {
@@ -125,14 +145,16 @@ export class McpProtocolValidatorService {
    */
   async validateServer(
     code: GeneratedCodeForProtocolValidation,
+    options: McpProtocolValidationOptions = {},
   ): Promise<McpProtocolValidationResult> {
     const validationId = uuidv4();
     const startTime = Date.now();
     const results: ValidationCheck[] = [];
     const errors: string[] = [];
     let tempDir: string | null = null;
+    const transport: McpTransportMode = options.transport || DEFAULT_MCP_TRANSPORT;
 
-    this.logger.log(`[${validationId}] Starting MCP protocol validation`);
+    this.logger.log(`[${validationId}] Starting MCP protocol validation (transport=${transport})`);
 
     try {
       // Step 1: Create temp directory and build server
@@ -147,7 +169,7 @@ export class McpProtocolValidatorService {
       }
 
       // Step 2: Start server process
-      await this.startServer(validationId, tempDir);
+      await this.startServer(validationId, tempDir, transport);
 
       // Step 3: Validate initialize handshake
       const initResult = await this.validateInitialize(validationId);
@@ -357,15 +379,31 @@ export class McpProtocolValidatorService {
   }
 
   /**
-   * Start MCP server process
+   * Start MCP server process. Spawns directly on the host (no Docker sandbox
+   * — see class doc comment) with the transport selected by `transport`:
+   * VERIFIED for 'http' against the real reference dual-transport server (the
+   * server is spawned with `MCP_TRANSPORT=http` and an allocated free
+   * `PORT`).
    */
-  private async startServer(validationId: string, serverDir: string): Promise<void> {
+  private async startServer(
+    validationId: string,
+    serverDir: string,
+    transport: McpTransportMode,
+  ): Promise<void> {
     const distPath = join(serverDir, 'dist', 'index.js');
+
+    const env: NodeJS.ProcessEnv = { ...process.env, NODE_ENV: 'test' };
+    let port: number | undefined;
+    if (transport === 'http') {
+      port = await allocateFreePort();
+      env.MCP_TRANSPORT = 'http';
+      env.PORT = String(port);
+    }
 
     const serverProcess = spawn('node', [distPath], {
       cwd: serverDir,
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env, NODE_ENV: 'test' },
+      env,
     });
 
     this.runningProcesses.set(validationId, {
@@ -374,6 +412,10 @@ export class McpProtocolValidatorService {
       pendingResponses: new Map(),
       buffer: '',
       stderrBuffer: '',
+      transport,
+      port,
+      httpClient:
+        transport === 'http' ? new McpHttpTransportClient(`http://127.0.0.1:${port}`) : undefined,
     });
 
     // Handle stdout (JSON-RPC responses)
@@ -413,7 +455,8 @@ export class McpProtocolValidatorService {
   }
 
   /**
-   * Wait for server to be ready
+   * Wait for server to be ready. For HTTP mode this polls `GET /health` for
+   * a 200 instead of checking `stdin.writable`.
    */
   private async waitForServerReady(validationId: string, maxWaitMs: number): Promise<void> {
     const processInfo = this.runningProcesses.get(validationId);
@@ -430,7 +473,11 @@ export class McpProtocolValidatorService {
         );
       }
 
-      if (processInfo.process.stdin?.writable) {
+      if (processInfo.transport === 'http') {
+        if (await processInfo.httpClient!.isHealthy()) {
+          return;
+        }
+      } else if (processInfo.process.stdin?.writable) {
         return;
       }
 
@@ -468,7 +515,8 @@ export class McpProtocolValidatorService {
   }
 
   /**
-   * Send JSON-RPC message and wait for response
+   * Send JSON-RPC message and wait for response. `timeout` is in
+   * MILLISECONDS (matches all existing callers of this method).
    */
   private async sendMessage(
     validationId: string,
@@ -478,6 +526,10 @@ export class McpProtocolValidatorService {
     const processInfo = this.runningProcesses.get(validationId);
     if (!processInfo) {
       throw new Error('Server process not running');
+    }
+
+    if (processInfo.transport === 'http') {
+      return processInfo.httpClient!.send(message, timeout);
     }
 
     return new Promise((resolve, reject) => {
@@ -563,12 +615,16 @@ export class McpProtocolValidatorService {
       // Send initialized notification
       const processInfo = this.runningProcesses.get(validationId);
       if (processInfo) {
-        processInfo.process.stdin!.write(
-          JSON.stringify({
-            jsonrpc: '2.0',
-            method: 'notifications/initialized',
-          }) + '\n',
-        );
+        if (processInfo.transport === 'http') {
+          await processInfo.httpClient!.notify('notifications/initialized');
+        } else {
+          processInfo.process.stdin!.write(
+            JSON.stringify({
+              jsonrpc: '2.0',
+              method: 'notifications/initialized',
+            }) + '\n',
+          );
+        }
       }
 
       return {

@@ -6,13 +6,19 @@ import { promisify } from 'util';
 const execFileAsync = promisify(execFile);
 
 /**
- * Result of the stdio MCP handshake (initialize + notifications/initialized +
+ * Result of the MCP handshake (initialize + notifications/initialized +
  * tools/list) performed right after starting a container. This is the real
  * verification step that a "docker-run" hosting deploy is actually a working
  * MCP server, rather than just "the docker build/run commands exited 0".
+ *
+ * Generated servers are dual-transport (`MCP_TRANSPORT=stdio|http`, stdio
+ * being the default), so which transport was actually exercised is recorded
+ * on the result rather than assumed - `transport` reflects reality, not a
+ * hardcoded label.
  */
 export interface McpHandshakeResult {
   success: boolean;
+  transport?: 'stdio' | 'http';
   protocolVersion?: string;
   serverInfo?: { name?: string; version?: string };
   tools?: Array<{ name: string; description?: string }>;
@@ -43,10 +49,21 @@ interface TrackedContainer {
  * useful "HOSTING_MODE=docker-run" path for anyone who wants to smoke-test
  * the Host on Cloud flow without a cluster: it builds the image, runs it,
  * and proves the container is a real, responding MCP server by performing
- * the initialize/tools-list handshake over its stdio transport - the same
- * transport every server GenerationPipeline currently produces uses (there
- * is no HTTP server in generated code today; see the module doc comment on
- * HostingService for why this matters for the K8s path's liveness probes).
+ * the initialize/tools-list handshake against it.
+ *
+ * Generated servers are now dual-transport (`MCP_TRANSPORT=stdio` (default)
+ * or `http`, selected at container start via env vars) - HTTP mode listens
+ * on `PORT` (default 3000), speaks MCP Streamable HTTP at `POST /mcp`, and
+ * exposes `GET /health`. This service picks its verification strategy based
+ * on the `MCP_TRANSPORT` entry in the `envVars` passed to `startAndVerify`:
+ *   - stdio (default, or when `MCP_TRANSPORT` is absent/not "http"): no port
+ *     is published; the handshake is a raw JSON-RPC conversation over the
+ *     container's stdin/stdout, exactly as before.
+ *   - http: the container's HTTP port is published to a deterministic local
+ *     host port (see `httpHostPortFor`), `GET /health` is polled until it
+ *     returns 200, and the handshake is a real Streamable HTTP conversation
+ *     (POST /mcp, `Mcp-Session-Id` tracked across requests, SSE-framed
+ *     responses parsed) - see `performHttpHandshake`.
  *
  * Containers are started in the foreground (`docker run -i --rm`, no `-d`)
  * and tracked by the ChildProcess handle exactly like
@@ -87,6 +104,34 @@ export class LocalDockerHostingService implements OnModuleDestroy {
   }
 
   /**
+   * Deterministic local host port for an HTTP-transport docker-run hosted
+   * server, derived from its `serverId`.
+   *
+   * This is deliberately a pure hash rather than `docker run -P` +
+   * `docker port` inspection: `hosting.service.ts` needs to compute the
+   * final `http://localhost:<port>` `endpointUrl` for a `HostedServer` row
+   * up front, before the container has actually started, and it can do that
+   * safely only if calling this function with the same `serverId` always
+   * yields the same port. Range 20000-29999 is chosen to stay clear of both
+   * common well-known ports and this backend's own default port range.
+   *
+   * Honesty boundary: this is a single-host, best-effort dev/demo hosting
+   * mode, not a real scheduler - two concurrently-hosted `serverId`s can, in
+   * principle, hash to the same port. `docker run -p` would then fail to
+   * bind and the deployment surfaces as `failed`, which is an acceptable
+   * outcome for this mode (see the class doc comment above).
+   */
+  httpHostPortFor(serverId: string): number {
+    const base = 20000;
+    const range = 10000;
+    let hash = 0;
+    for (let i = 0; i < serverId.length; i++) {
+      hash = (hash * 31 + serverId.charCodeAt(i)) >>> 0;
+    }
+    return base + (hash % range);
+  }
+
+  /**
    * Build the generated server's Dockerfile into a local image tag. No push:
    * `docker-run` mode never touches a registry.
    */
@@ -106,10 +151,16 @@ export class LocalDockerHostingService implements OnModuleDestroy {
 
   /**
    * Start the image as a container and immediately verify it's a working
-   * stdio MCP server via initialize + tools/list. Throws if the container
-   * fails to start or fails the handshake (callers should treat that as a
-   * failed deployment, not a "running" one - never mark a server 'running'
-   * without this succeeding).
+   * MCP server via initialize + tools/list. Throws if the container fails to
+   * start or fails the handshake (callers should treat that as a failed
+   * deployment, not a "running" one - never mark a server 'running' without
+   * this succeeding).
+   *
+   * Transport is selected by the caller via `envVars.MCP_TRANSPORT`, mirroring
+   * exactly how the generated server itself decides at boot: "http"
+   * (case-insensitive) verifies over Streamable HTTP with a published port;
+   * anything else (absent, "stdio", or unrecognized) verifies over the raw
+   * stdio JSON-RPC handshake with no port published, as before.
    */
   async startAndVerify(
     serverId: string,
@@ -122,11 +173,24 @@ export class LocalDockerHostingService implements OnModuleDestroy {
       await this.stopContainer(serverId);
     }
 
+    const transport: 'stdio' | 'http' =
+      (envVars.MCP_TRANSPORT ?? 'stdio').toLowerCase() === 'http' ? 'http' : 'stdio';
+
     const containerName = this.containerNameFor(serverId);
     const envFlags = Object.entries(envVars).flatMap(([key, value]) => ['-e', `${key}=${value}`]);
-    const args = ['run', '--rm', '-i', '--name', containerName, ...envFlags, imageName];
 
-    this.logger.log(`Starting local container: ${this.dockerBin} ${args.join(' ')}`);
+    let hostPort: number | undefined;
+    let containerPort: number | undefined;
+    const portFlags: string[] = [];
+    if (transport === 'http') {
+      containerPort = Number(envVars.PORT) || 3000;
+      hostPort = this.httpHostPortFor(serverId);
+      portFlags.push('-p', `${hostPort}:${containerPort}`);
+    }
+
+    const args = ['run', '--rm', '-i', '--name', containerName, ...portFlags, ...envFlags, imageName];
+
+    this.logger.log(`Starting local container (${transport} transport): ${this.dockerBin} ${args.join(' ')}`);
 
     const child = spawn(this.dockerBin, args, { stdio: ['pipe', 'pipe', 'pipe'] });
 
@@ -174,9 +238,16 @@ export class LocalDockerHostingService implements OnModuleDestroy {
 
     let handshake: McpHandshakeResult;
     try {
-      handshake = await this.performHandshake(tracked, handshakeTimeoutMs);
+      handshake =
+        transport === 'http'
+          ? await this.performHttpHandshake(tracked, hostPort!, handshakeTimeoutMs)
+          : await this.performHandshake(tracked, handshakeTimeoutMs);
     } catch (error) {
-      handshake = { success: false, error: error instanceof Error ? error.message : String(error) };
+      handshake = {
+        success: false,
+        transport,
+        error: error instanceof Error ? error.message : String(error),
+      };
     }
 
     if (!handshake.success) {
@@ -241,6 +312,7 @@ export class LocalDockerHostingService implements OnModuleDestroy {
       if (tracked.exited) {
         return {
           success: false,
+          transport: 'stdio',
           error: `Container exited before it could be initialized (code ${tracked.exitCode}). Stderr: ${tracked.stderrBuffer.slice(0, 1000) || 'none'}`,
         };
       }
@@ -252,7 +324,7 @@ export class LocalDockerHostingService implements OnModuleDestroy {
         tracked,
         'initialize',
         {
-          protocolVersion: '2024-11-05',
+          protocolVersion: '2025-11-25',
           capabilities: {},
           clientInfo: { name: 'mcp-everything-hosting', version: '1.0.0' },
         },
@@ -260,7 +332,11 @@ export class LocalDockerHostingService implements OnModuleDestroy {
       );
 
       if (initResponse.error) {
-        return { success: false, error: `initialize error: ${initResponse.error.message}` };
+        return {
+          success: false,
+          transport: 'stdio',
+          error: `initialize error: ${initResponse.error.message}`,
+        };
       }
 
       this.sendMessage(tracked, { jsonrpc: '2.0', method: 'notifications/initialized' });
@@ -273,11 +349,16 @@ export class LocalDockerHostingService implements OnModuleDestroy {
       );
 
       if (toolsResponse.error) {
-        return { success: false, error: `tools/list error: ${toolsResponse.error.message}` };
+        return {
+          success: false,
+          transport: 'stdio',
+          error: `tools/list error: ${toolsResponse.error.message}`,
+        };
       }
 
       return {
         success: true,
+        transport: 'stdio',
         protocolVersion: initResponse.result?.protocolVersion,
         serverInfo: initResponse.result?.serverInfo,
         tools: (toolsResponse.result?.tools || []).map((t: any) => ({
@@ -289,6 +370,215 @@ export class LocalDockerHostingService implements OnModuleDestroy {
       const message = error instanceof Error ? error.message : String(error);
       return {
         success: false,
+        transport: 'stdio',
+        error: `${message}${tracked.stderrBuffer ? ` | stderr: ${tracked.stderrBuffer.slice(0, 500)}` : ''}`,
+      };
+    }
+  }
+
+  /**
+   * Poll `GET /health` on the published host port until it returns 200 (or
+   * the container exits, or the deadline passes). Mirrors the same
+   * "wait for the process to become ready" role the stdio path's
+   * stdin-writable wait plays above, just over HTTP instead.
+   */
+  private async waitForHealthy(
+    tracked: TrackedContainer,
+    hostPort: number,
+    deadline: number,
+  ): Promise<void> {
+    while (Date.now() < deadline) {
+      if (tracked.exited) {
+        throw new Error(
+          `Container exited before it became healthy (code ${tracked.exitCode}). Stderr: ${tracked.stderrBuffer.slice(0, 1000) || 'none'}`,
+        );
+      }
+      try {
+        const res = await fetch(`http://localhost:${hostPort}/health`, {
+          signal: AbortSignal.timeout(1000),
+        });
+        if (res.ok) return;
+      } catch {
+        // Not up yet (connection refused / timed out) - keep polling.
+      }
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    }
+    throw new Error(`Timed out waiting for GET /health to return 200 on http://localhost:${hostPort}`);
+  }
+
+  /**
+   * Parse a Streamable HTTP response body into its constituent JSON-RPC
+   * messages. Responses come back SSE-framed (`event: message\ndata:
+   * {...}\n\n`), not as a bare JSON body - confirmed empirically against the
+   * SDK's `StreamableHTTPServerTransport`, which always uses the
+   * `text/event-stream` framing for POST responses regardless of whether
+   * there's one message or many. Falls back to parsing the raw body as JSON
+   * in case a future/alternate implementation ever replies with a plain
+   * `application/json` body instead.
+   */
+  private parseSseMessages(body: string): any[] {
+    const messages: any[] = [];
+    for (const rawEvent of body.split('\n\n')) {
+      const dataLines = rawEvent
+        .split('\n')
+        .filter((line) => line.startsWith('data:'))
+        .map((line) => line.slice('data:'.length).trimStart());
+      if (dataLines.length === 0) continue;
+      try {
+        messages.push(JSON.parse(dataLines.join('\n')));
+      } catch {
+        // Not a JSON-RPC frame (e.g. a keep-alive comment) - skip it.
+      }
+    }
+    if (messages.length === 0 && body.trim().length > 0) {
+      try {
+        messages.push(JSON.parse(body));
+      } catch {
+        // Genuinely unparseable - caller treats "no messages" as a failure.
+      }
+    }
+    return messages;
+  }
+
+  /**
+   * POST a single JSON-RPC message to the Streamable HTTP `/mcp` endpoint.
+   *
+   * Two details here are load-bearing and were confirmed empirically against
+   * the reference dual-transport server, not assumed from the spec text
+   * alone:
+   *   - `Accept: application/json, text/event-stream` is required on every
+   *     request; omitting the `text/event-stream` half of that header gets a
+   *     406 from the SDK's transport.
+   *   - The server issues a session id via the `Mcp-Session-Id` response
+   *     header on `initialize`; every subsequent request (including the
+   *     `notifications/initialized` notification) must echo it back via the
+   *     same request header, or the server rejects it as a "no valid session
+   *     ID" 400.
+   */
+  private async postMcpMessage(
+    hostPort: number,
+    message: Record<string, unknown>,
+    sessionId: string | undefined,
+    timeoutMs: number,
+  ): Promise<{ status: number; sessionId?: string; messages: any[] }> {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      Accept: 'application/json, text/event-stream',
+    };
+    if (sessionId) {
+      headers['Mcp-Session-Id'] = sessionId;
+    }
+
+    const res = await fetch(`http://localhost:${hostPort}/mcp`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(message),
+      signal: AbortSignal.timeout(Math.max(1000, timeoutMs)),
+    });
+
+    const text = await res.text();
+    return {
+      status: res.status,
+      sessionId: res.headers.get('mcp-session-id') ?? undefined,
+      messages: this.parseSseMessages(text),
+    };
+  }
+
+  /**
+   * Perform the MCP handshake (initialize + notifications/initialized +
+   * tools/list) over Streamable HTTP against a container's published port,
+   * once `GET /health` reports ready. Same purpose as `performHandshake`
+   * above, just over HTTP instead of stdio.
+   */
+  private async performHttpHandshake(
+    tracked: TrackedContainer,
+    hostPort: number,
+    timeoutMs: number,
+  ): Promise<McpHandshakeResult> {
+    const deadline = Date.now() + timeoutMs;
+
+    try {
+      await this.waitForHealthy(tracked, hostPort, deadline);
+
+      const initRes = await this.postMcpMessage(
+        hostPort,
+        {
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'initialize',
+          params: {
+            protocolVersion: '2025-11-25',
+            capabilities: {},
+            clientInfo: { name: 'mcp-everything-hosting', version: '1.0.0' },
+          },
+        },
+        undefined,
+        Math.max(1000, deadline - Date.now()),
+      );
+
+      const sessionId = initRes.sessionId;
+      if (!sessionId) {
+        return {
+          success: false,
+          transport: 'http',
+          error: `initialize did not return an Mcp-Session-Id header (HTTP ${initRes.status})`,
+        };
+      }
+
+      const initMessage = initRes.messages.find((m) => m.id === 1) ?? initRes.messages[0];
+      if (!initMessage) {
+        return {
+          success: false,
+          transport: 'http',
+          error: `initialize returned no parseable JSON-RPC message (HTTP ${initRes.status})`,
+        };
+      }
+      if (initMessage.error) {
+        return { success: false, transport: 'http', error: `initialize error: ${initMessage.error.message}` };
+      }
+
+      // Notification - no id, no meaningful response body expected.
+      await this.postMcpMessage(
+        hostPort,
+        { jsonrpc: '2.0', method: 'notifications/initialized' },
+        sessionId,
+        Math.max(1000, deadline - Date.now()),
+      );
+
+      const toolsRes = await this.postMcpMessage(
+        hostPort,
+        { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} },
+        sessionId,
+        Math.max(1000, deadline - Date.now()),
+      );
+
+      const toolsMessage = toolsRes.messages.find((m) => m.id === 2) ?? toolsRes.messages[0];
+      if (!toolsMessage) {
+        return {
+          success: false,
+          transport: 'http',
+          error: `tools/list returned no parseable JSON-RPC message (HTTP ${toolsRes.status})`,
+        };
+      }
+      if (toolsMessage.error) {
+        return { success: false, transport: 'http', error: `tools/list error: ${toolsMessage.error.message}` };
+      }
+
+      return {
+        success: true,
+        transport: 'http',
+        protocolVersion: initMessage.result?.protocolVersion,
+        serverInfo: initMessage.result?.serverInfo,
+        tools: (toolsMessage.result?.tools || []).map((t: any) => ({
+          name: t.name,
+          description: t.description,
+        })),
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        success: false,
+        transport: 'http',
         error: `${message}${tracked.stderrBuffer ? ` | stderr: ${tracked.stderrBuffer.slice(0, 500)}` : ''}`,
       };
     }

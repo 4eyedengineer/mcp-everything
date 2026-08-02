@@ -113,6 +113,11 @@ export class ManifestGeneratorService {
                 },
                 env: [
                   { name: 'MCP_SERVER_ID', value: config.serverId },
+                  // Generated servers default to stdio transport unless told
+                  // otherwise; without this, a container scheduled here would
+                  // boot into stdio mode, never open PORT, and fail both
+                  // probes below forever.
+                  { name: 'MCP_TRANSPORT', value: 'http' },
                   { name: 'PORT', value: '3000' },
                   ...Object.entries(config.envVars || {}).map(([name, value]) => ({
                     name,
@@ -173,12 +178,13 @@ export class ManifestGeneratorService {
     const host = `${config.serverId}.${config.domain}`;
     const skipTLS = config.skipTLS || this.isLocalDev();
 
-    // Base annotations
-    const annotations: Record<string, string> = {
-      'kubernetes.io/ingress.class': 'nginx',
-      'nginx.ingress.kubernetes.io/proxy-read-timeout': '300',
-      'nginx.ingress.kubernetes.io/proxy-send-timeout': '300',
-    };
+    // This homelab's ingress controller is Traefik, not nginx-ingress. Class
+    // selection goes through spec.ingressClassName (the current, non-deprecated
+    // mechanism) rather than the `kubernetes.io/ingress.class` annotation, and
+    // the nginx.ingress.kubernetes.io/* annotations that used to live here are
+    // dropped entirely - Traefik does not understand them, so they were
+    // silently doing nothing.
+    const annotations: Record<string, string> = {};
 
     // Only add cert-manager annotation if TLS is enabled
     if (!skipTLS) {
@@ -198,6 +204,7 @@ export class ManifestGeneratorService {
         annotations,
       },
       spec: {
+        ingressClassName: 'traefik',
         rules: [
           {
             host,

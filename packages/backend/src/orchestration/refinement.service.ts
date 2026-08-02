@@ -81,10 +81,17 @@ const NODE_BUILTINS = new Set(builtinModules);
 const KNOWN_DEPENDENCY_VERSIONS: Array<[string, string]> = [
   ['@aws-sdk/', '^3.0.0'],
   ['@smithy/', '^3.0.0'],
-  ['@modelcontextprotocol/sdk', '^1.0.0'],
+  // Pinned to the exact version empirically verified against the dual-transport
+  // (stdio + Streamable HTTP) reference implementation below - see
+  // MCP_REFERENCE_IMPLEMENTATION. Do not loosen to a caret range: the
+  // high-level McpServer/registerTool/StreamableHTTPServerTransport surface
+  // this reference relies on was only confirmed on this exact version.
+  ['@modelcontextprotocol/sdk', '1.30.0'],
   ['@octokit/', '^20.0.0'],
   ['axios', '^1.7.0'],
-  ['zod', '^3.23.0'],
+  // Pinned to the major verified alongside the SDK above (zod v4's raw-shape
+  // `inputSchema` and `.issues` error API are what the reference uses).
+  ['zod', '^4.4.3'],
   ['dotenv', '^16.0.0'],
   ['form-data', '^4.0.0'],
   ['jsonwebtoken', '^9.0.0'],
@@ -96,119 +103,215 @@ const KNOWN_DEPENDENCY_VERSIONS: Array<[string, string]> = [
 const VALID_PACKAGE_NAME = /^(?:@[a-z0-9][\w.-]*\/)?[a-z0-9][\w.-]*$/;
 
 /**
- * MCP SDK Reference Implementation (Issue #140)
+ * MCP SDK Reference Implementation (Issue #140; dual-transport migration)
  *
  * This reference code is included in prompts to ensure the LLM uses correct
- * library APIs for @modelcontextprotocol/sdk and zod v3.
+ * library APIs for @modelcontextprotocol/sdk and zod, and implements BOTH
+ * stdio and Streamable HTTP transports behind one runtime switch.
  *
- * Re-verified 2026-07 against @modelcontextprotocol/sdk 1.x (npm latest:
- * 1.30.0): Server + setRequestHandler, no-arg StdioServerTransport, and the
- * ListToolsRequestSchema/CallToolRequestSchema low-level handler pattern are
- * all unchanged from the 0.x line this reference was written against. Only
- * declares the `tools` server capability, which remains correct - `roots`,
+ * Empirically verified 2026-08 against @modelcontextprotocol/sdk 1.30.0 and
+ * zod 4.4.3 (pinned exactly - see KNOWN_DEPENDENCY_VERSIONS and
+ * generatePackageJson): the high-level `McpServer` + `registerTool` API,
+ * dual-transport dispatch on `MCP_TRANSPORT`, and a per-session
+ * `StreamableHTTPServerTransport` were verified with real JSON-RPC round-trips
+ * over both stdio and HTTP (including a real tools/call against a live HTTP
+ * API) and a working `GET /health`. STDIO remains the default transport
+ * (unset `MCP_TRANSPORT` or `MCP_TRANSPORT=stdio`); HTTP is opt-in via
+ * `MCP_TRANSPORT=http`, which is what generated Dockerfiles set for hosting.
+ *
+ * Only declares the `tools` server capability, which remains correct - `roots`,
  * `sampling`, and `logging` as *server* capabilities were deprecated in the
  * 2026-07-28 MCP spec revision.
  *
  * Common API mistakes this prevents:
- * 1. StdioServerTransport({ stdin, stdout }) - WRONG, use StdioServerTransport()
- * 2. error.errors - WRONG, Zod v3 uses error.issues
- * 3. Missing type annotations causing TS7006 implicit any errors
+ * 1. Low-level `Server` + `setRequestHandler` instead of the high-level
+ *    `McpServer` + `registerTool` API - WRONG for new servers.
+ * 2. The deprecated `.tool()` method instead of `.registerTool()`.
+ * 3. `inputSchema: z.object({...})` (a compiled schema) instead of a RAW ZOD
+ *    SHAPE (`inputSchema: { a: z.number() }`) - `registerTool` wants the shape.
+ * 4. `console.log(...)` anywhere in the file - stdout IS the JSON-RPC channel
+ *    in stdio mode; a single stray stdout write corrupts every message after
+ *    it. ALL logging, in both transports, must go to `console.error`.
+ * 5. One `McpServer` instance shared across every HTTP session - WRONG. Each
+ *    HTTP session gets its OWN `McpServer` + transport pair, keyed by
+ *    `Mcp-Session-Id`, created only when the request is a real MCP initialize
+ *    request (`isInitializeRequest(body)` is true).
+ * 6. Missing `"types": ["node"]` in tsconfig.json under NodeNext - without it,
+ *    every Node global (`process`, `Buffer`, etc.) fails strict `tsc`.
+ * 7. Hardcoding protocol version "2024-11-05" (too old) or "2026-07-28" (not
+ *    yet implemented by this SDK version) if a protocol version literal is
+ *    ever needed - use "2025-11-25".
  */
 const MCP_REFERENCE_IMPLEMENTATION = `
-**⚠️ CRITICAL: Use these EXACT patterns from @modelcontextprotocol/sdk and zod v3**
+**⚠️ CRITICAL: Use these EXACT patterns from @modelcontextprotocol/sdk and zod - dual transport, stdio is the DEFAULT, HTTP is opt-in**
 
 \`\`\`typescript
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import {
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
-} from "@modelcontextprotocol/sdk/types.js";
+import { randomUUID } from "node:crypto";
+import http from "node:http";
 import { z } from "zod";
 
-// 1. Server initialization (correct pattern)
-// Only declare capabilities this server actually implements. Declare
-// \`tools\` here; do NOT declare \`roots\`, \`sampling\`, or \`logging\` as
-// *server* capabilities - those were deprecated in the MCP spec.
-const server = new Server(
-  { name: "my-server", version: "1.0.0" },
-  { capabilities: { tools: {} } }
-);
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 
-// 2. Tool listing handler (correct pattern)
-server.setRequestHandler(ListToolsRequestSchema, async () => ({
-  tools: [
+// 1. Build a fresh McpServer with its tools registered (high-level API).
+// In HTTP mode a NEW McpServer + transport pair is created PER SESSION (see
+// runHttp below) - never share one server instance across HTTP sessions.
+function buildServer(): McpServer {
+  const server = new McpServer({ name: "my-server", version: "1.0.0" });
+
+  // 2. registerTool (NOT the deprecated .tool()). inputSchema is a RAW ZOD
+  // SHAPE - { param1: z.string() } - NOT z.object({ param1: z.string() }).
+  server.registerTool(
+    "my_tool",
     {
-      name: "my_tool",
+      title: "My Tool",
       description: "Description here",
       inputSchema: {
-        type: "object",
-        properties: {
-          param1: { type: "string", description: "A parameter" },
-        },
-        required: ["param1"],
+        param1: z.string().describe("A parameter"),
       },
     },
-  ],
-}));
+    async ({ param1 }) => {
+      try {
+        // Your tool logic here
+        const result = \`Result for \${param1}\`;
 
-// 3. Tool call handler with Zod validation (correct pattern)
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  const { name, arguments: args } = request.params;
-
-  if (name === "my_tool") {
-    try {
-      // Zod validation with proper types
-      const schema = z.object({ param1: z.string() });
-      const validated = schema.parse(args);
-
-      // Your tool logic here
-      const result = \`Result for \${validated.param1}\`;
-
-      // MCP response format (MUST use this exact structure)
-      return {
-        content: [{ type: "text", text: result }],
-      };
-    } catch (error) {
-      // Zod v3 uses .issues NOT .errors
-      if (error instanceof z.ZodError) {
-        const messages = error.issues.map((issue: z.ZodIssue) =>
-          \`\${issue.path.join(".")}: \${issue.message}\`
-        ).join(", ");
+        // MCP response format (MUST use this exact structure)
+        return { content: [{ type: "text", text: result }] };
+      } catch (error) {
         return {
-          content: [{ type: "text", text: \`Validation error: \${messages}\` }],
           isError: true,
+          content: [
+            { type: "text", text: \`Error: \${error instanceof Error ? error.message : String(error)}\` },
+          ],
         };
       }
-      return {
-        content: [{ type: "text", text: \`Error: \${error instanceof Error ? error.message : String(error)}\` }],
-        isError: true,
-      };
     }
-  }
+  );
 
-  return {
-    content: [{ type: "text", text: \`Unknown tool: \${name}\` }],
-    isError: true,
-  };
-});
-
-// 4. Transport setup (NO ARGUMENTS - this is critical!)
-async function main() {
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
+  return server;
 }
 
-main().catch(console.error);
+// 3. Stdio transport - THE DEFAULT. One server instance for the process
+// lifetime. NEVER console.log here (or anywhere): stdout IS the JSON-RPC
+// stream, and any stray stdout write corrupts every message after it.
+async function runStdio(): Promise<void> {
+  const server = buildServer();
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+  console.error("my-server: listening on stdio");
+}
+
+// 4. Streamable HTTP transport - opt-in via MCP_TRANSPORT=http. One McpServer
+// + transport PER SESSION, keyed by Mcp-Session-Id, plus a GET /health.
+async function runHttp(): Promise<void> {
+  const port = Number(process.env.PORT) || 3000;
+  const transports = new Map<string, StreamableHTTPServerTransport>();
+
+  const httpServer = http.createServer(async (req, res) => {
+    const url = new URL(req.url ?? "/", \`http://\${req.headers.host}\`);
+
+    if (url.pathname === "/health") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ status: "ok" }));
+      return;
+    }
+
+    if (url.pathname !== "/mcp") {
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "not found" }));
+      return;
+    }
+
+    if (req.method === "POST") {
+      const sessionId = req.headers["mcp-session-id"] as string | undefined;
+      let transport: StreamableHTTPServerTransport;
+
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) chunks.push(chunk as Buffer);
+      const rawBody = Buffer.concat(chunks).toString("utf-8");
+      const parsedBody = rawBody.length > 0 ? JSON.parse(rawBody) : undefined;
+
+      if (sessionId && transports.has(sessionId)) {
+        transport = transports.get(sessionId)!;
+      } else if (!sessionId && isInitializeRequest(parsedBody)) {
+        // A new session is created ONLY on a real initialize request.
+        transport = new StreamableHTTPServerTransport({
+          sessionIdGenerator: () => randomUUID(),
+          onsessioninitialized: (newSessionId) => transports.set(newSessionId, transport),
+        });
+        transport.onclose = () => {
+          if (transport.sessionId) transports.delete(transport.sessionId);
+        };
+        const server = buildServer();
+        await server.connect(transport);
+      } else {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({
+          jsonrpc: "2.0",
+          error: { code: -32000, message: "Bad Request: no valid session ID provided for non-initialize request" },
+          id: null,
+        }));
+        return;
+      }
+
+      await transport.handleRequest(req, res, parsedBody);
+      return;
+    }
+
+    if (req.method === "GET" || req.method === "DELETE") {
+      const sessionId = req.headers["mcp-session-id"] as string | undefined;
+      if (!sessionId || !transports.has(sessionId)) {
+        res.writeHead(400).end("Invalid or missing session ID");
+        return;
+      }
+      await transports.get(sessionId)!.handleRequest(req, res);
+      return;
+    }
+
+    res.writeHead(405, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "method not allowed" }));
+  });
+
+  await new Promise<void>((resolve) => httpServer.listen(port, resolve));
+  console.error(\`my-server: listening on http://0.0.0.0:\${port} (MCP endpoint: /mcp, health: /health)\`);
+}
+
+// 5. Transport selection - STDIO IS THE DEFAULT when MCP_TRANSPORT is unset.
+const transportMode = (process.env.MCP_TRANSPORT ?? "stdio").toLowerCase();
+
+if (transportMode === "http") {
+  runHttp().catch((err) => {
+    console.error("Fatal error starting HTTP server:", err);
+    process.exit(1);
+  });
+} else if (transportMode === "stdio") {
+  runStdio().catch((err) => {
+    console.error("Fatal error starting stdio server:", err);
+    process.exit(1);
+  });
+} else {
+  console.error(\`Unknown MCP_TRANSPORT "\${transportMode}" - expected "stdio" or "http".\`);
+  process.exit(1);
+}
 \`\`\`
 
 **Common Mistakes to AVOID:**
-- ❌ \`new StdioServerTransport({ stdin: process.stdin, stdout: process.stdout })\` - WRONG
-- ✅ \`new StdioServerTransport()\` - CORRECT (no arguments)
-- ❌ \`error.errors.map(...)\` - WRONG (Zod v2 API)
-- ✅ \`error.issues.map((issue: z.ZodIssue) => ...)\` - CORRECT (Zod v3 API)
-- ❌ \`(e) => e.message\` - WRONG (implicit any in strict mode)
-- ✅ \`(issue: z.ZodIssue) => issue.message\` - CORRECT (explicit type)
+- ❌ \`new Server(...)\` + \`server.setRequestHandler(...)\` - WRONG (low-level API)
+- ✅ \`new McpServer(...)\` + \`server.registerTool(...)\` - CORRECT (high-level API)
+- ❌ \`server.tool("name", schema, handler)\` - WRONG (deprecated method)
+- ✅ \`server.registerTool("name", { title, description, inputSchema }, handler)\` - CORRECT
+- ❌ \`inputSchema: z.object({ a: z.number() })\` - WRONG (compiled schema, not a shape)
+- ✅ \`inputSchema: { a: z.number() }\` - CORRECT (raw zod shape)
+- ❌ \`console.log(...)\` anywhere in the file - WRONG (corrupts the stdio JSON-RPC stream)
+- ✅ \`console.error(...)\` for ALL diagnostics, in both transports - CORRECT
+- ❌ One \`McpServer\` shared across every HTTP session - WRONG
+- ✅ A new \`McpServer\` + transport pair per session, keyed by \`Mcp-Session-Id\`, created only on \`isInitializeRequest()\` - CORRECT
+- ❌ Defaulting to the HTTP transport - WRONG
+- ✅ stdio is the default; HTTP is opt-in via \`MCP_TRANSPORT=http\` - CORRECT
+- ❌ \`protocolVersion: "2024-11-05"\` or \`"2026-07-28"\` if a version literal is ever needed - WRONG (too old / not yet implemented by this SDK)
+- ✅ \`"2025-11-25"\` - CORRECT
 `;
 
 /**
@@ -806,14 +909,14 @@ ${JSON.stringify(plan, null, 2)}
 ${toolsList}
 
 **Requirements**:
-1. Use @modelcontextprotocol/sdk for MCP protocol - FOLLOW THE REFERENCE IMPLEMENTATION EXACTLY
+1. Use @modelcontextprotocol/sdk for MCP protocol - FOLLOW THE REFERENCE IMPLEMENTATION EXACTLY (high-level McpServer + registerTool, NOT the low-level Server + setRequestHandler API)
 2. Implement EXACTLY ${toolCount} tools from the plan above - no additional tools
 3. Use proper TypeScript types (no implicit any)
-4. Include error handling using Zod v3 .issues (NOT .errors)
+4. Include error handling using Zod .issues (NOT .errors) if you manually validate input beyond what registerTool's inputSchema already validates
 5. Follow MCP protocol exactly: return { content: [{ type: 'text', text: '...' }] }
 6. Use axios for HTTP requests if needed
 7. Include proper authentication handling
-8. Use StdioServerTransport() with NO ARGUMENTS
+8. Implement BOTH transports exactly as in the reference: read \`MCP_TRANSPORT\` from the environment - unset or \`"stdio"\` MUST start \`StdioServerTransport\` (this is the default and must keep working), \`"http"\` MUST start \`StreamableHTTPServerTransport\` on \`process.env.PORT || 3000\` with a per-session McpServer keyed by \`Mcp-Session-Id\`, plus a \`GET /health\` route returning 200 JSON. Never \`console.log\` - all logging goes to \`console.error\`.
 
 **Dependencies**: \`@modelcontextprotocol/sdk\`, \`zod\` and \`axios\` are declared already -
 prefer them. If this server genuinely needs another package (an official SDK, for
@@ -920,13 +1023,16 @@ Start with imports.`;
           start: 'node dist/index.js',
         },
         dependencies: {
-          // Current major as of 2026-07 (verified against npm registry: latest
-          // is 1.30.0). The reference implementation below uses only APIs
-          // (Server + setRequestHandler, StdioServerTransport with no
-          // arguments, ListToolsRequestSchema/CallToolRequestSchema, zod v3
-          // .issues) confirmed unchanged across the 1.x line.
-          '@modelcontextprotocol/sdk': '^1.0.0',
-          zod: '^3.23.0',
+          // Pinned to the EXACT version empirically verified for the
+          // dual-transport (stdio + Streamable HTTP) reference implementation
+          // - see MCP_REFERENCE_IMPLEMENTATION and KNOWN_DEPENDENCY_VERSIONS.
+          // Do not loosen to a caret range: the high-level
+          // McpServer/registerTool/StreamableHTTPServerTransport surface this
+          // reference relies on was only confirmed on this exact version.
+          '@modelcontextprotocol/sdk': '1.30.0',
+          // Verified major alongside the SDK above (raw-shape inputSchema,
+          // .issues error API).
+          zod: '^4.4.3',
           axios: '^1.7.0',
         },
         devDependencies: {
@@ -951,8 +1057,13 @@ Start with imports.`;
       {
         compilerOptions: {
           target: 'ES2022',
-          module: 'Node16',
-          moduleResolution: 'Node16',
+          module: 'NodeNext',
+          moduleResolution: 'NodeNext',
+          // Required under NodeNext, or every Node global (process, Buffer,
+          // etc.) fails strict tsc - the dual-transport reference implementation
+          // uses node:http and node:crypto directly.
+          lib: ['ES2022'],
+          types: ['node'],
           outDir: './dist',
           rootDir: './src',
           strict: true,
@@ -974,6 +1085,11 @@ Start with imports.`;
    * `docker build` directly against the generated server directory when
    * deploying to cloud hosting, so every generated server needs one of these.
    *
+   * Containers are for hosting, so the HTTP transport is the right default
+   * here: MCP_TRANSPORT=http selects StreamableHTTPServerTransport on PORT
+   * 3000 (see MCP_REFERENCE_IMPLEMENTATION). Local/CLI use of the same
+   * generated server still defaults to stdio when run outside this image.
+   *
    * @returns Dockerfile contents
    */
   private generateDockerfile(): string {
@@ -993,6 +1109,9 @@ COPY --from=build /app/package*.json ./
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 USER mcp
+ENV MCP_TRANSPORT=http
+ENV PORT=3000
+EXPOSE 3000
 CMD ["node", "dist/index.js"]
 `;
   }
@@ -1208,8 +1327,10 @@ ${i + 1}. **${f.toolName}** (${f.priority}):
 1. Fix ALL issues listed above
 2. Maintain MCP protocol compliance - FOLLOW THE REFERENCE IMPLEMENTATION:
    - Return { content: [{ type: 'text', text: '...' }] }
-   - Use StdioServerTransport() with NO ARGUMENTS
-   - Use Zod v3 .issues (NOT .errors) for validation errors
+   - Use the high-level McpServer + registerTool API (NOT the low-level Server + setRequestHandler API)
+   - Keep BOTH transports working: MCP_TRANSPORT unset or "stdio" -> StdioServerTransport (the default), MCP_TRANSPORT=http -> StreamableHTTPServerTransport on process.env.PORT || 3000 with a per-session McpServer keyed by Mcp-Session-Id, plus GET /health. Do NOT regress to a stdio-only implementation.
+   - Never console.log (stdout is the JSON-RPC channel in stdio mode) - all logging goes to console.error
+   - Use Zod .issues (NOT .errors) for validation errors
    - Include proper TypeScript types (no implicit any)
 3. Preserve working tools (don't break what works)
 4. Keep code structure and imports

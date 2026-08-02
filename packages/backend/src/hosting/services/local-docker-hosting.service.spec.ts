@@ -100,7 +100,7 @@ describe('LocalDockerHostingService', () => {
       // initialize
       await new Promise((resolve) => setImmediate(resolve));
       respondToNext({
-        protocolVersion: '2024-11-05',
+        protocolVersion: '2025-11-25',
         serverInfo: { name: 'test-server', version: '1.0.0' },
       });
 
@@ -114,7 +114,7 @@ describe('LocalDockerHostingService', () => {
 
       expect(result.containerName).toBe('mcp-hosted-srv-1');
       expect(result.handshake.success).toBe(true);
-      expect(result.handshake.protocolVersion).toBe('2024-11-05');
+      expect(result.handshake.protocolVersion).toBe('2025-11-25');
       expect(result.handshake.tools).toEqual([{ name: 'get_user', description: 'Fetch a user' }]);
       expect(spawnMock).toHaveBeenCalledWith(
         'docker',
@@ -154,6 +154,132 @@ describe('LocalDockerHostingService', () => {
       child.emit('exit', 1);
 
       await expect(promise).rejects.toThrow(/Container exited before it could be initialized/);
+    });
+  });
+
+  describe('startAndVerify (http transport)', () => {
+    let fetchMock: jest.SpiedFunction<typeof fetch>;
+
+    afterEach(() => {
+      fetchMock?.mockRestore();
+    });
+
+    it('publishes a deterministic port, waits for /health, and performs the Streamable HTTP handshake', async () => {
+      const child = createFakeChild();
+      spawnMock.mockReturnValue(child);
+
+      fetchMock = jest.spyOn(global, 'fetch');
+
+      // 1: GET /health
+      fetchMock.mockResolvedValueOnce({ ok: true, status: 200, text: async () => '' } as Response);
+      // 2: POST /mcp initialize
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers({ 'mcp-session-id': 'sess-1' }),
+        text: async () =>
+          `event: message\ndata: ${JSON.stringify({
+            jsonrpc: '2.0',
+            id: 1,
+            result: {
+              protocolVersion: '2025-11-25',
+              serverInfo: { name: 'http-reference-server', version: '1.0.0' },
+            },
+          })}\n\n`,
+      } as unknown as Response);
+      // 3: POST /mcp notifications/initialized (notification, no meaningful body)
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        status: 202,
+        headers: new Headers(),
+        text: async () => '',
+      } as unknown as Response);
+      // 4: POST /mcp tools/list
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers(),
+        text: async () =>
+          `event: message\ndata: ${JSON.stringify({
+            jsonrpc: '2.0',
+            id: 2,
+            result: { tools: [{ name: 'add', description: 'Adds two numbers' }] },
+          })}\n\n`,
+      } as unknown as Response);
+
+      const result = await service.startAndVerify('srv-http-1', 'mcp-local/srv-http-1:latest', {
+        MCP_TRANSPORT: 'http',
+      });
+
+      expect(result.containerName).toBe('mcp-hosted-srv-http-1');
+      expect(result.handshake.success).toBe(true);
+      expect(result.handshake.transport).toBe('http');
+      expect(result.handshake.protocolVersion).toBe('2025-11-25');
+      expect(result.handshake.serverInfo).toEqual({ name: 'http-reference-server', version: '1.0.0' });
+      expect(result.handshake.tools).toEqual([{ name: 'add', description: 'Adds two numbers' }]);
+
+      // No stdin JSON-RPC writes in HTTP mode.
+      expect(child.stdin.write).not.toHaveBeenCalled();
+
+      // A port was published, deterministically, and MCP_TRANSPORT=http was
+      // forwarded into the container as an env var.
+      const spawnArgs = spawnMock.mock.calls[0][1] as string[];
+      const pIndex = spawnArgs.indexOf('-p');
+      expect(pIndex).toBeGreaterThan(-1);
+      expect(spawnArgs[pIndex + 1]).toBe(
+        `${service.httpHostPortFor('srv-http-1')}:3000`,
+      );
+      expect(spawnArgs).toContain('MCP_TRANSPORT=http');
+
+      // Every /mcp request after initialize must echo the session id back.
+      const mcpCalls = fetchMock.mock.calls.filter(([url]) => String(url).includes('/mcp'));
+      expect(mcpCalls).toHaveLength(3);
+      for (const call of mcpCalls.slice(1)) {
+        const init = call[1] as RequestInit;
+        expect((init.headers as Record<string, string>)['Mcp-Session-Id']).toBe('sess-1');
+      }
+
+      // Every request declares it accepts SSE, not just plain JSON.
+      for (const call of mcpCalls) {
+        const init = call[1] as RequestInit;
+        expect((init.headers as Record<string, string>).Accept).toBe('application/json, text/event-stream');
+      }
+    });
+
+    it('fails clearly when GET /health never returns 200 before the deadline', async () => {
+      const child = createFakeChild();
+      spawnMock.mockReturnValue(child);
+      execFileMock.mockImplementation((_bin, _args, cb) => cb(null, { stdout: '', stderr: '' }));
+
+      fetchMock = jest.spyOn(global, 'fetch').mockRejectedValue(new Error('connect ECONNREFUSED'));
+
+      await expect(
+        service.startAndVerify(
+          'srv-http-2',
+          'mcp-local/srv-http-2:latest',
+          { MCP_TRANSPORT: 'http' },
+          250,
+        ),
+      ).rejects.toThrow(/Timed out waiting for GET \/health/);
+    });
+
+    it('reports the failed initialize response when the server never issues a session id', async () => {
+      const child = createFakeChild();
+      spawnMock.mockReturnValue(child);
+      execFileMock.mockImplementation((_bin, _args, cb) => cb(null, { stdout: '', stderr: '' }));
+
+      fetchMock = jest.spyOn(global, 'fetch');
+      fetchMock.mockResolvedValueOnce({ ok: true, status: 200, text: async () => '' } as Response);
+      fetchMock.mockResolvedValueOnce({
+        ok: false,
+        status: 400,
+        headers: new Headers(),
+        text: async () => 'Bad Request',
+      } as unknown as Response);
+
+      await expect(
+        service.startAndVerify('srv-http-3', 'mcp-local/srv-http-3:latest', { MCP_TRANSPORT: 'http' }),
+      ).rejects.toThrow(/did not return an Mcp-Session-Id header/);
     });
   });
 

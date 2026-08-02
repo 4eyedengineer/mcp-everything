@@ -19,6 +19,7 @@ describe('HostingService', () => {
   let gitOpsService: { deployServer: jest.Mock; updateServer: jest.Mock; removeServer: jest.Mock };
   let localDockerHostingService: {
     containerNameFor: jest.Mock;
+    httpHostPortFor: jest.Mock;
     buildImage: jest.Mock;
     startAndVerify: jest.Mock;
     stopContainer: jest.Mock;
@@ -71,6 +72,7 @@ describe('HostingService', () => {
     };
     localDockerHostingService = {
       containerNameFor: jest.fn((id: string) => `mcp-hosted-${id}`),
+      httpHostPortFor: jest.fn((id: string) => 20000 + id.length),
       buildImage: jest.fn(),
       startAndVerify: jest.fn(),
       stopContainer: jest.fn(),
@@ -187,7 +189,7 @@ describe('HostingService', () => {
           containerName: 'mcp-hosted-x',
           handshake: {
             success: true,
-            protocolVersion: '2024-11-05',
+            protocolVersion: '2025-11-25',
             serverInfo: { name: 'github-api-mcp', version: '1.0.0' },
             tools: [{ name: 'get_user', description: 'Fetch a user' }],
           },
@@ -215,6 +217,31 @@ describe('HostingService', () => {
           containerName: 'mcp-hosted-x',
           handshake: { toolCount: 1, toolNames: ['get_user'] },
         });
+      });
+
+      it('reports a real http://localhost endpointUrl when MCP_TRANSPORT=http is requested', async () => {
+        deploymentRepo.findOne.mockResolvedValue(baseDeployment);
+        localDockerHostingService.buildImage.mockResolvedValue('mcp-local/x:latest');
+        localDockerHostingService.startAndVerify.mockResolvedValue({
+          containerName: 'mcp-hosted-x',
+          handshake: {
+            success: true,
+            transport: 'http',
+            protocolVersion: '2025-11-25',
+            serverInfo: { name: 'github-api-mcp', version: '1.0.0' },
+            tools: [{ name: 'get_user', description: 'Fetch a user' }],
+          },
+        });
+
+        const result = await service.deployToCloud('conv-1', 'user-1', { MCP_TRANSPORT: 'http' });
+
+        expect(result.success).toBe(true);
+        expect(result.endpointUrl).toMatch(/^http:\/\/localhost:\d+$/);
+        expect(localDockerHostingService.httpHostPortFor).toHaveBeenCalledWith(result.serverId);
+
+        const savedCalls = hostedServerRepo.save.mock.calls.map((c) => c[0]);
+        const finalSave = savedCalls[savedCalls.length - 1];
+        expect(finalSave.statusMessage).toContain('Verified via http MCP handshake');
       });
 
       it('reports failed with the real handshake error when the container never becomes a working MCP server', async () => {

@@ -124,6 +124,14 @@ describe('ManifestGeneratorService', () => {
       expect(envVars).toContainEqual({ name: 'DEBUG', value: 'true' });
     });
 
+    it('sets MCP_TRANSPORT=http so the container boots into HTTP mode', () => {
+      const manifests = service.generateManifests(baseConfig);
+      const deployment = yaml.load(manifests.deployment) as any;
+      const container = deployment.spec.template.spec.containers[0];
+
+      expect(container.env).toContainEqual({ name: 'MCP_TRANSPORT', value: 'http' });
+    });
+
     it('should include health probes', () => {
       const manifests = service.generateManifests(baseConfig);
       const deployment = yaml.load(manifests.deployment) as any;
@@ -194,13 +202,21 @@ describe('ManifestGeneratorService', () => {
       expect(ingress.spec.tls[0].secretName).toBe('mcp-stripe-abc123-tls');
     });
 
-    it('should include nginx and cert-manager annotations', () => {
+    it('should target the Traefik ingress class via spec.ingressClassName', () => {
       const manifests = service.generateManifests(baseConfig);
       const ingress = yaml.load(manifests.ingress) as any;
 
-      expect(ingress.metadata.annotations['kubernetes.io/ingress.class']).toBe(
-        'nginx',
-      );
+      expect(ingress.spec.ingressClassName).toBe('traefik');
+      expect(ingress.metadata.annotations['kubernetes.io/ingress.class']).toBeUndefined();
+      expect(
+        ingress.metadata.annotations['nginx.ingress.kubernetes.io/proxy-read-timeout'],
+      ).toBeUndefined();
+    });
+
+    it('should include the cert-manager annotation when TLS is enabled', () => {
+      const manifests = service.generateManifests(baseConfig);
+      const ingress = yaml.load(manifests.ingress) as any;
+
       expect(
         ingress.metadata.annotations['cert-manager.io/cluster-issuer'],
       ).toBe('letsencrypt-prod');

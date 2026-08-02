@@ -56,9 +56,10 @@ export interface DeploymentResult {
  *
  * 'docker-run': build the image locally and actually run it as a Docker
  * container on this host, verifying it's a real, responding MCP server via
- * the stdio initialize/tools-list handshake before ever reporting
- * 'running'. No registry, no GitOps repo, no cluster - see
- * LocalDockerHostingService and DEPLOYMENT.md "local hosting on WSL2" for
+ * the initialize/tools-list handshake - over stdio or Streamable HTTP,
+ * whichever transport the caller-supplied `MCP_TRANSPORT` env var selects -
+ * before ever reporting 'running'. No registry, no GitOps repo, no cluster -
+ * see LocalDockerHostingService and DEPLOYMENT.md "local hosting on WSL2" for
  * why this exists and exactly what it does and does not prove.
  */
 type HostingMode = 'kubernetes' | 'docker-run';
@@ -125,8 +126,16 @@ export class HostingService {
 
     // 2. Generate unique server ID
     const serverId = this.generateServerId(deployment.serverName);
+    // docker-run + MCP_TRANSPORT=http gets a real, dialable URL (the port
+    // LocalDockerHostingService will publish is a pure function of serverId,
+    // so it's safe to compute here before the container actually starts);
+    // docker-run + stdio has no network endpoint at all, so `docker-exec://`
+    // stays an honest (if fake-scheme) placeholder rather than a URL nothing
+    // can actually connect to.
     const endpointUrl = this.isDockerRunMode()
-      ? `docker-exec://${this.localDockerHostingService.containerNameFor(serverId)}`
+      ? envVars?.MCP_TRANSPORT?.toLowerCase() === 'http'
+        ? `http://localhost:${this.localDockerHostingService.httpHostPortFor(serverId)}`
+        : `docker-exec://${this.localDockerHostingService.containerNameFor(serverId)}`
       : `https://${serverId}.${this.domain}`;
 
     // 3. Create hosted server record
@@ -254,8 +263,10 @@ export class HostingService {
 
   /**
    * HOSTING_MODE=docker-run path: build the image locally, run it as a real
-   * container, and only report 'running' once the stdio MCP handshake
-   * (initialize + tools/list) has actually succeeded against it.
+   * container, and only report 'running' once the MCP handshake (initialize
+   * + tools/list) has actually succeeded against it - over stdio or
+   * Streamable HTTP, whichever transport `envVars.MCP_TRANSPORT` selects
+   * (see LocalDockerHostingService.startAndVerify).
    */
   private async deployToLocalDocker(
     hostedServer: HostedServer,
@@ -303,7 +314,7 @@ export class HostingService {
       await this.updateStatus(
         hostedServer,
         'running',
-        `Running in local Docker container '${containerName}'. Verified via stdio MCP handshake - ${toolSummary}.`,
+        `Running in local Docker container '${containerName}'. Verified via ${handshake.transport ?? 'stdio'} MCP handshake - ${toolSummary}.`,
       );
       hostedServer.deployedAt = new Date();
       await this.hostedServerRepo.save(hostedServer);
