@@ -606,6 +606,48 @@ A global JWT guard (`APP_GUARD` in `app.module.ts`) protects every route by defa
 
 Every conversation, deployment, and hosted-server lookup is scoped to `userId` — not just gated by "is logged in." The 5 previously unauthenticated debug endpoints (`POST /chat`, `/analyze`, `/discover-tools`, `/generate-mcp`, `/generate`) have been deleted entirely.
 
+### Hosted-Server Credentials — issued, not yet enforced
+
+`hosted_server_api_keys` (child table of `hosted_servers`, see
+`HostedServerApiKeyService`) lets an owner issue, list, revoke and rotate API
+keys for one of their hosted MCP servers:
+
+- **Child table, not a column**, because rotation needs the old and new key to
+  be valid simultaneously during a cutover window.
+- **Hash only.** SHA-256 hex; the plaintext (`mcps_` + 32 random bytes,
+  base64url) is returned exactly once, from `POST /api/hosting/servers/:serverId/keys`,
+  and is unrecoverable afterwards. SHA-256 rather than bcrypt/argon2 is
+  deliberate: the input is a 256-bit random token, not a guessable password, so
+  a slow KDF adds verification latency without adding resistance. Same choice
+  as `ApiKeyService` (user-level keys) and password-reset tokens in
+  `AuthService`.
+- **Timing-safe verification.** `verifyKey()` compares digests with
+  `crypto.timingSafeEqual` against that server's non-revoked, non-expired keys.
+- **Ownership.** Every key endpoint resolves the server by `serverId` *and*
+  `userId`; another user's server is reported as not found, so key management
+  cannot be used to probe for server ids.
+
+> **What this does NOT do yet.** Nothing calls `verifyKey()` on a request path.
+> Hosted MCP servers are still reachable at their `endpointUrl` with no
+> credential at all — the only thing protecting them is that the URL contains
+> an unguessable id. The intended enforcement point is a backend gateway
+> proxying to hosted pods, and **that gateway does not exist**. Issuing a key
+> today provisions a credential; it does not lock down a server.
+
+### Hosting Quotas and Abuse Limits
+
+- **Concurrent hosted servers per user** — `TierLimits.hostedServerLimit`
+  (free: 1, pro: 10, enterprise: unlimited), enforced in
+  `HostingService.deployToCloud` *before* any image build or GitOps commit.
+  Exceeding it returns 403 with `code: 'HOSTED_SERVER_LIMIT_EXCEEDED'` plus the
+  user's current count, the limit and their tier. `failed` and `deleted`
+  servers do not consume a slot; `stopped` ones do, since they still hold a
+  reserved serverId, hostname and image.
+- **Deploy rate limit** — `@Throttle` on `POST /api/hosting/deploy/:conversationId`
+  caps deploys at 5/minute per IP (global default is 100/min), so a runaway
+  client loop cannot hammer the build host. Key create/revoke are capped at
+  10/minute.
+
 ### API Key Management
 
 ```typescript

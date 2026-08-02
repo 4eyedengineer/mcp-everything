@@ -5,12 +5,20 @@ import { ManifestGeneratorService } from './services/manifest-generator.service'
 import { GitOpsService } from './services/gitops.service';
 import { LocalDockerHostingService } from './services/local-docker-hosting.service';
 import { HostingService } from './hosting.service';
+import { HostedServerApiKeyService } from './hosted-server-api-key.service';
 import { HostingController } from './hosting.controller';
 import { HostedServer } from '../database/entities/hosted-server.entity';
+import { HostedServerApiKey } from '../database/entities/hosted-server-api-key.entity';
 import { Deployment } from '../database/entities/deployment.entity';
+import { UserModule } from '../user/user.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([HostedServer, Deployment])],
+  imports: [
+    TypeOrmModule.forFeature([HostedServer, HostedServerApiKey, Deployment]),
+    // For UserService: HostingService reads the caller's tier to enforce the
+    // concurrent hosted-server cap.
+    UserModule,
+  ],
   controllers: [HostingController],
   providers: [
     ContainerRegistryService,
@@ -18,6 +26,7 @@ import { Deployment } from '../database/entities/deployment.entity';
     GitOpsService,
     LocalDockerHostingService,
     HostingService,
+    HostedServerApiKeyService,
   ],
   exports: [
     ContainerRegistryService,
@@ -25,6 +34,7 @@ import { Deployment } from '../database/entities/deployment.entity';
     GitOpsService,
     LocalDockerHostingService,
     HostingService,
+    HostedServerApiKeyService,
   ],
 })
 export class HostingModule implements OnModuleInit {

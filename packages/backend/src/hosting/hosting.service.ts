@@ -1,6 +1,12 @@
-import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  NotFoundException,
+  BadRequestException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { randomBytes } from 'crypto';
 
 /**
@@ -39,6 +45,8 @@ import { ManifestGeneratorService } from './services/manifest-generator.service'
 import { GitOpsService } from './services/gitops.service';
 import { LocalDockerHostingService } from './services/local-docker-hosting.service';
 import { ConfigService } from '@nestjs/config';
+import { UserService } from '../user/user.service';
+import { TIER_CONFIG, TIER_DISPLAY_NAMES, UserTier } from '../subscription/tier-config';
 
 export interface DeploymentResult {
   success: boolean;
@@ -46,6 +54,34 @@ export interface DeploymentResult {
   endpointUrl: string;
   status: HostedServerStatus;
   error?: string;
+}
+
+/**
+ * Statuses that consume a slot against a user's concurrent hosted-server cap.
+ *
+ * 'failed' and 'deleted' are excluded: they hold no image, no hostname and no
+ * running workload, so counting them would let one bad deploy permanently
+ * consume a free-tier user's only slot. Repeated *failing* deploys are the
+ * rate limiter's job (see @Throttle on HostingController.deployServer), not
+ * this cap's.
+ */
+export const QUOTA_COUNTED_STATUSES: HostedServerStatus[] = [
+  'pending',
+  'building',
+  'pushing',
+  'deploying',
+  'running',
+  'stopped',
+];
+
+/** Shape of the 403 body thrown when the concurrent hosted-server cap is hit. */
+export interface HostedServerLimitError {
+  code: 'HOSTED_SERVER_LIMIT_EXCEEDED';
+  message: string;
+  currentUsage: number;
+  limit: number;
+  currentTier: string;
+  upgradeUrl: string;
 }
 
 /**
@@ -81,6 +117,7 @@ export class HostingService {
     private gitOpsService: GitOpsService,
     private localDockerHostingService: LocalDockerHostingService,
     private configService: ConfigService,
+    private userService: UserService,
   ) {
     this.domain = this.configService.get('MCP_HOSTING_DOMAIN', 'mcp.example.com');
     this.namespace = this.configService.get('K8S_NAMESPACE', 'mcp-servers');
@@ -122,6 +159,13 @@ export class HostingService {
       throw new BadRequestException(
         'Deployment does not have server metadata (serverName required)',
       );
+    }
+
+    // 1b. Enforce the per-user concurrent hosted-server cap before doing any
+    // expensive work (image build, registry push, GitOps commit).
+    const owner = userId ?? deployment.userId;
+    if (owner) {
+      await this.assertHostedServerQuota(owner);
     }
 
     // 2. Generate unique server ID
@@ -544,6 +588,53 @@ export class HostingService {
       logs: [],
       message: 'Log streaming not yet implemented. K8s integration required for live logs.',
     };
+  }
+
+  /**
+   * Count a user's hosted servers that occupy a quota slot.
+   * Public so a future account/usage screen can show "3 of 10 used" without
+   * duplicating the status list.
+   */
+  async countActiveHostedServers(userId: string): Promise<number> {
+    return this.hostedServerRepo.count({
+      where: { userId, status: In(QUOTA_COUNTED_STATUSES) },
+    });
+  }
+
+  /**
+   * Throw a 403 naming the limit, the user's current count and their tier if
+   * they are already at their concurrent hosted-server cap.
+   */
+  private async assertHostedServerQuota(userId: string): Promise<void> {
+    const user = await this.userService.findById(userId);
+    const tier = (user?.tier as UserTier) || UserTier.FREE;
+    const limit = TIER_CONFIG[tier]?.hostedServerLimit ?? TIER_CONFIG[UserTier.FREE].hostedServerLimit;
+
+    if (limit === Infinity) {
+      return;
+    }
+
+    const current = await this.countActiveHostedServers(userId);
+    if (current < limit) {
+      return;
+    }
+
+    const tierName = TIER_DISPLAY_NAMES[tier] ?? tier;
+    this.logger.warn(
+      `Hosted server cap reached for user ${userId} (tier ${tier}): ${current}/${limit}`,
+    );
+
+    throw new ForbiddenException({
+      code: 'HOSTED_SERVER_LIMIT_EXCEEDED',
+      message:
+        `You already have ${current} hosted server${current === 1 ? '' : 's'}, ` +
+        `which is the maximum of ${limit} for the ${tierName} tier. ` +
+        'Delete a hosted server to free a slot, or upgrade your plan.',
+      currentUsage: current,
+      limit,
+      currentTier: tier,
+      upgradeUrl: '/account?upgrade=true',
+    } as HostedServerLimitError);
   }
 
   // --- Helper Methods ---
