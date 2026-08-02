@@ -1,0 +1,23 @@
+# The namespace every user-hosted MCP server Deployment/Service/Secret is
+# created into by K8sControlPlaneService.
+#
+# Nothing previously created this namespace: the old GitOps flow committed
+# `namespace: mcp-servers` manifests to a separate repo that nothing consumed,
+# and the only checked-in copy of this Namespace object lived in the
+# `mcp-server-deployments/` stub directory (deleted along with GitOpsService).
+# Without this, every create call from the control plane would fail with
+# "namespaces \"mcp-servers\" not found".
+#
+# Applied separately from k8s/base (whose kustomization pins
+# `namespace: mcp-everything` and would rewrite these objects into the wrong
+# namespace):
+#
+#   kubectl apply -k k8s/mcp-servers
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mcp-servers
+  labels:
+    app.kubernetes.io/name: mcp-servers
+    app.kubernetes.io/part-of: mcp-everything
+    app.kubernetes.io/managed-by: mcp-everything

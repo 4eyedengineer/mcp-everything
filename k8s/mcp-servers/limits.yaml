@@ -1,0 +1,40 @@
+# Blast-radius limits for the shared namespace that all user-hosted MCP
+# servers land in. Carried over from the deleted `mcp-server-deployments/base/`
+# stub directory (which nothing applied, because nothing consumed that repo) so
+# the intent survives the removal of the GitOps path.
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: mcp-servers-quota
+  namespace: mcp-servers
+  labels:
+    app.kubernetes.io/part-of: mcp-everything
+spec:
+  hard:
+    requests.cpu: '10'
+    requests.memory: 10Gi
+    limits.cpu: '20'
+    limits.memory: 20Gi
+    pods: '100'
+    # One Secret + one Service per hosted server; keeps a runaway
+    # deploy loop from exhausting namespace object counts.
+    secrets: '150'
+    services: '150'
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: mcp-servers-limits
+  namespace: mcp-servers
+  labels:
+    app.kubernetes.io/part-of: mcp-everything
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: 500m
+        memory: 256Mi
+      defaultRequest:
+        cpu: 100m
+        memory: 128Mi

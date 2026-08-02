@@ -5,6 +5,7 @@ namespace: mcp-everything
 
 resources:
   - namespace.yaml
+  - backend/serviceaccount.yaml
   - backend/deployment.yaml
   - backend/service.yaml
   - frontend/deployment.yaml

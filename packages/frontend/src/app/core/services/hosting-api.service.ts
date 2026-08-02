@@ -39,7 +39,31 @@ export interface DeployToCloudResponse {
 }
 
 /**
- * Server status response from polling endpoint
+ * What the user asked for, as opposed to what the cluster is doing.
+ */
+export type HostedServerDesiredState = 'running' | 'stopped' | 'deleted';
+
+/**
+ * What the cluster actually reports, written only by the backend's
+ * reconciler. `status` above remains the value this UI renders; this is the
+ * finer-grained truth behind it.
+ */
+export type HostedServerObservedStatus =
+  | 'running'
+  | 'progressing'
+  | 'stopped'
+  | 'degraded'
+  | 'failed'
+  | 'missing'
+  | 'unknown';
+
+/**
+ * Server status response from polling endpoint.
+ *
+ * `replicas`/`readyReplicas` are now REAL counts observed from the Kubernetes
+ * Deployment. They used to be derived from `status` on the backend
+ * (`status === 'running' ? 1 : 0`), so they could never disagree with it.
+ * They are 0 until the reconciler's first pass over a freshly deployed server.
  */
 export interface ServerStatusResponse {
   serverId: string;
@@ -47,6 +71,11 @@ export interface ServerStatusResponse {
   message: string;
   replicas: number;
   readyReplicas: number;
+  /** Optional: older backends do not return these. */
+  desiredState?: HostedServerDesiredState;
+  observedStatus?: HostedServerObservedStatus | null;
+  /** When the cluster was last observed; bounded by the reconciler interval. */
+  observedAt?: Date | null;
   lastUpdated: Date;
 }
 
