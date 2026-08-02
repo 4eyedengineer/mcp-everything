@@ -5,8 +5,22 @@ import * as yaml from 'js-yaml';
 export interface ManifestConfig {
   serverId: string;
   serverName: string;
+  /**
+   * The FULL image reference, tag included, exactly as it should appear in
+   * the pod spec - e.g. `ghcr.io/owner/mcp-servers/stripe-abc123:latest`.
+   *
+   * There is deliberately no separate `imageTag` field. There used to be one,
+   * and it was a guaranteed-broken deploy: the only producer of this value is
+   * `ContainerRegistryService.buildAndPush()`, which returns
+   * `getImageName(serverId, tag)` - a reference that ALREADY carries its tag -
+   * while `HostingService` also passed `imageTag: 'latest'` alongside it and
+   * this service emitted `${dockerImage}:${imageTag}`. Every generated
+   * Deployment therefore said `...stripe-abc123:latest:latest`, which
+   * kubelet rejects with `InvalidImageName`; the pod could never start. The
+   * spec file hid it by using an untagged fixture no real caller ever
+   * produced. One field, one owner of the tag, no way to double-apply it.
+   */
   dockerImage: string;
-  imageTag: string;
   domain: string; // e.g., mcp.yourdomain.com
   namespace: string;
   resources?: {
@@ -99,7 +113,10 @@ export class ManifestGeneratorService {
             containers: [
               {
                 name: 'mcp-server',
-                image: `${config.dockerImage}:${config.imageTag}`,
+                // `config.dockerImage` is the complete reference including
+                // the tag - see ManifestConfig.dockerImage. Do not append
+                // anything here.
+                image: config.dockerImage,
                 ports: [{ containerPort: 3000 }],
                 resources: {
                   requests: {

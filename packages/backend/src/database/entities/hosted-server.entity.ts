@@ -9,6 +9,7 @@ import {
   Index,
 } from 'typeorm';
 import { Conversation } from './conversation.entity';
+import { User } from './user.entity';
 
 export type HostedServerStatus =
   | 'pending'
@@ -53,6 +54,21 @@ export class HostedServer {
   @Index('idx_hosted_servers_user_id', { synchronize: false })
   @Column({ name: 'user_id', type: 'uuid', nullable: true })
   userId: string;
+
+  /**
+   * See 1754100000002-AddHostedServerUserForeignKey.ts for why this is
+   * `RESTRICT` and not `CASCADE`/`SET NULL`: the database cannot stop a
+   * running container or pod, so silently dropping (or disowning) the only
+   * record of a live hosted server on account deletion just relocates the
+   * orphan. `RESTRICT` forces the application to tear servers down first
+   * (UserService.deleteUser does exactly that check).
+   */
+  @ManyToOne(() => User, { nullable: true, onDelete: 'RESTRICT' })
+  @JoinColumn({
+    name: 'user_id',
+    foreignKeyConstraintName: 'hosted_servers_user_id_fkey',
+  })
+  user: User;
 
   // Server identification
   @Column({ name: 'server_name', length: 100 })
@@ -128,4 +144,38 @@ export class HostedServer {
 
   @Column({ type: 'jsonb', nullable: true })
   config: Record<string, any>;
+
+  /**
+   * Filesystem path to the generated server source this hosted server was
+   * built from.
+   *
+   * Duplicated from `Deployment.localPath` on purpose: `Deployment` is
+   * `ON DELETE CASCADE` from `conversations`, so deleting a chat used to
+   * destroy the only pointer to the source while leaving this (still running)
+   * hosted server behind, unrebuildable - `HostedServer.conversation` is
+   * `ON DELETE SET NULL`, so the row survives its conversation. A hosted
+   * server must be self-sufficient with respect to anything that cascades
+   * away. Backfilled from `deployments.localPath` by
+   * 1754100000000-AddHostedServerSelfSufficiency.ts.
+   */
+  @Column({ name: 'local_path', type: 'text', nullable: true })
+  localPath: string | null;
+
+  /**
+   * The env vars this server was deployed with, AES-256-GCM encrypted via
+   * `TokenEncryptionService` (same format as `User.githubAccessTokenEncrypted`).
+   *
+   * Needed so that stopping and starting a hosted server does not silently
+   * change what it is: without it, a restart passed `{}` for env vars, so a
+   * server deployed with `MCP_TRANSPORT=http` came back up in stdio mode with
+   * no published port - unreachable at the `http://localhost:<port>`
+   * `endpointUrl` its own record still advertises - and any user-supplied API
+   * keys were lost. Encrypted rather than plain jsonb because these values are
+   * exactly the secrets `env_var_names` was deliberately created to avoid
+   * storing; when no `TOKEN_ENCRYPTION_KEY` is configured nothing is written
+   * here and only the non-secret transport vars in `config.transportEnv`
+   * survive a restart.
+   */
+  @Column({ name: 'deploy_env_encrypted', type: 'text', nullable: true })
+  deployEnvEncrypted: string | null;
 }

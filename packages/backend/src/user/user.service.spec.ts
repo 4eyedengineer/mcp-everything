@@ -1,15 +1,19 @@
 /// <reference types="jest" />
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
+import { ConflictException } from '@nestjs/common';
 import { UserService } from './user.service';
 import { User } from '../database/entities/user.entity';
 import { UsageRecord } from '../database/entities/usage.entity';
+import { HostedServer } from '../database/entities/hosted-server.entity';
 
 describe('UserService - GitHub token storage', () => {
   let service: UserService;
   let mockUserRepository: any;
   let mockUsageRepository: any;
+  let mockHostedServerRepository: any;
   let queryBuilderMock: any;
+  let hostedServerQueryBuilderMock: any;
 
   beforeEach(async () => {
     queryBuilderMock = {
@@ -22,18 +26,76 @@ describe('UserService - GitHub token storage', () => {
       update: jest.fn().mockResolvedValue({ affected: 1 }),
       createQueryBuilder: jest.fn().mockReturnValue(queryBuilderMock),
       findOne: jest.fn().mockResolvedValue(null),
+      remove: jest.fn().mockResolvedValue(undefined),
     };
     mockUsageRepository = {};
+
+    hostedServerQueryBuilderMock = {
+      select: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      getMany: jest.fn().mockResolvedValue([]),
+    };
+    mockHostedServerRepository = {
+      createQueryBuilder: jest.fn().mockReturnValue(hostedServerQueryBuilderMock),
+      update: jest.fn().mockResolvedValue({ affected: 0 }),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         UserService,
         { provide: getRepositoryToken(User), useValue: mockUserRepository },
         { provide: getRepositoryToken(UsageRecord), useValue: mockUsageRepository },
+        { provide: getRepositoryToken(HostedServer), useValue: mockHostedServerRepository },
       ],
     }).compile();
 
     service = module.get(UserService);
+  });
+
+  /**
+   * `hosted_servers.user_id` had an index but no foreign key, so deleting an
+   * account left rows pointing at a user that no longer existed - invisible to
+   * every user-scoped query while their containers/pods kept running. The
+   * constraint is now ON DELETE RESTRICT (see
+   * 1754100000002-AddHostedServerUserForeignKey.ts), which makes the silent
+   * orphan impossible; these tests cover the application half that turns the
+   * constraint into an actionable error rather than a 500.
+   */
+  describe('deleteUser', () => {
+    beforeEach(() => {
+      mockUserRepository.findOne.mockResolvedValue({ id: 'user-1', email: 'a@b.c' });
+    });
+
+    it('refuses to delete an account that still owns live hosted servers', async () => {
+      hostedServerQueryBuilderMock.getMany.mockResolvedValue([
+        { serverId: 'stripe-abc123' },
+        { serverId: 'github-def456' },
+      ]);
+
+      await expect(service.deleteUser('user-1')).rejects.toThrow(ConflictException);
+      await expect(service.deleteUser('user-1')).rejects.toThrow(/stripe-abc123/);
+      expect(mockUserRepository.remove).not.toHaveBeenCalled();
+    });
+
+    it('excludes already soft-deleted servers from the check', async () => {
+      await service.deleteUser('user-1');
+
+      expect(hostedServerQueryBuilderMock.andWhere).toHaveBeenCalledWith(
+        'server.status != :deleted',
+        { deleted: 'deleted' },
+      );
+    });
+
+    it('releases the RESTRICT foreign key held by soft-deleted servers, then deletes', async () => {
+      await service.deleteUser('user-1');
+
+      expect(mockHostedServerRepository.update).toHaveBeenCalledWith(
+        { userId: 'user-1' },
+        { userId: null },
+      );
+      expect(mockUserRepository.remove).toHaveBeenCalled();
+    });
   });
 
   describe('findByIdWithGithubToken', () => {

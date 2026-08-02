@@ -9,12 +9,18 @@ import { ContainerRegistryService } from './services/container-registry.service'
 import { ManifestGeneratorService } from './services/manifest-generator.service';
 import { GitOpsService } from './services/gitops.service';
 import { LocalDockerHostingService } from './services/local-docker-hosting.service';
+import { TokenEncryptionService } from '../common/token-encryption/token-encryption.service';
 
 describe('HostingService', () => {
   let service: HostingService;
   let hostedServerRepo: { create: jest.Mock; save: jest.Mock; findOne: jest.Mock; createQueryBuilder: jest.Mock };
   let deploymentRepo: { findOne: jest.Mock };
-  let containerRegistryService: { buildAndPush: jest.Mock; deleteImage: jest.Mock };
+  let containerRegistryService: {
+    buildImage: jest.Mock;
+    pushImage: jest.Mock;
+    buildAndPush: jest.Mock;
+    deleteImage: jest.Mock;
+  };
   let manifestGeneratorService: { generateManifests: jest.Mock; generateKustomization: jest.Mock };
   let gitOpsService: { deployServer: jest.Mock; updateServer: jest.Mock; removeServer: jest.Mock };
   let localDockerHostingService: {
@@ -24,6 +30,17 @@ describe('HostingService', () => {
     startAndVerify: jest.Mock;
     stopContainer: jest.Mock;
     getLogs: jest.Mock;
+  };
+  /**
+   * A real-behaviour fake rather than a pass-through: encrypt/decrypt must
+   * actually round-trip (and must be able to fail) for the restart-env tests
+   * to mean anything, but AES key management is TokenEncryptionService's own
+   * tested concern, not HostingService's.
+   */
+  let tokenEncryptionService: {
+    enabled: boolean;
+    encrypt: jest.Mock;
+    decrypt: jest.Mock;
   };
   let hostingMode: 'kubernetes' | 'docker-run';
 
@@ -56,7 +73,23 @@ describe('HostingService', () => {
       createQueryBuilder: jest.fn(),
     };
     deploymentRepo = { findOne: jest.fn() };
-    containerRegistryService = { buildAndPush: jest.fn(), deleteImage: jest.fn() };
+    containerRegistryService = {
+      buildImage: jest.fn(),
+      pushImage: jest.fn().mockResolvedValue(undefined),
+      buildAndPush: jest.fn(),
+      deleteImage: jest.fn(),
+    };
+    tokenEncryptionService = {
+      enabled: true,
+      encrypt: jest.fn((plaintext: string) =>
+        tokenEncryptionService.enabled ? `enc(${plaintext})` : undefined,
+      ),
+      decrypt: jest.fn((payload?: string | null) => {
+        if (!tokenEncryptionService.enabled || !payload) return undefined;
+        const match = /^enc\((.*)\)$/s.exec(payload);
+        return match ? match[1] : undefined;
+      }),
+    };
     manifestGeneratorService = {
       generateManifests: jest.fn().mockReturnValue({
         deployment: 'kind: Deployment\nreplicas: 1',
@@ -99,6 +132,7 @@ describe('HostingService', () => {
         { provide: ManifestGeneratorService, useValue: manifestGeneratorService },
         { provide: GitOpsService, useValue: gitOpsService },
         { provide: LocalDockerHostingService, useValue: localDockerHostingService },
+        { provide: TokenEncryptionService, useValue: tokenEncryptionService },
         { provide: ConfigService, useValue: mockConfigService },
       ],
     }).compile();
@@ -121,7 +155,7 @@ describe('HostingService', () => {
 
     it('always generates a serverId that is a valid Docker tag / K8s DNS label component (never ending in a separator)', async () => {
       deploymentRepo.findOne.mockResolvedValue(baseDeployment);
-      containerRegistryService.buildAndPush.mockResolvedValue('ghcr.io/owner/repo/x:latest');
+      containerRegistryService.buildImage.mockResolvedValue('ghcr.io/owner/repo/x:latest');
 
       // Run many times since the suffix is random - regression guard for the
       // nanoid-default-alphabet bug (suffix could end in '-' or '_').
@@ -135,25 +169,83 @@ describe('HostingService', () => {
     describe('kubernetes mode (default)', () => {
       it('builds, pushes, generates manifests, commits to GitOps, and reports running', async () => {
         deploymentRepo.findOne.mockResolvedValue(baseDeployment);
-        containerRegistryService.buildAndPush.mockResolvedValue('ghcr.io/owner/repo/x:latest');
+        containerRegistryService.buildImage.mockResolvedValue('ghcr.io/owner/repo/x:latest');
 
         const result = await service.deployToCloud('conv-1', 'user-1');
 
         expect(result.success).toBe(true);
         expect(result.status).toBe('running');
         expect(result.endpointUrl).toMatch(/^https:\/\//);
-        expect(containerRegistryService.buildAndPush).toHaveBeenCalledWith(
+        expect(containerRegistryService.buildImage).toHaveBeenCalledWith(
           baseDeployment.localPath,
           result.serverId,
           'latest',
+        );
+        expect(containerRegistryService.pushImage).toHaveBeenCalledWith(
+          'ghcr.io/owner/repo/x:latest',
         );
         expect(gitOpsService.deployServer).toHaveBeenCalled();
         expect(localDockerHostingService.buildImage).not.toHaveBeenCalled();
       });
 
+      /**
+       * Defect: ContainerRegistryService returns an image reference that
+       * already carries its tag, and HostingService also passed
+       * `imageTag: 'latest'`, so ManifestGeneratorService emitted
+       * `...:latest:latest` -> InvalidImageName -> the pod could never start.
+       * Assert on the object the real caller hands the manifest generator,
+       * which is the seam where the two were being combined.
+       */
+      it('passes the manifest generator the full image reference and no separate tag', async () => {
+        deploymentRepo.findOne.mockResolvedValue(baseDeployment);
+        containerRegistryService.buildImage.mockResolvedValue(
+          'ghcr.io/owner/mcp-servers/x:latest',
+        );
+
+        await service.deployToCloud('conv-1', 'user-1');
+
+        const config = manifestGeneratorService.generateManifests.mock.calls[0][0];
+        expect(config.dockerImage).toBe('ghcr.io/owner/mcp-servers/x:latest');
+        expect(config.imageTag).toBeUndefined();
+      });
+
+      /**
+       * 'pushing' is a declared HostedServerStatus with DB CHECK constraints
+       * and its own stage in the deploy-progress UI, but nothing ever set it -
+       * the bar jumped building -> deploying past a stage users were shown.
+       */
+      it('reports the pushing stage between building and deploying', async () => {
+        deploymentRepo.findOne.mockResolvedValue(baseDeployment);
+        containerRegistryService.buildImage.mockResolvedValue('ghcr.io/owner/repo/x:latest');
+
+        // save() is handed the same mutated entity every time, so the status
+        // has to be snapshotted at call time rather than read back off
+        // save.mock.calls afterwards.
+        const statuses: string[] = [];
+        hostedServerRepo.save.mockImplementation(async (entity: { status: string }) => {
+          statuses.push(entity.status);
+          return entity;
+        });
+
+        await service.deployToCloud('conv-1', 'user-1');
+
+        expect(statuses).toContain('pushing');
+        expect(statuses.indexOf('building')).toBeLessThan(statuses.indexOf('pushing'));
+        expect(statuses.indexOf('pushing')).toBeLessThan(statuses.indexOf('deploying'));
+      });
+
+      it('does not push an image that failed to build', async () => {
+        deploymentRepo.findOne.mockResolvedValue(baseDeployment);
+        containerRegistryService.buildImage.mockRejectedValue(new Error('Docker build failed'));
+
+        await service.deployToCloud('conv-1', 'user-1');
+
+        expect(containerRegistryService.pushImage).not.toHaveBeenCalled();
+      });
+
       it('reports failed with the real error when the registry build fails', async () => {
         deploymentRepo.findOne.mockResolvedValue(baseDeployment);
-        containerRegistryService.buildAndPush.mockRejectedValue(
+        containerRegistryService.buildImage.mockRejectedValue(
           new Error('Docker build failed: docker: not found'),
         );
 
@@ -164,15 +256,46 @@ describe('HostingService', () => {
         expect(result.error).toContain('docker: not found');
       });
 
+      it('reports failed with the real error when the push fails', async () => {
+        deploymentRepo.findOne.mockResolvedValue(baseDeployment);
+        containerRegistryService.buildImage.mockResolvedValue('ghcr.io/owner/repo/x:latest');
+        containerRegistryService.pushImage.mockRejectedValue(
+          new Error('Docker push failed: unauthorized'),
+        );
+
+        const result = await service.deployToCloud('conv-1', 'user-1');
+
+        expect(result.success).toBe(false);
+        expect(result.status).toBe('failed');
+        expect(result.error).toContain('unauthorized');
+        expect(gitOpsService.deployServer).not.toHaveBeenCalled();
+      });
+
       it('reports failed when the GitOps commit fails', async () => {
         deploymentRepo.findOne.mockResolvedValue(baseDeployment);
-        containerRegistryService.buildAndPush.mockResolvedValue('ghcr.io/owner/repo/x:latest');
+        containerRegistryService.buildImage.mockResolvedValue('ghcr.io/owner/repo/x:latest');
         gitOpsService.deployServer.mockResolvedValue({ success: false, error: 'auth failed' });
 
         const result = await service.deployToCloud('conv-1', 'user-1');
 
         expect(result.success).toBe(false);
         expect(result.error).toContain('auth failed');
+      });
+
+      /**
+       * Deployment is ON DELETE CASCADE from conversations while HostedServer
+       * is only SET NULL, so the source path has to be copied onto the hosted
+       * server or deleting the chat leaves a live, unrebuildable server.
+       */
+      it('copies localPath onto the hosted server instead of relying on the deployment row', async () => {
+        deploymentRepo.findOne.mockResolvedValue(baseDeployment);
+        containerRegistryService.buildImage.mockResolvedValue('ghcr.io/owner/repo/x:latest');
+
+        await service.deployToCloud('conv-1', 'user-1');
+
+        expect(hostedServerRepo.create).toHaveBeenCalledWith(
+          expect.objectContaining({ localPath: '/generated-servers/conv-1' }),
+        );
       });
     });
 
@@ -200,7 +323,8 @@ describe('HostingService', () => {
         expect(result.success).toBe(true);
         expect(result.status).toBe('running');
         expect(result.endpointUrl).toMatch(/^docker-exec:\/\//);
-        expect(containerRegistryService.buildAndPush).not.toHaveBeenCalled();
+        expect(containerRegistryService.buildImage).not.toHaveBeenCalled();
+        expect(containerRegistryService.pushImage).not.toHaveBeenCalled();
         expect(gitOpsService.deployServer).not.toHaveBeenCalled();
         expect(localDockerHostingService.startAndVerify).toHaveBeenCalledWith(
           result.serverId,
@@ -323,7 +447,9 @@ describe('HostingService', () => {
     });
 
     it('startServer re-verifies the MCP handshake for docker-run servers', async () => {
-      hostedServerRepo.findOne.mockResolvedValue(dockerRunServer({ status: 'stopped' }));
+      hostedServerRepo.findOne.mockResolvedValue(
+        dockerRunServer({ status: 'stopped', localPath: '/dir' }),
+      );
       localDockerHostingService.startAndVerify.mockResolvedValue({
         containerName: 'mcp-hosted-srv-1',
         handshake: { success: true, tools: [{ name: 'get_user' }] },
@@ -334,8 +460,158 @@ describe('HostingService', () => {
       expect(localDockerHostingService.startAndVerify).toHaveBeenCalledWith(
         'srv-1',
         'mcp-local/srv-1:latest',
-        {},
+        expect.any(Object),
       );
+    });
+
+    /**
+     * Defect: startServer passed `{}` for env vars. LocalDockerHostingService
+     * defaults MCP_TRANSPORT to stdio when it is absent, and stdio publishes
+     * no port - so a stopped-then-started HTTP server came back up
+     * unreachable at the http://localhost:<port> endpointUrl its own row still
+     * advertises, and any user-supplied API keys were silently dropped.
+     */
+    describe('startServer restores the env vars a docker-run server was deployed with', () => {
+      function stoppedHttpServer(): HostedServer {
+        return dockerRunServer({
+          status: 'stopped',
+          localPath: '/dir',
+          endpointUrl: 'http://localhost:20007',
+          config: {
+            mode: 'docker-run',
+            containerName: 'mcp-hosted-srv-1',
+            transportEnv: { MCP_TRANSPORT: 'http', PORT: '3000' },
+          },
+          deployEnvEncrypted: 'enc({"MCP_TRANSPORT":"http","PORT":"3000","API_KEY":"sk-secret"})',
+        });
+      }
+
+      beforeEach(() => {
+        localDockerHostingService.startAndVerify.mockResolvedValue({
+          containerName: 'mcp-hosted-srv-1',
+          handshake: { success: true, transport: 'http', tools: [{ name: 'get_user' }] },
+        });
+      });
+
+      it('restarts with the same transport, port and secrets', async () => {
+        hostedServerRepo.findOne.mockResolvedValue(stoppedHttpServer());
+
+        await service.startServer('srv-1');
+
+        expect(localDockerHostingService.startAndVerify).toHaveBeenCalledWith(
+          'srv-1',
+          'mcp-local/srv-1:latest',
+          { MCP_TRANSPORT: 'http', PORT: '3000', API_KEY: 'sk-secret' },
+        );
+      });
+
+      it('still restores the transport when the secrets cannot be decrypted', async () => {
+        tokenEncryptionService.enabled = false;
+        hostedServerRepo.findOne.mockResolvedValue(stoppedHttpServer());
+
+        await service.startServer('srv-1');
+
+        // The half that keeps the advertised endpointUrl dialable must
+        // survive even with no usable encryption key; only the secret half is
+        // allowed to be lost.
+        expect(localDockerHostingService.startAndVerify).toHaveBeenCalledWith(
+          'srv-1',
+          'mcp-local/srv-1:latest',
+          { MCP_TRANSPORT: 'http', PORT: '3000' },
+        );
+      });
+    });
+
+    it('deployToCloud persists the deploy-time env vars for a later restart', async () => {
+      hostingMode = 'docker-run';
+      service = await buildService();
+      deploymentRepo.findOne.mockResolvedValue(baseDeployment);
+      localDockerHostingService.buildImage.mockResolvedValue('mcp-local/x:latest');
+      localDockerHostingService.startAndVerify.mockResolvedValue({
+        containerName: 'mcp-hosted-x',
+        handshake: { success: true, transport: 'http', tools: [] },
+      });
+
+      await service.deployToCloud('conv-1', 'user-1', {
+        MCP_TRANSPORT: 'http',
+        API_KEY: 'sk-secret',
+      });
+
+      const saved = hostedServerRepo.save.mock.calls.map((c) => c[0]).pop();
+      // Transport settings in the clear (not secrets, must survive a missing key)...
+      expect(saved.config.transportEnv).toEqual({ MCP_TRANSPORT: 'http' });
+      // ...secrets only ever encrypted - `env_var_names` exists precisely so
+      // that values are never stored in the clear.
+      expect(saved.deployEnvEncrypted).toBe('enc({"MCP_TRANSPORT":"http","API_KEY":"sk-secret"})');
+      expect(JSON.stringify(saved.config)).not.toContain('sk-secret');
+    });
+
+    /**
+     * Deleting the conversation CASCADE-deletes the Deployment that used to
+     * be the only holder of localPath. The hosted server (SET NULL) survives,
+     * so it must carry its own copy or it can never be restarted.
+     */
+    it('startServer works for a docker-run server whose conversation/deployment is gone', async () => {
+      hostedServerRepo.findOne.mockResolvedValue(
+        dockerRunServer({
+          status: 'stopped',
+          conversationId: null,
+          localPath: '/generated-servers/conv-1',
+          // No `localPath` inside config - only the column has it.
+          config: { mode: 'docker-run', containerName: 'mcp-hosted-srv-1' },
+        }),
+      );
+      localDockerHostingService.startAndVerify.mockResolvedValue({
+        containerName: 'mcp-hosted-srv-1',
+        handshake: { success: true, tools: [] },
+      });
+
+      await expect(service.startServer('srv-1')).resolves.toBeUndefined();
+      expect(localDockerHostingService.startAndVerify).toHaveBeenCalled();
+    });
+
+    it('startServer still refuses when no source path was ever recorded', async () => {
+      hostedServerRepo.findOne.mockResolvedValue(
+        dockerRunServer({
+          status: 'stopped',
+          localPath: null,
+          config: { mode: 'docker-run', containerName: 'mcp-hosted-srv-1' },
+        }),
+      );
+
+      await expect(service.startServer('srv-1')).rejects.toThrow(BadRequestException);
+    });
+
+    it('stop/start of a k8s server generate manifests with the stored tagged reference, unmodified', async () => {
+      hostedServerRepo.findOne.mockResolvedValue(k8sServer({ status: 'stopped' }));
+
+      await service.startServer('srv-2');
+
+      const config = manifestGeneratorService.generateManifests.mock.calls[0][0];
+      expect(config.dockerImage).toBe('ghcr.io/owner/repo/srv-2:latest');
+      expect(config.imageTag).toBeUndefined();
+    });
+
+    it('stop/start of a legacy k8s row with an untagged image falls back to the image_tag column', async () => {
+      hostedServerRepo.findOne.mockResolvedValue(
+        k8sServer({ status: 'stopped', dockerImage: 'ghcr.io/owner/repo/srv-2', imageTag: 'v2' }),
+      );
+
+      await service.startServer('srv-2');
+
+      const config = manifestGeneratorService.generateManifests.mock.calls[0][0];
+      expect(config.dockerImage).toBe('ghcr.io/owner/repo/srv-2:v2');
+    });
+
+    it('does not mistake a registry host:port for a tag', async () => {
+      hostedServerRepo.findOne.mockResolvedValue(
+        k8sServer({ status: 'stopped', dockerImage: 'localhost:5000/srv-2', imageTag: 'latest' }),
+      );
+
+      await service.startServer('srv-2');
+
+      const config = manifestGeneratorService.generateManifests.mock.calls[0][0];
+      expect(config.dockerImage).toBe('localhost:5000/srv-2:latest');
     });
 
     it('deleteServer stops the container for docker-run servers instead of touching GitOps/registry', async () => {

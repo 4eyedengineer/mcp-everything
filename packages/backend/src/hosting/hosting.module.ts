@@ -8,9 +8,13 @@ import { HostingService } from './hosting.service';
 import { HostingController } from './hosting.controller';
 import { HostedServer } from '../database/entities/hosted-server.entity';
 import { Deployment } from '../database/entities/deployment.entity';
+import { TokenEncryptionModule } from '../common/token-encryption/token-encryption.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([HostedServer, Deployment])],
+  // TokenEncryptionModule: HostingService encrypts the env vars a hosted
+  // server was deployed with so a restart can reproduce it - see
+  // HostedServer.deployEnvEncrypted.
+  imports: [TypeOrmModule.forFeature([HostedServer, Deployment]), TokenEncryptionModule],
   controllers: [HostingController],
   providers: [
     ContainerRegistryService,

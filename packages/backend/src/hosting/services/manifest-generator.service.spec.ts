@@ -9,11 +9,23 @@ import {
 describe('ManifestGeneratorService', () => {
   let service: ManifestGeneratorService;
 
+  /**
+   * `dockerImage` here is EXACTLY what the only real caller passes.
+   *
+   * HostingService gets this value from
+   * `ContainerRegistryService.buildImage()`, which returns
+   * `getImageName(serverId, tag)` - a reference that already ends in `:latest`
+   * - and hands it straight to `generateManifests`. The previous fixture used
+   * an untagged string that no caller ever produced, which is why this suite
+   * stayed green while every generated Deployment said
+   * `...stripe-abc123:latest:latest` and no pod could ever start
+   * (`InvalidImageName`). A fixture that does not match the caller is not a
+   * test.
+   */
   const baseConfig: ManifestConfig = {
     serverId: 'stripe-abc123',
     serverName: 'stripe-mcp',
-    dockerImage: 'ghcr.io/4eyedengineer/mcp-servers/stripe-abc123',
-    imageTag: 'latest',
+    dockerImage: 'ghcr.io/4eyedengineer/mcp-servers/stripe-abc123:latest',
     domain: 'mcp.example.com',
     namespace: 'mcp-servers',
   };
@@ -143,13 +155,39 @@ describe('ManifestGeneratorService', () => {
       expect(container.readinessProbe.httpGet.port).toBe(3000);
     });
 
-    it('should set correct container image', () => {
+    it('uses the supplied image reference verbatim, never re-appending a tag', () => {
       const manifests = service.generateManifests(baseConfig);
       const deployment = yaml.load(manifests.deployment) as any;
       const container = deployment.spec.template.spec.containers[0];
 
-      expect(container.image).toBe(
-        'ghcr.io/4eyedengineer/mcp-servers/stripe-abc123:latest',
+      expect(container.image).toBe('ghcr.io/4eyedengineer/mcp-servers/stripe-abc123:latest');
+    });
+
+    it('never emits a doubled tag for any tag value (regression: InvalidImageName)', () => {
+      for (const tag of ['latest', 'v1.2.3', 'sha-abc123']) {
+        const manifests = service.generateManifests({
+          ...baseConfig,
+          dockerImage: `ghcr.io/owner/mcp-servers/stripe-abc123:${tag}`,
+        });
+        const deployment = yaml.load(manifests.deployment) as any;
+        const image: string = deployment.spec.template.spec.containers[0].image;
+
+        expect(image).toBe(`ghcr.io/owner/mcp-servers/stripe-abc123:${tag}`);
+        // The actual failure shape: `...:latest:latest`. kubelet rejects any
+        // reference whose final path component has more than one ':'.
+        expect(image.slice(image.lastIndexOf('/')).split(':')).toHaveLength(2);
+      }
+    });
+
+    it('leaves a local-registry reference (host:port in the path) intact', () => {
+      const manifests = service.generateManifests({
+        ...baseConfig,
+        dockerImage: 'localhost:5000/stripe-abc123:latest',
+      });
+      const deployment = yaml.load(manifests.deployment) as any;
+
+      expect(deployment.spec.template.spec.containers[0].image).toBe(
+        'localhost:5000/stripe-abc123:latest',
       );
     });
   });

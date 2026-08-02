@@ -4,6 +4,7 @@ import { Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import { User } from '../database/entities/user.entity';
 import { UsageRecord } from '../database/entities/usage.entity';
+import { HostedServer } from '../database/entities/hosted-server.entity';
 import { UserTier, TIER_CONFIG, TIER_DISPLAY_NAMES } from '../subscription/tier-config';
 import { CreateUserDto, UpdateUserDto } from './dto/user.dto';
 
@@ -17,6 +18,8 @@ export class UserService {
     private readonly userRepository: Repository<User>,
     @InjectRepository(UsageRecord)
     private readonly usageRepository: Repository<UsageRecord>,
+    @InjectRepository(HostedServer)
+    private readonly hostedServerRepository: Repository<HostedServer>,
   ) {}
 
   async findById(id: string): Promise<User | null> {
@@ -132,11 +135,49 @@ export class UserService {
     return this.userRepository.save(user);
   }
 
+  /**
+   * Delete an account.
+   *
+   * Refuses while the user still owns hosted servers that are not fully torn
+   * down. `hosted_servers.user_id` is an ON DELETE RESTRICT foreign key
+   * (1754100000002-AddHostedServerUserForeignKey.ts) precisely because no
+   * `ON DELETE` action can stop a running container or pod: CASCADE would
+   * delete the only record of a still-running server, and SET NULL would make
+   * it invisible to every user-scoped query while it kept serving traffic and
+   * burning resources. So the constraint makes the situation impossible and
+   * this check turns the resulting database error into an actionable 409
+   * instead of an opaque 500.
+   *
+   * Soft-deleted servers (status 'deleted') do not block: their containers
+   * are already stopped and their images removed, so the row is history, and
+   * the FK is dropped from those rows by nulling `user_id` below.
+   */
   async deleteUser(userId: string): Promise<void> {
     const user = await this.findById(userId);
     if (!user) {
       throw new NotFoundException('User not found');
     }
+
+    const liveServers = await this.hostedServerRepository
+      .createQueryBuilder('server')
+      .select(['server.serverId'])
+      .where('server.userId = :userId', { userId })
+      .andWhere('server.status != :deleted', { deleted: 'deleted' })
+      .getMany();
+
+    if (liveServers.length > 0) {
+      const ids = liveServers.map((s) => s.serverId).join(', ');
+      throw new ConflictException(
+        `Cannot delete this account while it still hosts ${liveServers.length} MCP ` +
+          `server(s): ${ids}. Delete them first - removing the account row would not ` +
+          `stop the running containers, it would only lose track of them.`,
+      );
+    }
+
+    // Release the RESTRICT foreign key held by the user's own soft-deleted
+    // servers. They are kept (deployment history / audit trail) but are no
+    // longer owned by anybody.
+    await this.hostedServerRepository.update({ userId }, { userId: null });
 
     await this.userRepository.remove(user);
     this.logger.log(`Deleted user: ${userId}`);

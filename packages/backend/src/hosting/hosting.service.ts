@@ -38,7 +38,23 @@ import { ContainerRegistryService } from './services/container-registry.service'
 import { ManifestGeneratorService } from './services/manifest-generator.service';
 import { GitOpsService } from './services/gitops.service';
 import { LocalDockerHostingService } from './services/local-docker-hosting.service';
+import { TokenEncryptionService } from '../common/token-encryption/token-encryption.service';
 import { ConfigService } from '@nestjs/config';
+
+/**
+ * Env vars that are pure operational/transport configuration rather than
+ * secrets, and are therefore safe to persist in cleartext on the
+ * `HostedServer` row (`config.transportEnv`).
+ *
+ * These are the ones a restart absolutely cannot lose: `MCP_TRANSPORT`
+ * decides whether the container publishes a port at all, and `PORT` decides
+ * which one, so dropping them turns a running HTTP server into one that is
+ * unreachable at the `http://localhost:<port>` endpointUrl its own record
+ * still advertises. Everything else (API keys and the like) only survives a
+ * restart when `TOKEN_ENCRYPTION_KEY` is configured - see
+ * `HostedServer.deployEnvEncrypted`.
+ */
+const NON_SECRET_ENV_VAR_NAMES = ['MCP_TRANSPORT', 'PORT'] as const;
 
 export interface DeploymentResult {
   success: boolean;
@@ -80,6 +96,7 @@ export class HostingService {
     private manifestGeneratorService: ManifestGeneratorService,
     private gitOpsService: GitOpsService,
     private localDockerHostingService: LocalDockerHostingService,
+    private tokenEncryptionService: TokenEncryptionService,
     private configService: ConfigService,
   ) {
     this.domain = this.configService.get('MCP_HOSTING_DOMAIN', 'mcp.example.com');
@@ -150,6 +167,11 @@ export class HostingService {
       status: 'pending',
       tools: deployment.tools,
       envVarNames: deployment.envVars?.map((e) => e.name) || [],
+      // Copied off the Deployment rather than referenced, because Deployment
+      // is ON DELETE CASCADE from conversations while this row is only
+      // SET NULL - deleting the chat must not destroy a live hosted server's
+      // only pointer to its own source. See HostedServer.localPath.
+      localPath: deployment.localPath ?? null,
     });
 
     await this.hostedServerRepo.save(hostedServer);
@@ -193,10 +215,15 @@ export class HostingService {
     const endpointUrl = hostedServer.endpointUrl;
 
     try {
-      // 4. Build and push Docker image
+      // 4. Build the image, then push it - reported as the two distinct
+      // stages they are. 'pushing' is a real HostedServerStatus that the
+      // deploy-progress UI renders as stage 3 of 5; before the build/push
+      // split in ContainerRegistryService nothing could ever set it, so the
+      // progress bar jumped straight from 'building' to 'deploying' past a
+      // stage users were being shown.
       await this.updateStatus(hostedServer, 'building', 'Building Docker image...');
 
-      const dockerImage = await this.containerRegistryService.buildAndPush(
+      const dockerImage = await this.containerRegistryService.buildImage(
         serverDir,
         serverId,
         'latest',
@@ -205,14 +232,19 @@ export class HostingService {
       hostedServer.dockerImage = dockerImage;
       await this.hostedServerRepo.save(hostedServer);
 
+      await this.updateStatus(hostedServer, 'pushing', `Pushing image to registry: ${dockerImage}`);
+      await this.containerRegistryService.pushImage(dockerImage);
+
       // 5. Generate K8s manifests
       await this.updateStatus(hostedServer, 'deploying', 'Generating Kubernetes manifests...');
 
       const manifests = this.manifestGeneratorService.generateManifests({
         serverId,
         serverName: deployment.serverName,
+        // Already `registry/owner/repo/serverId:tag` - buildImage returns the
+        // complete reference. Do NOT also pass a tag; see
+        // ManifestConfig.dockerImage.
         dockerImage,
-        imageTag: 'latest',
         domain: this.domain,
         namespace: this.namespace,
       });
@@ -295,7 +327,13 @@ export class HostingService {
         envVars || {},
       );
 
+      // Remember exactly how this container was started, so stop -> start
+      // reproduces it instead of silently downgrading it (see
+      // persistDeployEnv and HostedServer.deployEnvEncrypted).
+      this.persistDeployEnv(hostedServer, envVars || {});
+
       hostedServer.config = {
+        ...(hostedServer.config || {}),
         mode: 'docker-run',
         containerName,
         localPath: serverDir,
@@ -363,8 +401,7 @@ export class HostingService {
     const manifests = this.manifestGeneratorService.generateManifests({
       serverId,
       serverName: server.serverName,
-      dockerImage: server.dockerImage,
-      imageTag: server.imageTag,
+      dockerImage: this.imageReferenceFor(server),
       domain: this.domain,
       namespace: this.namespace,
     });
@@ -397,18 +434,30 @@ export class HostingService {
 
     if (this.isDockerRunServer(server)) {
       const config = server.config as Record<string, unknown>;
-      const localPath = config?.localPath as string | undefined;
+      // Prefer the dedicated column: `config.localPath` is legacy, and the
+      // column is the one that is guaranteed to survive deletion of the
+      // originating conversation (and its CASCADE-deleted Deployment row).
+      const localPath = server.localPath ?? (config?.localPath as string | undefined);
       if (!localPath) {
         throw new BadRequestException(
           'Cannot restart: original server source path was not recorded',
         );
       }
 
+      // Restart with the env vars this server was actually deployed with.
+      // Passing `{}` here (the previous behaviour) permanently broke any
+      // HTTP-transport server: LocalDockerHostingService defaults
+      // MCP_TRANSPORT to stdio when it is absent, so no port was published
+      // and the server became unreachable at the http://localhost:<port>
+      // endpointUrl its own record still advertises - while any user-supplied
+      // API keys were dropped at the same time.
+      const restartEnv = this.restoreDeployEnv(server);
+
       await this.updateStatus(server, 'deploying', 'Restarting local Docker container...');
       const { containerName, handshake } = await this.localDockerHostingService.startAndVerify(
         serverId,
         server.dockerImage,
-        {},
+        restartEnv,
       );
 
       server.config = {
@@ -431,8 +480,7 @@ export class HostingService {
     const manifests = this.manifestGeneratorService.generateManifests({
       serverId,
       serverName: server.serverName,
-      dockerImage: server.dockerImage,
-      imageTag: server.imageTag,
+      dockerImage: this.imageReferenceFor(server),
       domain: this.domain,
       namespace: this.namespace,
     });
@@ -560,6 +608,107 @@ export class HostingService {
 
     const suffix = generateSuffix();
     return `${prefix}-${suffix}`;
+  }
+
+  /**
+   * The complete image reference for a stored HostedServer, tag included -
+   * what `ManifestConfig.dockerImage` requires.
+   *
+   * `dockerImage` is written from `ContainerRegistryService.buildImage()` /
+   * `LocalDockerHostingService.buildImage()`, both of which already return a
+   * tagged reference, so normally this is the identity function. The
+   * `image_tag` column predates that contract, so rows written before it may
+   * hold an untagged reference; those (and only those) get the column's tag
+   * appended.
+   *
+   * "Has a tag" is decided on the LAST path segment on purpose: a registry
+   * host may legitimately contain a port (`localhost:5000/foo`), so a bare
+   * `indexOf(':')` over the whole string would wrongly call that tagged.
+   */
+  private imageReferenceFor(server: HostedServer): string {
+    const image = server.dockerImage || '';
+    const lastSegment = image.slice(image.lastIndexOf('/') + 1);
+    if (lastSegment.includes(':') || lastSegment.includes('@')) {
+      return image;
+    }
+    return `${image}:${server.imageTag || 'latest'}`;
+  }
+
+  /**
+   * Record the env vars a docker-run container was actually started with, so
+   * a later `startServer` can reproduce it exactly.
+   *
+   * Split deliberately by sensitivity:
+   *   - `config.transportEnv` holds only NON_SECRET_ENV_VAR_NAMES in
+   *     cleartext. These decide whether a port is published at all, so losing
+   *     them is what turned a restart into a permanently unreachable server -
+   *     and they are not secrets, so they must survive even when no
+   *     encryption key is configured.
+   *   - `deployEnvEncrypted` holds the full set, AES-256-GCM encrypted. These
+   *     are the values `env_var_names` exists specifically to avoid storing in
+   *     the clear. If `TOKEN_ENCRYPTION_KEY` is unset, `encrypt()` returns
+   *     undefined and nothing is written - a restart then loses the secrets
+   *     (as it always did) but keeps the transport, and we say so in the log
+   *     rather than quietly writing plaintext secrets to the database.
+   */
+  private persistDeployEnv(server: HostedServer, envVars: Record<string, string>): void {
+    const transportEnv: Record<string, string> = {};
+    for (const name of NON_SECRET_ENV_VAR_NAMES) {
+      if (envVars[name] !== undefined) {
+        transportEnv[name] = envVars[name];
+      }
+    }
+    server.config = { ...(server.config || {}), transportEnv };
+
+    if (Object.keys(envVars).length === 0) {
+      server.deployEnvEncrypted = null;
+      return;
+    }
+
+    const encrypted = this.tokenEncryptionService.encrypt(JSON.stringify(envVars));
+    if (!encrypted) {
+      server.deployEnvEncrypted = null;
+      this.logger.warn(
+        `TOKEN_ENCRYPTION_KEY is not configured, so the env vars for hosted server ` +
+          `${server.serverId} are not being persisted. Restarting it will restore only ` +
+          `${NON_SECRET_ENV_VAR_NAMES.join('/')}; any API keys must be supplied by ` +
+          `redeploying.`,
+      );
+      return;
+    }
+
+    server.deployEnvEncrypted = encrypted;
+  }
+
+  /**
+   * Inverse of `persistDeployEnv`. Always returns at least the non-secret
+   * transport vars; adds the full decrypted set on top when it is available
+   * and readable (a rotated/absent key yields undefined, never a throw).
+   */
+  private restoreDeployEnv(server: HostedServer): Record<string, string> {
+    const config = (server.config || {}) as Record<string, unknown>;
+    const transportEnv = (config.transportEnv as Record<string, string> | undefined) || {};
+
+    const decrypted = this.tokenEncryptionService.decrypt(server.deployEnvEncrypted);
+    if (!decrypted) {
+      if (server.deployEnvEncrypted) {
+        this.logger.warn(
+          `Could not decrypt the stored env vars for hosted server ${server.serverId} ` +
+            `(TOKEN_ENCRYPTION_KEY rotated?); restarting with transport settings only.`,
+        );
+      }
+      return { ...transportEnv };
+    }
+
+    try {
+      return { ...transportEnv, ...(JSON.parse(decrypted) as Record<string, string>) };
+    } catch {
+      this.logger.warn(
+        `Stored env vars for hosted server ${server.serverId} are not valid JSON; ` +
+          `restarting with transport settings only.`,
+      );
+      return { ...transportEnv };
+    }
   }
 
   private async getServerByIdOrFail(serverId: string, userId?: string): Promise<HostedServer> {
