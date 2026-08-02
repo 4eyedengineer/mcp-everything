@@ -22,6 +22,26 @@ export type HostedServerStatus =
   | 'deleted';
 
 /**
+ * User intent for a hosted server. Distinct from `HostedServerStatus`, which
+ * is the (now derived) legacy display value, and from
+ * `HostedServerObservedStatus`, which is what the cluster actually reports.
+ */
+export type HostedServerDesiredState = 'running' | 'stopped' | 'deleted';
+
+/**
+ * Reality as reported by the Kubernetes API. Mirrors `ObservedStatus` in
+ * hosting/services/k8s-control-plane.service.ts.
+ */
+export type HostedServerObservedStatus =
+  | 'running'
+  | 'progressing'
+  | 'stopped'
+  | 'degraded'
+  | 'failed'
+  | 'missing'
+  | 'unknown';
+
+/**
  * Schema drift note (see 1753900010000-FixMcpServersSchemaDrift.ts): the
  * 1733200000000 migration also added a
  * `CHECK (status IN ('pending', ..., 'deleted'))` constraint with no
@@ -178,4 +198,47 @@ export class HostedServer {
    */
   @Column({ name: 'deploy_env_encrypted', type: 'text', nullable: true })
   deployEnvEncrypted: string | null;
+  // --- Desired vs observed state (migration 1754200000000) ---
+  //
+  // The single `status` column above conflates two different things: what the
+  // user asked for, and what the cluster is actually doing. It was written on
+  // git-commit success and then never reconciled, so a CrashLooping pod read
+  // 'running' forever.
+  //
+  // These columns split the two apart WITHOUT removing `status`, which the
+  // frontend (hosting-api.service.ts `HostedServerStatus`, the servers list and
+  // the deploy-progress component) still reads. `status` is now a derived
+  // mirror: K8sReconcilerService recomputes it from (desiredState,
+  // observedStatus) on every pass, so the existing UI keeps rendering the exact
+  // same union of values it always did while the honest signal lives here.
+
+  /** What the user asked for. Only ever written by HostingService. */
+  @Column({ name: 'desired_state', length: 20, default: 'running' })
+  desiredState: HostedServerDesiredState;
+
+  /** What the cluster reports. Only ever written by K8sReconcilerService. */
+  @Column({ name: 'observed_status', length: 20, nullable: true })
+  observedStatus: HostedServerObservedStatus | null;
+
+  /** When the reconciler last successfully observed this server. */
+  @Column({ name: 'observed_at', type: 'timestamp', nullable: true })
+  observedAt: Date | null;
+
+  /**
+   * Real failure reason from the cluster, e.g.
+   * "CrashLoopBackOff: back-off 5m0s restarting failed container".
+   */
+  @Column({ name: 'observed_message', type: 'text', nullable: true })
+  observedMessage: string | null;
+
+  /**
+   * Real replica counts from the Deployment. Before these existed,
+   * HostingController.getServerStatus fabricated them from the status string
+   * (`status === 'running' ? 1 : 0`).
+   */
+  @Column({ name: 'observed_replicas', type: 'int', nullable: true })
+  observedReplicas: number | null;
+
+  @Column({ name: 'observed_ready_replicas', type: 'int', nullable: true })
+  observedReadyReplicas: number | null;
 }

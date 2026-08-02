@@ -59,3 +59,6 @@ generated-servers/
 # Environment files (all variants)
 .env.production
 .env.staging
+
+# Agent worktrees (transient)
+.claude/worktrees/

@@ -2,7 +2,8 @@ import { Module, OnModuleInit, Logger } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ContainerRegistryService } from './services/container-registry.service';
 import { ManifestGeneratorService } from './services/manifest-generator.service';
-import { GitOpsService } from './services/gitops.service';
+import { K8sControlPlaneService } from './services/k8s-control-plane.service';
+import { K8sReconcilerService } from './services/k8s-reconciler.service';
 import { LocalDockerHostingService } from './services/local-docker-hosting.service';
 import { HostingService } from './hosting.service';
 import { HostingController } from './hosting.controller';
@@ -19,14 +20,16 @@ import { TokenEncryptionModule } from '../common/token-encryption/token-encrypti
   providers: [
     ContainerRegistryService,
     ManifestGeneratorService,
-    GitOpsService,
+    K8sControlPlaneService,
+    K8sReconcilerService,
     LocalDockerHostingService,
     HostingService,
   ],
   exports: [
     ContainerRegistryService,
     ManifestGeneratorService,
-    GitOpsService,
+    K8sControlPlaneService,
+    K8sReconcilerService,
     LocalDockerHostingService,
     HostingService,
   ],

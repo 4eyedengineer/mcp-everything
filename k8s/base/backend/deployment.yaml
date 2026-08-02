@@ -18,6 +18,10 @@ spec:
         app.kubernetes.io/name: mcp-backend
         app.kubernetes.io/component: backend
     spec:
+      # Required for K8sControlPlaneService: this is the identity the
+      # RoleBinding in k8s/mcp-servers/rbac.yaml grants namespace-scoped
+      # deployment/service/secret/pod permissions to.
+      serviceAccountName: mcp-backend
       securityContext:
         fsGroup: 1001
       # Runs migrations to completion before the API starts accepting traffic.

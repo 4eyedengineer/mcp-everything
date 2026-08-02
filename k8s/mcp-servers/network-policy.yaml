@@ -1,0 +1,40 @@
+# Network isolation for hosted MCP server pods.
+#
+# Changed from the deleted `mcp-server-deployments/base/network-policy.yaml`
+# in one important way: that version allowed ingress only from the
+# `ingress-nginx` namespace, which matched the old per-server-Ingress design.
+# Per-server Ingress is deferred (a backend gateway on a single public origin
+# is the pending direction), and this cluster's ingress controller is Traefik
+# rather than nginx anyway - so that rule pointed at a namespace that does not
+# exist here and would have blackholed all traffic.
+#
+# Ingress is therefore allowed from the `mcp-everything` namespace, i.e. from
+# the backend that will proxy MCP traffic to these ClusterIP Services. Update
+# this if/when the routing decision lands somewhere else.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mcp-servers-policy
+  namespace: mcp-servers
+  labels:
+    app.kubernetes.io/part-of: mcp-everything
+spec:
+  podSelector:
+    matchLabels:
+      app: mcp-server
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: mcp-everything
+      ports:
+        - protocol: TCP
+          port: 3000
+  egress:
+    # Allow all egress: a generated MCP server's entire purpose is usually to
+    # call an external third-party API. Restricting this per-server would need
+    # per-server policy generation, which is out of scope here.
+    - {}

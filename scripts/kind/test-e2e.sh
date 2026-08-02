@@ -90,7 +90,10 @@ echo "  ✓ Image pushed to ${REGISTRY}"
 echo ""
 echo "==> [3/5] Creating Kubernetes manifests..."
 
-MANIFESTS_DIR="${PROJECT_ROOT}/k8s/local-gitops/servers/${TEST_SERVER_ID}"
+# Scratch directory only - these manifests are applied straight to the cluster
+# with kubectl below. They used to be written under k8s/local-gitops/servers/
+# for a GitOps sync that no longer exists (and neither does that directory).
+MANIFESTS_DIR="$(mktemp -d)/${TEST_SERVER_ID}"
 mkdir -p ${MANIFESTS_DIR}
 
 cat > "${MANIFESTS_DIR}/deployment.yaml" << EOF

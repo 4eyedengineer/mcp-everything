@@ -137,22 +137,33 @@ export class HostingController {
   }
 
   /**
-   * Get real-time deployment status
+   * Get deployment status.
+   *
+   * `replicas`/`readyReplicas` are REAL counts read from the Deployment by
+   * K8sReconcilerService. They used to be invented from the status string
+   * (`status === 'stopped' ? 0 : 1`), which meant they agreed with the status
+   * by construction and could never reveal a disagreement - a pod in
+   * CrashLoopBackOff reported 1/1.
+   *
+   * They are null until the reconciler's first pass over a newly deployed
+   * server, and are reported as 0 in that window rather than guessed at.
+   * `observedAt` tells the caller how fresh the numbers are (freshness is
+   * bounded by K8S_RECONCILE_INTERVAL_MS, default 10s).
    */
   @Get('servers/:serverId/status')
   async getServerStatus(@CurrentUser() user: User, @Param('serverId') serverId: string) {
     const server = await this.hostingService.getServer(serverId, user.id);
 
-    // Derive replica counts based on status
-    const replicas = server.status === 'stopped' ? 0 : 1;
-    const readyReplicas = server.status === 'running' ? 1 : server.status === 'stopped' ? 0 : 0;
-
     return {
       serverId: server.serverId,
       status: server.status,
-      message: server.statusMessage || '',
-      replicas,
-      readyReplicas,
+      message: server.observedMessage || server.statusMessage || '',
+      replicas: server.observedReplicas ?? 0,
+      readyReplicas: server.observedReadyReplicas ?? 0,
+      // The honest split behind the legacy `status` field above.
+      desiredState: server.desiredState,
+      observedStatus: server.observedStatus,
+      observedAt: server.observedAt,
       lastUpdated: server.lastStatusChange || server.updatedAt,
     };
   }

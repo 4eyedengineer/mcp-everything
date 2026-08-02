@@ -35,8 +35,8 @@ function generateSuffix(length = 8): string {
 import { HostedServer, HostedServerStatus } from '../database/entities/hosted-server.entity';
 import { Deployment } from '../database/entities/deployment.entity';
 import { ContainerRegistryService } from './services/container-registry.service';
-import { ManifestGeneratorService } from './services/manifest-generator.service';
-import { GitOpsService } from './services/gitops.service';
+import { ManifestGeneratorService, objectNameFor } from './services/manifest-generator.service';
+import { K8sControlPlaneService } from './services/k8s-control-plane.service';
 import { LocalDockerHostingService } from './services/local-docker-hosting.service';
 import { TokenEncryptionService } from '../common/token-encryption/token-encryption.service';
 import { ConfigService } from '@nestjs/config';
@@ -66,17 +66,18 @@ export interface DeploymentResult {
 
 /**
  * 'kubernetes' (default): build+push to a registry (GHCR or a local
- * registry:5000 in LOCAL_DEV) and commit K8s manifests to a GitOps repo for
- * ArgoCD/a real cluster to pick up. This is the cluster-ready production
- * path and is unchanged by HOSTING_MODE=docker-run.
+ * registry:5000 in LOCAL_DEV) and then create the Deployment/Service/Secret
+ * directly against the Kubernetes API (K8sControlPlaneService). Status is NOT
+ * assumed - K8sReconcilerService observes the cluster and writes back what is
+ * actually happening.
  *
  * 'docker-run': build the image locally and actually run it as a Docker
  * container on this host, verifying it's a real, responding MCP server via
  * the initialize/tools-list handshake - over stdio or Streamable HTTP,
  * whichever transport the caller-supplied `MCP_TRANSPORT` env var selects -
- * before ever reporting 'running'. No registry, no GitOps repo, no cluster -
- * see LocalDockerHostingService and DEPLOYMENT.md "local hosting on WSL2" for
- * why this exists and exactly what it does and does not prove.
+ * before ever reporting 'running'. No registry, no cluster - see
+ * LocalDockerHostingService and DEPLOYMENT.md "local hosting on WSL2" for why
+ * this exists and exactly what it does and does not prove.
  */
 type HostingMode = 'kubernetes' | 'docker-run';
 
@@ -94,7 +95,7 @@ export class HostingService {
     private deploymentRepo: Repository<Deployment>,
     private containerRegistryService: ContainerRegistryService,
     private manifestGeneratorService: ManifestGeneratorService,
-    private gitOpsService: GitOpsService,
+    private k8sControlPlane: K8sControlPlaneService,
     private localDockerHostingService: LocalDockerHostingService,
     private tokenEncryptionService: TokenEncryptionService,
     private configService: ConfigService,
@@ -192,29 +193,47 @@ export class HostingService {
       return this.deployToLocalDocker(hostedServer, serverDir, envVars);
     }
 
-    return this.deployToKubernetes(hostedServer, deployment, serverDir);
+    return this.deployToKubernetes(hostedServer, deployment, serverDir, envVars);
   }
 
   /**
-   * Production path: build+push to a registry, generate K8s manifests,
-   * commit them to a GitOps repo. Unchanged behavior from before
-   * HOSTING_MODE existed - this is what runs when HOSTING_MODE is unset or
-   * 'kubernetes'. NOTE (honesty boundary): "running" here means "manifests
-   * committed for a cluster to reconcile", not "verified to be serving
-   * traffic" - there is no cluster in this environment to confirm against,
-   * and ArgoCD reconciliation/kubelet scheduling is outside this service's
-   * knowledge either way. See DEPLOYMENT.md for exactly where this boundary
-   * is and what a real cluster still needs to prove.
+   * Production path: build+push to a registry, then create the
+   * Deployment/Service/Secret directly against the Kubernetes API.
+   *
+   * Two behaviour changes worth calling out, both deliberate:
+   *
+   * 1. This NO LONGER reports 'running'. It reports 'deploying' and hands off
+   *    to K8sReconcilerService, which observes the cluster and writes the real
+   *    status back. The old code set 'running' on GitOps-commit success, which
+   *    meant a pod stuck in ImagePullBackOff read 'running' forever. A
+   *    successful return from here now means "the cluster accepted the
+   *    objects", which is all this method can honestly claim.
+   *
+   * 2. `envVars` are now passed through. They previously stopped at
+   *    deployToCloud and never reached the K8s path at all - which was
+   *    accidentally masking a security bug, because the manifest generator
+   *    would have inlined them as literal `value:` entries and GitOpsService
+   *    would have committed them to a GitHub repo in plaintext. They now go
+   *    into a Kubernetes Secret referenced via envFrom, so passing them
+   *    through is safe.
    */
   private async deployToKubernetes(
     hostedServer: HostedServer,
     deployment: Deployment,
     serverDir: string,
+    envVars?: Record<string, string>,
   ): Promise<DeploymentResult> {
     const serverId = hostedServer.serverId;
     const endpointUrl = hostedServer.endpointUrl;
 
     try {
+      if (!this.k8sControlPlane.isEnabled()) {
+        throw new Error(
+          'Kubernetes hosting is not available: no usable kubeconfig and not running in-cluster. ' +
+            'Set KUBECONFIG, deploy the backend into the cluster, or use HOSTING_MODE=docker-run.',
+        );
+      }
+
       // 4. Build the image, then push it - reported as the two distinct
       // stages they are. 'pushing' is a real HostedServerStatus that the
       // deploy-progress UI renders as stage 3 of 5; before the build/push
@@ -235,48 +254,50 @@ export class HostingService {
       await this.updateStatus(hostedServer, 'pushing', `Pushing image to registry: ${dockerImage}`);
       await this.containerRegistryService.pushImage(dockerImage);
 
-      // 5. Generate K8s manifests
-      await this.updateStatus(hostedServer, 'deploying', 'Generating Kubernetes manifests...');
+      // 5. Create/patch the Deployment, Service and (if needed) env Secret
+      await this.updateStatus(
+        hostedServer,
+        'deploying',
+        'Applying Kubernetes Deployment, Service and Secret...',
+      );
 
-      const manifests = this.manifestGeneratorService.generateManifests({
+      await this.k8sControlPlane.applyServer({
         serverId,
         serverName: deployment.serverName,
         // Already `registry/owner/repo/serverId:tag` - buildImage returns the
         // complete reference. Do NOT also pass a tag; see
         // ManifestConfig.dockerImage.
         dockerImage,
-        domain: this.domain,
-        namespace: this.namespace,
+        envVars,
+        replicas: 1,
       });
 
-      const kustomization = this.manifestGeneratorService.generateKustomization(serverId);
-
-      // 6. Commit to GitOps repo
-      await this.updateStatus(hostedServer, 'deploying', 'Deploying to Kubernetes cluster...');
-
-      const commitResult = await this.gitOpsService.deployServer(
-        serverId,
-        manifests,
-        kustomization,
-      );
-
-      if (!commitResult.success) {
-        throw new Error(`GitOps commit failed: ${commitResult.error}`);
-      }
-
-      // 7. Mark as running (ArgoCD will handle actual deployment)
-      await this.updateStatus(hostedServer, 'running', 'Server deployed successfully');
+      // 6. Record intent + where the objects live, then let the reconciler
+      //    decide when this is actually 'running'.
       hostedServer.deployedAt = new Date();
-      hostedServer.k8sDeploymentName = `mcp-${serverId}`;
+      hostedServer.k8sDeploymentName = objectNameFor(serverId);
+      hostedServer.k8sNamespace = this.namespace;
+      hostedServer.desiredState = 'running';
+      hostedServer.observedStatus = null;
+      hostedServer.observedMessage = null;
+      hostedServer.observedAt = null;
+      hostedServer.observedReplicas = null;
+      hostedServer.observedReadyReplicas = null;
       await this.hostedServerRepo.save(hostedServer);
 
-      this.logger.log(`Deployed MCP server: ${serverId} at ${endpointUrl}`);
+      await this.updateStatus(
+        hostedServer,
+        'deploying',
+        'Applied to cluster; waiting for pods to become ready',
+      );
+
+      this.logger.log(`Applied MCP server ${serverId} to ${this.namespace} (endpoint ${endpointUrl})`);
 
       return {
         success: true,
         serverId,
         endpointUrl,
-        status: 'running',
+        status: 'deploying',
       };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -389,6 +410,8 @@ export class HostingService {
   async stopServer(serverId: string, userId?: string): Promise<void> {
     const server = await this.getServerByIdOrFail(serverId, userId);
 
+    server.desiredState = 'stopped';
+
     if (this.isDockerRunServer(server)) {
       await this.localDockerHostingService.stopContainer(serverId);
       await this.updateStatus(server, 'stopped', 'Container stopped');
@@ -397,25 +420,13 @@ export class HostingService {
       return;
     }
 
-    // Update manifests with replicas: 0
-    const manifests = this.manifestGeneratorService.generateManifests({
-      serverId,
-      serverName: server.serverName,
-      dockerImage: this.imageReferenceFor(server),
-      domain: this.domain,
-      namespace: this.namespace,
-    });
+    // Scale the live Deployment to 0. The old code regenerated the whole
+    // manifest set and string-replaced 'replicas: 1' -> 'replicas: 0' before
+    // re-committing it; a targeted merge-patch is both correct and immune to
+    // that substitution silently not matching.
+    await this.k8sControlPlane.scaleServer(serverId, 0);
 
-    // Modify deployment to have 0 replicas
-    const stoppedDeployment = manifests.deployment.replace('replicas: 1', 'replicas: 0');
-
-    await this.gitOpsService.updateServer(
-      serverId,
-      { ...manifests, deployment: stoppedDeployment },
-      this.manifestGeneratorService.generateKustomization(serverId),
-    );
-
-    await this.updateStatus(server, 'stopped', 'Server stopped');
+    await this.updateStatus(server, 'stopped', 'Scaled to 0 replicas');
     server.stoppedAt = new Date();
     await this.hostedServerRepo.save(server);
   }
@@ -431,6 +442,8 @@ export class HostingService {
     if (server.status !== 'stopped') {
       throw new BadRequestException('Server is not stopped');
     }
+
+    server.desiredState = 'running';
 
     if (this.isDockerRunServer(server)) {
       const config = server.config as Record<string, unknown>;
@@ -477,21 +490,12 @@ export class HostingService {
       return;
     }
 
-    const manifests = this.manifestGeneratorService.generateManifests({
-      serverId,
-      serverName: server.serverName,
-      dockerImage: this.imageReferenceFor(server),
-      domain: this.domain,
-      namespace: this.namespace,
-    });
+    // Scale back up and let the reconciler confirm readiness. As with deploy,
+    // this reports 'deploying' rather than asserting 'running' - the pod still
+    // has to pull, start and pass its readiness probe.
+    await this.k8sControlPlane.scaleServer(serverId, 1);
 
-    await this.gitOpsService.updateServer(
-      serverId,
-      manifests,
-      this.manifestGeneratorService.generateKustomization(serverId),
-    );
-
-    await this.updateStatus(server, 'running', 'Server started');
+    await this.updateStatus(server, 'deploying', 'Scaled to 1 replica; waiting for readiness');
     server.stoppedAt = null;
     await this.hostedServerRepo.save(server);
   }
@@ -502,11 +506,16 @@ export class HostingService {
   async deleteServer(serverId: string, userId?: string): Promise<void> {
     const server = await this.getServerByIdOrFail(serverId, userId);
 
+    server.desiredState = 'deleted';
+
     if (this.isDockerRunServer(server)) {
       await this.localDockerHostingService.stopContainer(serverId);
     } else {
-      // Remove from GitOps repo
-      await this.gitOpsService.removeServer(serverId);
+      // Really delete the Deployment, Service and env Secret. The GitOps path
+      // could not do this: it "deleted" by committing a removal, leaving the
+      // manifests - and any user credentials in them - recoverable in git
+      // history forever, which is the wrong answer for account deletion.
+      await this.k8sControlPlane.deleteServer(serverId);
 
       // Delete Docker image (optional, can keep for rollback)
       try {
@@ -560,9 +569,8 @@ export class HostingService {
   /**
    * Get server logs.
    * docker-run mode: real `docker logs` output.
-   * K8s mode: full log streaming requires kubectl/K8s client integration
-   * against a real cluster, which does not exist in this environment - this
-   * remains a stub for that path.
+   * K8s mode: real pod logs via the Kubernetes API (previously a hardcoded
+   * "not yet implemented" stub).
    */
   async getServerLogs(
     serverId: string,
@@ -586,12 +594,26 @@ export class HostingService {
       }
     }
 
-    // TODO: Implement K8s log fetching via kubectl or K8s client
-    // For now, return a placeholder indicating logs are not yet available
-    return {
-      logs: [],
-      message: 'Log streaming not yet implemented. K8s integration required for live logs.',
-    };
+    if (!this.k8sControlPlane.isEnabled()) {
+      return {
+        logs: [],
+        message:
+          'Kubernetes hosting is not configured on this backend, so there are no pod logs to read.',
+      };
+    }
+
+    try {
+      const logs = await this.k8sControlPlane.getLogs(serverId, options.lines ?? 100);
+      return {
+        logs,
+        message: logs.length
+          ? 'Live logs from the newest pod.'
+          : 'No pod is currently running for this server.',
+      };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      return { logs: [], message: `Failed to fetch pod logs: ${errorMessage}` };
+    }
   }
 
   // --- Helper Methods ---
@@ -610,30 +632,7 @@ export class HostingService {
     return `${prefix}-${suffix}`;
   }
 
-  /**
-   * The complete image reference for a stored HostedServer, tag included -
-   * what `ManifestConfig.dockerImage` requires.
-   *
-   * `dockerImage` is written from `ContainerRegistryService.buildImage()` /
-   * `LocalDockerHostingService.buildImage()`, both of which already return a
-   * tagged reference, so normally this is the identity function. The
-   * `image_tag` column predates that contract, so rows written before it may
-   * hold an untagged reference; those (and only those) get the column's tag
-   * appended.
-   *
-   * "Has a tag" is decided on the LAST path segment on purpose: a registry
-   * host may legitimately contain a port (`localhost:5000/foo`), so a bare
-   * `indexOf(':')` over the whole string would wrongly call that tagged.
-   */
-  private imageReferenceFor(server: HostedServer): string {
-    const image = server.dockerImage || '';
-    const lastSegment = image.slice(image.lastIndexOf('/') + 1);
-    if (lastSegment.includes(':') || lastSegment.includes('@')) {
-      return image;
-    }
-    return `${image}:${server.imageTag || 'latest'}`;
-  }
-
+  
   /**
    * Record the env vars a docker-run container was actually started with, so
    * a later `startServer` can reproduce it exactly.
