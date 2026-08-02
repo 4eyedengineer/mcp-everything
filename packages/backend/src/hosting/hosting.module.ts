@@ -6,16 +6,25 @@ import { K8sControlPlaneService } from './services/k8s-control-plane.service';
 import { K8sReconcilerService } from './services/k8s-reconciler.service';
 import { LocalDockerHostingService } from './services/local-docker-hosting.service';
 import { HostingService } from './hosting.service';
+import { HostedServerApiKeyService } from './hosted-server-api-key.service';
 import { HostingController } from './hosting.controller';
 import { HostedServer } from '../database/entities/hosted-server.entity';
+import { HostedServerApiKey } from '../database/entities/hosted-server-api-key.entity';
 import { Deployment } from '../database/entities/deployment.entity';
 import { TokenEncryptionModule } from '../common/token-encryption/token-encryption.module';
+import { UserModule } from '../user/user.module';
 
 @Module({
-  // TokenEncryptionModule: HostingService encrypts the env vars a hosted
-  // server was deployed with so a restart can reproduce it - see
-  // HostedServer.deployEnvEncrypted.
-  imports: [TypeOrmModule.forFeature([HostedServer, Deployment]), TokenEncryptionModule],
+  imports: [
+    TypeOrmModule.forFeature([HostedServer, HostedServerApiKey, Deployment]),
+    // TokenEncryptionModule: HostingService encrypts the env vars a hosted
+    // server was deployed with so a restart can reproduce it - see
+    // HostedServer.deployEnvEncrypted.
+    TokenEncryptionModule,
+    // For UserService: HostingService reads the caller's tier to enforce the
+    // concurrent hosted-server cap.
+    UserModule,
+  ],
   controllers: [HostingController],
   providers: [
     ContainerRegistryService,
@@ -24,6 +33,7 @@ import { TokenEncryptionModule } from '../common/token-encryption/token-encrypti
     K8sReconcilerService,
     LocalDockerHostingService,
     HostingService,
+    HostedServerApiKeyService,
   ],
   exports: [
     ContainerRegistryService,
@@ -32,6 +42,7 @@ import { TokenEncryptionModule } from '../common/token-encryption/token-encrypti
     K8sReconcilerService,
     LocalDockerHostingService,
     HostingService,
+    HostedServerApiKeyService,
   ],
 })
 export class HostingModule implements OnModuleInit {

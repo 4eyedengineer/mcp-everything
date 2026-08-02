@@ -6,6 +6,13 @@ export enum UserTier {
 
 export interface TierLimits {
   monthlyServerLimit: number;
+  /**
+   * Max hosted MCP servers a user may hold at once (a *concurrency* cap, not a
+   * monthly one): every non-deleted, non-failed row in `hosted_servers` counts,
+   * including `stopped` ones, because a stopped server still holds a reserved
+   * serverId, hostname and image. Enforced in HostingService.deployToCloud.
+   */
+  hostedServerLimit: number;
   privateRepos: boolean;
   ciCd: boolean;
   customDomains: boolean;
@@ -18,16 +25,23 @@ export interface TierLimits {
 export const TIER_CONFIG: Record<UserTier, TierLimits> = {
   [UserTier.FREE]: {
     monthlyServerLimit: 5,
+    hostedServerLimit: 1,
     privateRepos: false,
     ciCd: false,
     customDomains: false,
     sla: false,
     prioritySupport: false,
     deploymentTypes: ['gist'],
-    features: ['Basic generation', 'Community support', '5 servers/month'],
+    features: [
+      'Basic generation',
+      'Community support',
+      '5 servers/month',
+      '1 hosted server at a time',
+    ],
   },
   [UserTier.PRO]: {
     monthlyServerLimit: Infinity,
+    hostedServerLimit: 10,
     privateRepos: true,
     ciCd: true,
     customDomains: false,
@@ -36,6 +50,7 @@ export const TIER_CONFIG: Record<UserTier, TierLimits> = {
     deploymentTypes: ['gist', 'repo'],
     features: [
       'Unlimited generation',
+      '10 hosted servers at a time',
       'Priority support',
       'Private repositories',
       'CI/CD integration',
@@ -43,6 +58,7 @@ export const TIER_CONFIG: Record<UserTier, TierLimits> = {
   },
   [UserTier.ENTERPRISE]: {
     monthlyServerLimit: Infinity,
+    hostedServerLimit: Infinity,
     privateRepos: true,
     ciCd: true,
     customDomains: true,
@@ -51,6 +67,7 @@ export const TIER_CONFIG: Record<UserTier, TierLimits> = {
     deploymentTypes: ['gist', 'repo', 'enterprise'],
     features: [
       'Everything in Pro',
+      'Unlimited hosted servers',
       'Custom domains',
       'Team features',
       'SSO integration',

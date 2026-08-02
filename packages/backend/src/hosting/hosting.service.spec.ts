@@ -1,8 +1,10 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { ConfigService } from '@nestjs/config';
-import { NotFoundException, BadRequestException } from '@nestjs/common';
+import { NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { HostingService } from './hosting.service';
+import { UserService } from '../user/user.service';
+import { UserTier } from '../subscription/tier-config';
 import { HostedServer } from '../database/entities/hosted-server.entity';
 import { Deployment } from '../database/entities/deployment.entity';
 import { ContainerRegistryService } from './services/container-registry.service';
@@ -12,7 +14,14 @@ import { LocalDockerHostingService } from './services/local-docker-hosting.servi
 
 describe('HostingService', () => {
   let service: HostingService;
-  let hostedServerRepo: { create: jest.Mock; save: jest.Mock; findOne: jest.Mock; createQueryBuilder: jest.Mock };
+  let hostedServerRepo: {
+    create: jest.Mock;
+    save: jest.Mock;
+    findOne: jest.Mock;
+    count: jest.Mock;
+    createQueryBuilder: jest.Mock;
+  };
+  let userService: { findById: jest.Mock };
   let deploymentRepo: { findOne: jest.Mock };
   let containerRegistryService: { buildAndPush: jest.Mock; deleteImage: jest.Mock };
   let manifestGeneratorService: { buildAll: jest.Mock; getDomain: jest.Mock };
@@ -59,7 +68,12 @@ describe('HostingService', () => {
       create: jest.fn((data) => ({ ...data })),
       save: jest.fn(async (entity) => entity),
       findOne: jest.fn(),
+      // Quota counting: default to "no servers yet" so existing tests deploy.
+      count: jest.fn().mockResolvedValue(0),
       createQueryBuilder: jest.fn(),
+    };
+    userService = {
+      findById: jest.fn().mockResolvedValue({ id: 'user-1', tier: UserTier.FREE }),
     };
     deploymentRepo = { findOne: jest.fn() };
     containerRegistryService = { buildAndPush: jest.fn(), deleteImage: jest.fn() };
@@ -104,6 +118,7 @@ describe('HostingService', () => {
         { provide: K8sControlPlaneService, useValue: k8sControlPlane },
         { provide: LocalDockerHostingService, useValue: localDockerHostingService },
         { provide: ConfigService, useValue: mockConfigService },
+        { provide: UserService, useValue: userService },
       ],
     }).compile();
 
@@ -121,6 +136,94 @@ describe('HostingService', () => {
       deploymentRepo.findOne.mockResolvedValue({ ...baseDeployment, serverName: undefined });
 
       await expect(service.deployToCloud('conv-1', 'user-1')).rejects.toThrow(BadRequestException);
+    });
+
+    describe('per-user concurrent hosted-server cap', () => {
+      beforeEach(() => {
+        deploymentRepo.findOne.mockResolvedValue(baseDeployment);
+        containerRegistryService.buildAndPush.mockResolvedValue('ghcr.io/owner/repo/x:latest');
+      });
+
+      it('allows the deploy that fills the last free slot (free tier: limit 1, currently 0)', async () => {
+        hostedServerRepo.count.mockResolvedValue(0);
+
+        const result = await service.deployToCloud('conv-1', 'user-1');
+
+        expect(result.success).toBe(true);
+        expect(hostedServerRepo.count).toHaveBeenCalledWith({
+          where: { userId: 'user-1', status: expect.anything() },
+        });
+      });
+
+      it('blocks the N+1th deploy with a 403 naming the limit, the current count and the tier', async () => {
+        hostedServerRepo.count.mockResolvedValue(1); // free tier limit is 1
+
+        const error = await service
+          .deployToCloud('conv-1', 'user-1')
+          .then(() => null)
+          .catch((e: unknown) => e);
+
+        expect(error).toBeInstanceOf(ForbiddenException);
+        const body = (error as ForbiddenException).getResponse() as Record<string, unknown>;
+        expect(body.code).toBe('HOSTED_SERVER_LIMIT_EXCEEDED');
+        expect(body.limit).toBe(1);
+        expect(body.currentUsage).toBe(1);
+        expect(body.currentTier).toBe(UserTier.FREE);
+        expect(body.message).toContain('maximum of 1');
+        expect(body.message).toContain('Free');
+      });
+
+      it('blocks before doing any expensive work (no image build, no GitOps commit, no row written)', async () => {
+        hostedServerRepo.count.mockResolvedValue(1);
+
+        await expect(service.deployToCloud('conv-1', 'user-1')).rejects.toThrow(ForbiddenException);
+
+        expect(hostedServerRepo.save).not.toHaveBeenCalled();
+        expect(containerRegistryService.buildAndPush).not.toHaveBeenCalled();
+        expect(gitOpsService.deployServer).not.toHaveBeenCalled();
+      });
+
+      it('applies the pro tier limit (10), not the free tier limit', async () => {
+        userService.findById.mockResolvedValue({ id: 'user-1', tier: UserTier.PRO });
+        hostedServerRepo.count.mockResolvedValue(9);
+
+        await expect(service.deployToCloud('conv-1', 'user-1')).resolves.toMatchObject({
+          success: true,
+        });
+
+        hostedServerRepo.count.mockResolvedValue(10);
+        await expect(service.deployToCloud('conv-1', 'user-1')).rejects.toThrow(ForbiddenException);
+      });
+
+      it('never counts servers for an enterprise user (unlimited)', async () => {
+        userService.findById.mockResolvedValue({ id: 'user-1', tier: UserTier.ENTERPRISE });
+
+        const result = await service.deployToCloud('conv-1', 'user-1');
+
+        expect(result.success).toBe(true);
+        expect(hostedServerRepo.count).not.toHaveBeenCalled();
+      });
+
+      it('treats a user with an unknown tier as free tier rather than unlimited', async () => {
+        userService.findById.mockResolvedValue({ id: 'user-1', tier: 'legacy-plan' });
+        hostedServerRepo.count.mockResolvedValue(1);
+
+        await expect(service.deployToCloud('conv-1', 'user-1')).rejects.toThrow(ForbiddenException);
+      });
+
+      it('excludes failed and deleted servers from the count', async () => {
+        hostedServerRepo.count.mockResolvedValue(0);
+
+        await service.deployToCloud('conv-1', 'user-1');
+
+        const where = hostedServerRepo.count.mock.calls[0][0].where;
+        // TypeORM In() operator - assert on the value list it was built with.
+        expect(where.status.value).toEqual(
+          expect.arrayContaining(['pending', 'building', 'pushing', 'deploying', 'running', 'stopped']),
+        );
+        expect(where.status.value).not.toContain('failed');
+        expect(where.status.value).not.toContain('deleted');
+      });
     });
 
     it('always generates a serverId that is a valid Docker tag / K8s DNS label component (never ending in a separator)', async () => {

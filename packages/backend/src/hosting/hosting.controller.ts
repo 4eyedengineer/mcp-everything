@@ -10,20 +10,51 @@ import {
   HttpStatus,
   Logger,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { HostingService } from './hosting.service';
+import { HostedServerApiKeyService } from './hosted-server-api-key.service';
 import { DeployServerDto } from './dto/deploy-server.dto';
+import {
+  CreateHostedServerApiKeyDto,
+  CreatedHostedServerApiKeyResponseDto,
+  HostedServerApiKeyResponseDto,
+} from './dto/hosted-server-api-key.dto';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { User } from '../database/entities/user.entity';
+
+/**
+ * Deploying a hosted server builds an image, pushes it and commits manifests -
+ * minutes of work and real spend per call. 5/minute is generous for a human
+ * clicking "Deploy" and tight enough that a runaway client loop is stopped
+ * long before it can exhaust the concurrent-server cap or the build host.
+ * The global default is 100/min (see ThrottlerModule.forRoot in app.module).
+ */
+const DEPLOY_RATE_LIMIT = { default: { limit: 5, ttl: 60_000 } };
+
+/**
+ * Key creation mints a credential and writes a row; a loop here is cheap for
+ * the caller and noisy for us. MAX_ACTIVE_KEYS_PER_SERVER already bounds the
+ * useful number of calls.
+ */
+const KEY_MUTATION_RATE_LIMIT = { default: { limit: 10, ttl: 60_000 } };
 
 @Controller('api/hosting')
 export class HostingController {
   private readonly logger = new Logger(HostingController.name);
 
-  constructor(private readonly hostingService: HostingService) {}
+  constructor(
+    private readonly hostingService: HostingService,
+    private readonly apiKeyService: HostedServerApiKeyService,
+  ) {}
 
   /**
-   * Deploy a generated MCP server to Kubernetes
+   * Deploy a generated MCP server to Kubernetes.
+   *
+   * Two limits apply: the @Throttle rate limit below (runaway loops) and the
+   * per-tier concurrent hosted-server cap enforced in
+   * HostingService.deployToCloud (403 HOSTED_SERVER_LIMIT_EXCEEDED).
    */
+  @Throttle(DEPLOY_RATE_LIMIT)
   @Post('deploy/:conversationId')
   async deployServer(
     @CurrentUser() user: User,
@@ -229,6 +260,75 @@ export class HostingController {
       const message = error instanceof Error ? error.message : 'Unknown error';
       throw new HttpException(message, HttpStatus.INTERNAL_SERVER_ERROR);
     }
+  }
+
+  // -------------------------------------------------------------------------
+  // Per-server API key credentials
+  //
+  // HONESTY NOTE: these endpoints issue and manage credentials for hosted MCP
+  // servers, but nothing verifies those credentials on a request path yet -
+  // there is no gateway in front of hosted servers, so a hosted server still
+  // accepts traffic from anyone who knows its endpoint URL. Creating a key
+  // here does NOT lock down a server today. See HostedServerApiKeyService.
+  // -------------------------------------------------------------------------
+
+  /**
+   * Create an API key for one of the caller's own hosted servers.
+   *
+   * The plaintext key is in the response body and will never be returned
+   * again - only its SHA-256 hash is stored.
+   */
+  @Throttle(KEY_MUTATION_RATE_LIMIT)
+  @Post('servers/:serverId/keys')
+  async createServerApiKey(
+    @CurrentUser() user: User,
+    @Param('serverId') serverId: string,
+    @Body() dto: CreateHostedServerApiKeyDto,
+  ): Promise<CreatedHostedServerApiKeyResponseDto> {
+    const created = await this.apiKeyService.createKey(serverId, user.id, {
+      label: dto.label,
+      expiresInDays: dto.expiresInDays,
+    });
+
+    return {
+      key: created.plaintextKey,
+      apiKey: created.key as HostedServerApiKeyResponseDto,
+      warning: {
+        shownOnce:
+          'This is the only time this key will be shown. Store it now - it cannot be retrieved again.',
+        notYetEnforced:
+          'Hosted MCP servers are not yet behind a credential-checking gateway. This key is issued and revocable, but nothing verifies it on incoming requests today.',
+      },
+    };
+  }
+
+  /**
+   * List API key metadata for one of the caller's own hosted servers.
+   * Never returns the secret - it is not stored anywhere to return.
+   */
+  @Get('servers/:serverId/keys')
+  async listServerApiKeys(
+    @CurrentUser() user: User,
+    @Param('serverId') serverId: string,
+  ): Promise<{ apiKeys: HostedServerApiKeyResponseDto[] }> {
+    const keys = await this.apiKeyService.listKeys(serverId, user.id);
+    return { apiKeys: keys as HostedServerApiKeyResponseDto[] };
+  }
+
+  /**
+   * Revoke an API key on one of the caller's own hosted servers.
+   * A revoked key never verifies again; other keys on the server keep working,
+   * which is what makes a zero-downtime rotation possible.
+   */
+  @Throttle(KEY_MUTATION_RATE_LIMIT)
+  @Delete('servers/:serverId/keys/:keyId')
+  async revokeServerApiKey(
+    @CurrentUser() user: User,
+    @Param('serverId') serverId: string,
+    @Param('keyId') keyId: string,
+  ): Promise<{ success: true; apiKey: HostedServerApiKeyResponseDto }> {
+    const revoked = await this.apiKeyService.revokeKey(serverId, keyId, user.id);
+    return { success: true, apiKey: revoked as HostedServerApiKeyResponseDto };
   }
 
   /**
