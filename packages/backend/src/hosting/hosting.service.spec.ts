@@ -24,7 +24,7 @@ describe('HostingService', () => {
   };
   let userService: { findById: jest.Mock };
   let deploymentRepo: { findOne: jest.Mock };
-  let tokenEncryptionService: { encrypt: jest.Mock; decrypt: jest.Mock };
+  let tokenEncryptionService: { enabled: boolean; encrypt: jest.Mock; decrypt: jest.Mock };
   let containerRegistryService: {
     buildAndPush: jest.Mock;
     buildImage: jest.Mock;
@@ -83,9 +83,23 @@ describe('HostingService', () => {
       findById: jest.fn().mockResolvedValue({ id: 'user-1', tier: UserTier.FREE }),
     };
     deploymentRepo = { findOne: jest.fn() };
+    /**
+     * A real-behaviour fake rather than a pass-through: encrypt/decrypt must
+     * actually round-trip (and must be able to fail, via `enabled = false`,
+     * mirroring "no TOKEN_ENCRYPTION_KEY configured") for the restart-env
+     * regression tests to mean anything. AES key management itself is
+     * TokenEncryptionService's own tested concern, not HostingService's.
+     */
     tokenEncryptionService = {
-      encrypt: jest.fn((v: string) => `enc(${v})`),
-      decrypt: jest.fn((v: string) => (v?.startsWith('enc(') ? v.slice(4, -1) : undefined)),
+      enabled: true,
+      encrypt: jest.fn((plaintext: string) =>
+        tokenEncryptionService.enabled ? `enc(${plaintext})` : undefined,
+      ),
+      decrypt: jest.fn((payload?: string | null) => {
+        if (!tokenEncryptionService.enabled || !payload) return undefined;
+        const match = /^enc\((.*)\)$/s.exec(payload);
+        return match ? match[1] : undefined;
+      }),
     };
     containerRegistryService = {
       buildAndPush: jest.fn(),
@@ -287,6 +301,47 @@ describe('HostingService', () => {
       });
 
       /**
+       * Deployment is ON DELETE CASCADE from conversations while HostedServer
+       * is only SET NULL, so the source path has to be copied onto the hosted
+       * server or deleting the chat leaves a live, unrebuildable server.
+       */
+      it('copies localPath onto the hosted server instead of relying on the deployment row', async () => {
+        deploymentRepo.findOne.mockResolvedValue(baseDeployment);
+        containerRegistryService.buildImage.mockResolvedValue('ghcr.io/owner/repo/x:latest');
+
+        await service.deployToCloud('conv-1', 'user-1');
+
+        expect(hostedServerRepo.create).toHaveBeenCalledWith(
+          expect.objectContaining({ localPath: '/generated-servers/conv-1' }),
+        );
+      });
+
+      /**
+       * 'pushing' is a declared HostedServerStatus with DB CHECK constraints
+       * and its own stage in the deploy-progress UI, but nothing ever set it -
+       * the bar jumped building -> deploying past a stage users were shown.
+       */
+      it('reports the pushing stage between building and deploying', async () => {
+        deploymentRepo.findOne.mockResolvedValue(baseDeployment);
+        containerRegistryService.buildImage.mockResolvedValue('ghcr.io/owner/repo/x:latest');
+
+        // save() is handed the same mutated entity every time, so the status
+        // has to be snapshotted at call time rather than read back off
+        // save.mock.calls afterwards.
+        const statuses: string[] = [];
+        hostedServerRepo.save.mockImplementation(async (entity: { status: string }) => {
+          statuses.push(entity.status);
+          return entity;
+        });
+
+        await service.deployToCloud('conv-1', 'user-1');
+
+        expect(statuses).toContain('pushing');
+        expect(statuses.indexOf('building')).toBeLessThan(statuses.indexOf('pushing'));
+        expect(statuses.indexOf('pushing')).toBeLessThan(statuses.indexOf('deploying'));
+      });
+
+      /**
        * Regression guard for the central bug: the old code wrote 'running' the
        * moment a GitOps commit succeeded, so a pod that never started reported
        * 'running' forever. Applying objects to the API server proves only that
@@ -352,6 +407,30 @@ describe('HostingService', () => {
         expect(result.success).toBe(false);
         expect(result.status).toBe('failed');
         expect(result.error).toContain('docker: not found');
+      });
+
+      it('does not push an image that failed to build', async () => {
+        deploymentRepo.findOne.mockResolvedValue(baseDeployment);
+        containerRegistryService.buildImage.mockRejectedValue(new Error('Docker build failed'));
+
+        await service.deployToCloud('conv-1', 'user-1');
+
+        expect(containerRegistryService.pushImage).not.toHaveBeenCalled();
+      });
+
+      it('reports failed with the real error when the push fails', async () => {
+        deploymentRepo.findOne.mockResolvedValue(baseDeployment);
+        containerRegistryService.buildImage.mockResolvedValue('ghcr.io/owner/repo/x:latest');
+        containerRegistryService.pushImage.mockRejectedValue(
+          new Error('Docker push failed: unauthorized'),
+        );
+
+        const result = await service.deployToCloud('conv-1', 'user-1');
+
+        expect(result.success).toBe(false);
+        expect(result.status).toBe('failed');
+        expect(result.error).toContain('unauthorized');
+        expect(k8sControlPlane.applyServer).not.toHaveBeenCalled();
       });
 
       it('reports failed when the cluster rejects the objects', async () => {
@@ -561,6 +640,124 @@ describe('HostingService', () => {
         'mcp-local/srv-1:latest',
         {},
       );
+    });
+
+    it('startServer still refuses when no source path was ever recorded', async () => {
+      hostedServerRepo.findOne.mockResolvedValue(
+        dockerRunServer({
+          status: 'stopped',
+          localPath: null,
+          config: { mode: 'docker-run', containerName: 'mcp-hosted-srv-1' },
+        }),
+      );
+
+      await expect(service.startServer('srv-1')).rejects.toThrow(BadRequestException);
+    });
+
+    /**
+     * Deleting the conversation CASCADE-deletes the Deployment that used to
+     * be the only holder of localPath. The hosted server (SET NULL) survives,
+     * so it must carry its own copy or it can never be restarted.
+     */
+    it('startServer works for a docker-run server whose conversation/deployment is gone', async () => {
+      hostedServerRepo.findOne.mockResolvedValue(
+        dockerRunServer({
+          status: 'stopped',
+          conversationId: null,
+          localPath: '/generated-servers/conv-1',
+          // No `localPath` inside config - only the column has it.
+          config: { mode: 'docker-run', containerName: 'mcp-hosted-srv-1' },
+        }),
+      );
+      localDockerHostingService.startAndVerify.mockResolvedValue({
+        containerName: 'mcp-hosted-srv-1',
+        handshake: { success: true, tools: [] },
+      });
+
+      await expect(service.startServer('srv-1')).resolves.toBeUndefined();
+      expect(localDockerHostingService.startAndVerify).toHaveBeenCalled();
+    });
+
+    /**
+     * Defect: startServer passed `{}` for env vars. LocalDockerHostingService
+     * defaults MCP_TRANSPORT to stdio when it is absent, and stdio publishes
+     * no port - so a stopped-then-started HTTP server came back up
+     * unreachable at the http://localhost:<port> endpointUrl its own row
+     * still advertises, and any user-supplied API keys were silently dropped.
+     */
+    describe('startServer restores the env vars a docker-run server was deployed with', () => {
+      function stoppedHttpServer(): HostedServer {
+        return dockerRunServer({
+          status: 'stopped',
+          localPath: '/dir',
+          endpointUrl: 'http://localhost:20007',
+          config: {
+            mode: 'docker-run',
+            containerName: 'mcp-hosted-srv-1',
+            transportEnv: { MCP_TRANSPORT: 'http', PORT: '3000' },
+          },
+          deployEnvEncrypted: 'enc({"MCP_TRANSPORT":"http","PORT":"3000","API_KEY":"sk-secret"})',
+        });
+      }
+
+      beforeEach(() => {
+        localDockerHostingService.startAndVerify.mockResolvedValue({
+          containerName: 'mcp-hosted-srv-1',
+          handshake: { success: true, transport: 'http', tools: [{ name: 'get_user' }] },
+        });
+      });
+
+      it('restarts with the same transport, port and secrets', async () => {
+        hostedServerRepo.findOne.mockResolvedValue(stoppedHttpServer());
+
+        await service.startServer('srv-1');
+
+        expect(localDockerHostingService.startAndVerify).toHaveBeenCalledWith(
+          'srv-1',
+          'mcp-local/srv-1:latest',
+          { MCP_TRANSPORT: 'http', PORT: '3000', API_KEY: 'sk-secret' },
+        );
+      });
+
+      it('still restores the transport when the secrets cannot be decrypted', async () => {
+        tokenEncryptionService.enabled = false;
+        hostedServerRepo.findOne.mockResolvedValue(stoppedHttpServer());
+
+        await service.startServer('srv-1');
+
+        // The half that keeps the advertised endpointUrl dialable must
+        // survive even with no usable encryption key; only the secret half is
+        // allowed to be lost.
+        expect(localDockerHostingService.startAndVerify).toHaveBeenCalledWith(
+          'srv-1',
+          'mcp-local/srv-1:latest',
+          { MCP_TRANSPORT: 'http', PORT: '3000' },
+        );
+      });
+    });
+
+    it('deployToCloud persists the deploy-time env vars for a later restart', async () => {
+      hostingMode = 'docker-run';
+      service = await buildService();
+      deploymentRepo.findOne.mockResolvedValue(baseDeployment);
+      localDockerHostingService.buildImage.mockResolvedValue('mcp-local/x:latest');
+      localDockerHostingService.startAndVerify.mockResolvedValue({
+        containerName: 'mcp-hosted-x',
+        handshake: { success: true, transport: 'http', tools: [] },
+      });
+
+      await service.deployToCloud('conv-1', 'user-1', {
+        MCP_TRANSPORT: 'http',
+        API_KEY: 'sk-secret',
+      });
+
+      const saved = hostedServerRepo.save.mock.calls.map((c) => c[0]).pop();
+      // Transport settings in the clear (not secrets, must survive a missing key)...
+      expect(saved.config.transportEnv).toEqual({ MCP_TRANSPORT: 'http' });
+      // ...secrets only ever encrypted - `env_var_names` exists precisely so
+      // that values are never stored in the clear.
+      expect(saved.deployEnvEncrypted).toBe('enc({"MCP_TRANSPORT":"http","API_KEY":"sk-secret"})');
+      expect(JSON.stringify(saved.config)).not.toContain('sk-secret');
     });
 
     it('deleteServer stops the container for docker-run servers instead of touching the cluster/registry', async () => {
