@@ -4,8 +4,8 @@
 > GitHub repository, a documentation site, a service name, or a plain-English description.
 > Each generated server is compiled, started inside a Docker container and driven over JSON-RPC
 > — initialise, list tools, call them — before the run is allowed to succeed, with up to five
-> automatic repair rounds. Output is source code you own: it is pushed to your own GitHub
-> repository or a public Gist, never locked to this platform.
+> automatic repair rounds. Output is source code you own: it is published to a public Gist on
+> your own GitHub account, or downloaded, and never locked to this platform.
 
 MCP Everything is itself an MCP server, so an AI agent can drive generation without a human
 using the web interface. Details are under "MCP endpoint for agents" below.
@@ -76,6 +76,9 @@ Practical notes for implementers:
 - Paid plans, billing and subscriptions. Nothing is for sale, no card is collected, and there is
   no price to quote.
 - Authentication for hosted servers, because hosting is not offered.
+- Pushing generated code to a GitHub repository. The provider is implemented and works, but the
+  free tier is restricted to Gist deployments and no higher tier can currently be purchased, so
+  in practice no account can reach it.
 - OpenAPI or GraphQL specification input. No specification parser exists anywhere in the
   codebase. Use a repository URL or a documentation URL instead.
 - Email address verification, and one-click install from the catalogue. Neither is implemented.

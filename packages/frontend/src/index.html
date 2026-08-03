@@ -90,7 +90,7 @@
           "Generate an MCP server from a service name or plain-English description",
           "Docker-sandboxed build, run and tool execution with up to five automatic repair rounds",
           "Generated servers support both stdio and MCP Streamable HTTP transports",
-          "Publish generated code to your own GitHub repository or a public Gist",
+          "Publish generated code to a public Gist on your own GitHub account, or download it",
           "Exposes its own MCP server so AI agents can drive generation programmatically",
           "Public, account-free catalogue of published MCP servers"
         ],
@@ -122,7 +122,7 @@
             "name": "Does MCP Everything host the generated server for me?",
             "acceptedAnswer": {
               "@type": "Answer",
-              "text": "Not yet. You get the source code, a Dockerfile and a devcontainer definition, pushed to your own GitHub repository or a Gist, and you run it wherever you like. Hosting on MCP Everything infrastructure is not offered today."
+              "text": "Not yet. You get the source code, a Dockerfile and a devcontainer definition, published to a public Gist on your own GitHub account or downloaded, and you run it wherever you like. Hosting on MCP Everything infrastructure is not offered today."
             }
           },
           {
@@ -190,7 +190,7 @@
         <ul>
           <li>A server that was compiled, started in a Docker container and driven over JSON-RPC &mdash; with up to five automatic repair rounds if a tool call fails</li>
           <li>Both MCP transports: stdio by default, MCP Streamable HTTP when <code>MCP_TRANSPORT=http</code> is set</li>
-          <li>Source, tests, a Dockerfile and documentation, pushed to your own GitHub repository or a public Gist</li>
+          <li>Source, tests, a Dockerfile and documentation, published to a public Gist on your own GitHub account or downloaded</li>
           <li>Sign-in with GitHub, Google, or an email address and password</li>
           <li>Five generations a month on the free tier. Nothing is for sale and no card is collected.</li>
         </ul>
@@ -213,6 +213,7 @@
           <li>Paid plans, billing and subscriptions &mdash; nothing is for sale</li>
           <li>Authentication for hosted servers, because hosting is not offered</li>
           <li>A public MCP endpoint on this domain &mdash; the server works, but the public route to it is not configured yet</li>
+          <li>Pushing to a GitHub repository &mdash; implemented, but gated to a paid tier that cannot currently be purchased. Free accounts publish to a public Gist.</li>
           <li>OpenAPI or GraphQL specification input &mdash; no specification parser exists</li>
         </ul>
 

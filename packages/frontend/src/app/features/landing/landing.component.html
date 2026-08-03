@@ -18,8 +18,12 @@
            tools/list -> tools/call round trips.
     "stdio and MCP Streamable HTTP"
         -> refinement.service.ts reference implementation + MCP_TRANSPORT.
-    "GitHub repo or a Gist"
-        -> deployment/providers/github-repo.provider.ts, gist.provider.ts.
+    "published to a public Gist"
+        -> deployment/providers/gist.provider.ts. NOTE the repo provider works
+           too, but tier-config.ts gives the free tier deploymentTypes:
+           ['gist'] and deployment-router.service.ts throws TIER_RESTRICTION
+           for anything else - and no tier above free is purchasable, so
+           repo push is stated as gated, not as available.
     "GitHub, Google or email and password"
         -> auth/strategies/{github,google}.strategy.ts + local.
     "five generations a month on the free tier"
@@ -173,8 +177,9 @@
               <h3>Take the code</h3>
               <p>
                 You get the source, <code>package.json</code>, TypeScript config, tests, a Dockerfile
-                and documentation &mdash; pushed to a new GitHub repository or a public Gist, or
-                downloaded.
+                and documentation &mdash; published to a public Gist, or downloaded. Pushing to a
+                GitHub repository is built but currently gated to a paid tier, and there is no way
+                to buy one yet.
               </p>
             </div>
           </li>
@@ -207,8 +212,9 @@
           <article class="feature-card">
             <h3>The code is yours</h3>
             <p>
-              Output goes to a repository in your own GitHub account or to a Gist, along with a
-              Dockerfile and a devcontainer definition. Nothing is locked to this platform.
+              Output goes to a public Gist on your own GitHub account, or downloads directly, along
+              with a Dockerfile and a devcontainer definition. Nothing is locked to this platform
+              and nothing needs this service to keep running.
             </p>
           </article>
           <article class="feature-card">
@@ -342,7 +348,7 @@
               <li>Generation from a repository, docs site, service name or description</li>
               <li>Docker-sandboxed build, run and tool execution, with automatic repair</li>
               <li>Generated servers speaking stdio and MCP Streamable HTTP</li>
-              <li>Publishing to your own GitHub repository or a Gist</li>
+              <li>Publishing to a public Gist on your own GitHub account, or downloading the code</li>
               <li>GitHub, Google and email sign-in, with password reset</li>
               <li>The MCP endpoint and its six tools, when the backend is reachable</li>
               <li>A public, account-free catalogue</li>
@@ -366,6 +372,11 @@
               <li>
                 <strong>A public MCP endpoint on this domain.</strong> The server exists and works;
                 the public route to it is not configured yet.
+              </li>
+              <li>
+                <strong>Pushing to a GitHub repository.</strong> Implemented and working, but gated
+                to a paid tier &mdash; and since nothing is for sale, no account can currently reach
+                it. Free accounts publish to a public Gist.
               </li>
               <li>
                 <strong>OpenAPI or GraphQL specification input.</strong> Despite what you may read
@@ -400,9 +411,9 @@
           <details class="faq-item">
             <summary>Do you host the server for me?</summary>
             <p class="faq-answer">
-              Not yet. You get the source code, a Dockerfile and a devcontainer definition, pushed
-              to your own GitHub repository or a Gist, and you run it wherever you like. Hosting on
-              our infrastructure is not offered today.
+              Not yet. You get the source code, a Dockerfile and a devcontainer definition,
+              published to a public Gist on your own GitHub account or downloaded, and you run it
+              wherever you like. Hosting on our infrastructure is not offered today.
             </p>
           </details>
           <details class="faq-item">

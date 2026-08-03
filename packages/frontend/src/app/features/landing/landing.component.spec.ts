@@ -160,5 +160,20 @@ describe('LandingComponent', () => {
     it('does not promise a public MCP endpoint on this domain', () => {
       expect(text).toContain('not yet routed on this domain');
     });
+
+    it('does not offer GitHub repository push as an available destination', () => {
+      // tier-config.ts gives the free tier deploymentTypes: ['gist'] and
+      // deployment-router.service.ts throws TIER_RESTRICTION for 'repo'.
+      // Since no paid tier is purchasable, no real account can push to a repo,
+      // so the page must present it as gated rather than as a destination.
+      const worksToday =
+        (fixture.nativeElement as HTMLElement).querySelector('.status-card-ready')?.textContent ??
+        '';
+
+      // ("repository" alone is fine there - it's also a generation *input*.)
+      expect(worksToday).not.toContain('GitHub repository');
+      expect(worksToday).toContain('Gist');
+      expect(text).toContain('gated to a paid tier');
+    });
   });
 });
