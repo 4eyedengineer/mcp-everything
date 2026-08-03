@@ -29,8 +29,16 @@ import { ThemeToggleComponent } from '../../shared/components/theme-toggle/theme
   styleUrls: ['./landing.component.scss'],
 })
 export class LandingComponent {
-  /** Public MCP endpoint agents connect to. Mirrored in index.html + llms.txt. */
-  readonly mcpEndpoint = 'https://mcpeverything.com/api/mcp';
+  /**
+   * Public MCP endpoint agents connect to. Mirrored in index.html + llms.txt.
+   *
+   * This is `/mcp`, NOT `/api/mcp` - the backend mounts the MCP controller
+   * outside the `/api/v1` global prefix, and the homelab Ingress routes `/mcp`
+   * straight to the backend Service. Verified live 2026-08-03: a POST with a
+   * bogus key returns 401 "Invalid or revoked API key" (route + key check both
+   * reached), while `/api/mcp` returns 404.
+   */
+  readonly mcpEndpoint = 'https://mcpeverything.com/mcp';
 
   /** Prefix of the API keys issued on the account page. */
   readonly apiKeyPrefix = 'mcpe_';
@@ -46,12 +54,11 @@ export class LandingComponent {
    * an ICU message and then fails to compile. A component string sidesteps
    * that entirely.
    *
-   * localhost is used deliberately: the endpoint is not routed on the public
-   * domain yet, so a public URL here would be a fabricated one - exactly the
-   * class of claim this page exists to avoid.
+   * The public URL is real, not aspirational - see the note on mcpEndpoint. It
+   * used to point at localhost precisely because the route did not exist yet.
    */
   readonly curlExample = [
-    `curl -X POST http://localhost:3000/mcp \\`,
+    `curl -X POST ${this.mcpEndpoint} \\`,
     `  -H 'Content-Type: application/json' \\`,
     `  -H 'Accept: application/json, text/event-stream' \\`,
     `  -H 'X-API-Key: ${this.apiKeyPrefix}<your key>' \\`,

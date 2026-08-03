@@ -171,48 +171,40 @@
       </header>
 
       <main>
-        <h1>Describe an API. Get a working MCP server.</h1>
+        <h1>Describe an API. Get a server that runs.</h1>
         <p class="boot-lede">
           MCP Everything turns a GitHub repository, a documentation site, a service name or a
-          plain-English description into a Model Context Protocol server &mdash; then builds it,
-          runs it in a Docker sandbox and calls its tools for real before handing it to you.
+          plain-English description into a Model Context Protocol server &mdash; then compiles it,
+          starts it in a Docker sandbox and calls its tools over JSON-RPC, with up to five automatic
+          repair rounds, before handing it to you.
         </p>
-
-        <h2>Four ways to start</h2>
-        <ul>
-          <li>A GitHub repository URL</li>
-          <li>A documentation or developer-portal URL</li>
-          <li>Just the service name, such as &ldquo;Stripe API&rdquo;</li>
-          <li>A plain-English description of the tools you want</li>
-        </ul>
 
         <h2>What you get</h2>
         <ul>
-          <li>A server that was compiled, started in a Docker container and driven over JSON-RPC &mdash; with up to five automatic repair rounds if a tool call fails</li>
+          <li>A server that was actually built and run, not just written</li>
           <li>Both MCP transports: stdio by default, MCP Streamable HTTP when <code>MCP_TRANSPORT=http</code> is set</li>
           <li>Source, tests, a Dockerfile and documentation, published to a public Gist on your own GitHub account or downloaded</li>
           <li>Sign-in with GitHub, Google, or an email address and password</li>
-          <li>Five generations a month on the free tier. Nothing is for sale and no card is collected.</li>
+          <li>Five generations a month, free. Nothing is for sale and no card is collected.</li>
         </ul>
 
         <h2>For AI agents</h2>
         <p>
-          MCP Everything is itself an MCP server. It speaks MCP Streamable HTTP at
-          <code>POST /mcp</code> in stateless mode, authenticated with an API key prefixed
-          <code>mcpe_</code> sent either as an <code>X-API-Key</code> header or as
-          <code>Authorization: Bearer</code>. Keys are created on the account page. It exposes six
-          tools: <code>generate_mcp_server</code>, <code>continue_generation</code>,
-          <code>get_generation_status</code>, <code>get_generated_server</code>,
-          <code>list_conversations</code> and <code>search_marketplace</code>. A machine-readable
-          summary of this site is published at <a href="/llms.txt">/llms.txt</a>.
+          MCP Everything is itself an MCP server, at
+          <code>POST https://mcpeverything.com/mcp</code> &mdash; MCP Streamable HTTP, stateless,
+          authenticated with an API key prefixed <code>mcpe_</code> sent either as an
+          <code>X-API-Key</code> header or as <code>Authorization: Bearer</code>. Keys are created
+          on the account page. It exposes six tools: <code>generate_mcp_server</code>,
+          <code>continue_generation</code>, <code>get_generation_status</code>,
+          <code>get_generated_server</code>, <code>list_conversations</code> and
+          <code>search_marketplace</code>. A machine-readable summary of this site is published at
+          <a href="/llms.txt">/llms.txt</a>.
         </p>
 
         <h2>Not available yet</h2>
         <ul>
-          <li>Hosting MCP servers on MCP Everything infrastructure &mdash; the Kubernetes path has never been run against a real cluster and is not offered</li>
+          <li>Hosting MCP servers on MCP Everything infrastructure &mdash; the Kubernetes path now runs end to end on real hardware, but it is not open to accounts</li>
           <li>Paid plans, billing and subscriptions &mdash; nothing is for sale</li>
-          <li>Authentication for hosted servers, because hosting is not offered</li>
-          <li>A public MCP endpoint on this domain &mdash; the server works, but the public route to it is not configured yet</li>
           <li>Pushing to a GitHub repository &mdash; implemented, but gated to a paid tier that cannot currently be purchased. Free accounts publish to a public Gist.</li>
           <li>OpenAPI or GraphQL specification input &mdash; no specification parser exists</li>
         </ul>

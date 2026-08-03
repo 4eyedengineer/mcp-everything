@@ -35,7 +35,8 @@ Dockerfile, a devcontainer definition and documentation.
 
 MCP Everything exposes its own MCP server.
 
-- Method and path: POST /mcp
+- Method and path: POST https://mcpeverything.com/mcp — note /mcp, not /api/mcp; the MCP
+  controller is mounted outside the /api/v1 global prefix and /api/mcp returns 404.
 - Transport: MCP Streamable HTTP, stateless — no Mcp-Session-Id, no persisted initialize
   handshake. GET and DELETE on the same path return 405 by design.
 - Credential: a user API key prefixed `mcpe_`, created on the account page after signing in
@@ -65,17 +66,12 @@ Practical notes for implementers:
   `.well-known` path for MCP discovery has been standardised — the relevant proposal is an
   unmerged draft that has since moved away from `.well-known` — so publishing one here would be
   inventing a convention. Configure the endpoint and key manually.
-- The endpoint is NOT yet routed on https://mcpeverything.com. Today it is reachable only when
-  the backend is run directly (for example http://localhost:3000/mcp). Do not hard-code a
-  public URL for it until this note is removed.
-
 ## Not implemented — do not describe these as available
 
-- Hosting MCP servers on MCP Everything infrastructure. The Kubernetes path has never been run
-  against a real cluster and is not offered to users.
+- Hosting MCP servers on MCP Everything infrastructure. The Kubernetes path now runs end to end
+  on real hardware, but it is not open to accounts and must not be described as available.
 - Paid plans, billing and subscriptions. Nothing is for sale, no card is collected, and there is
   no price to quote.
-- Authentication for hosted servers, because hosting is not offered.
 - Pushing generated code to a GitHub repository. The provider is implemented and works, but the
   free tier is restricted to Gist deployments and no higher tier can currently be purchased, so
   in practice no account can reach it.

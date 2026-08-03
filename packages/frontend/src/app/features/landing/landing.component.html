@@ -1,41 +1,35 @@
 <!--
   Public marketing landing page.
 
-  EVERY user-facing claim below is traceable to working code. The mapping,
-  for whoever edits this next:
+  EVERY user-facing claim below is traceable to working code:
 
-    "GitHub repo / docs site / service name / plain description"
+    the four rotating inputs
         -> research.service.ts routeResearchStrategy(): four real strategies.
-           NOTE: there is deliberately no "OpenAPI spec" claim - no OpenAPI or
+           There is deliberately no "OpenAPI spec" input - no OpenAPI or
            GraphQL parser exists anywhere in the backend.
-    "built and run inside a Docker sandbox"
-        -> testing/mcp-testing.service.ts (ensureDockerAvailable throws if
-           Docker is unreachable; real `docker run`).
-    "up to five repair rounds"
-        -> orchestration/pipeline.service.ts MAX_REFINEMENT_ITERATIONS = 5.
-    "its tools are called for real over JSON-RPC"
-        -> mcp-testing.service.ts: initialize -> notifications/initialized ->
-           tools/list -> tools/call round trips.
+    "Docker" / "five" repair rounds / "JSON-RPC"
+        -> testing/mcp-testing.service.ts (real `docker run`, initialize ->
+           tools/list -> tools/call) and pipeline.service.ts
+           MAX_REFINEMENT_ITERATIONS = 5.
     "stdio and MCP Streamable HTTP"
         -> refinement.service.ts reference implementation + MCP_TRANSPORT.
-    "published to a public Gist"
-        -> deployment/providers/gist.provider.ts. NOTE the repo provider works
-           too, but tier-config.ts gives the free tier deploymentTypes:
-           ['gist'] and deployment-router.service.ts throws TIER_RESTRICTION
-           for anything else - and no tier above free is purchasable, so
-           repo push is stated as gated, not as available.
-    "GitHub, Google or email and password"
-        -> auth/strategies/{github,google}.strategy.ts + local.
-    "five generations a month on the free tier"
+    the MCP endpoint block
+        -> mcp-server/mcp-server.controller.ts + mcp-tools.service.ts.
+           Verified live on 2026-08-03: POST https://mcpeverything.com/mcp
+           answers 401 "Invalid or revoked API key" for a bogus key, so the
+           route and the key check are both reachable on the public domain.
+    "Gist" as the only destination
+        -> tier-config.ts gives the free tier deploymentTypes: ['gist'] and
+           deployment-router.service.ts throws TIER_RESTRICTION for 'repo',
+           and no tier above free is purchasable - so repo push is stated as
+           gated, never as available.
+    "five generations a month"
         -> subscription/tier-config.ts, enforced in pipeline.service.ts.
-    "browse the catalogue without an account"
-        -> marketplace.controller.ts @Public() on every browse endpoint.
-    MCP server facts (POST /mcp, 6 tools, mcpe_ keys, both header forms)
-        -> mcp-server/mcp-server.controller.ts + mcp-tools.service.ts
-           + auth/guards/jwt-auth.guard.ts + api-key/api-key.service.ts.
 
-  Anything not yet working lives in the "Not available yet" section, in the
-  future tense, and nowhere else.
+  Anything not working yet lives in the "Not available yet" column, in the
+  future tense, and nowhere else. Keep this page short: it lost an FAQ, six
+  feature cards and a five-step walkthrough on 2026-08-03 because a landing
+  page that reads like a manual does not convert.
 -->
 <div class="landing">
   <a class="skip-link" href="#main">Skip to content</a>
@@ -43,231 +37,116 @@
   <header class="landing-header">
     <div class="landing-shell header-inner">
       <a routerLink="/" class="brand" aria-label="MCP Everything home">
-        <img class="brand-mark" src="favicon.svg" alt="" width="26" height="26" aria-hidden="true" />
+        <img class="brand-mark" src="favicon.svg" alt="" width="24" height="24" aria-hidden="true" />
         <span>MCP Everything</span>
       </a>
 
       <nav class="header-nav" aria-label="Primary">
-        <a href="#how-it-works">How it works</a>
-        <a href="#for-agents">For AI agents</a>
-        <a href="#status">What works today</a>
+        <a href="#agents">For agents</a>
+        <a href="#status">Status</a>
         <a routerLink="/explore">Explore</a>
       </nav>
 
       <div class="header-actions">
         <a routerLink="/auth/login" class="mcp-btn-secondary">Sign in</a>
-        <a routerLink="/auth/register" class="mcp-btn-primary">Create account</a>
+        <a routerLink="/auth/register" class="mcp-btn-primary">Start free</a>
       </div>
     </div>
   </header>
 
   <main id="main">
-    <!-- Hero ------------------------------------------------------------ -->
+    <!-- Hero: the grid, the headline, and the machine ---------------------- -->
     <section class="hero">
-      <div class="landing-shell">
+      <div class="grid-field" aria-hidden="true"></div>
+
+      <div class="landing-shell hero-inner">
         <p class="hero-eyebrow">Model Context Protocol &middot; open source</p>
-        <h1 class="hero-title">Describe an API. Get a working MCP server.</h1>
+
+        <h1 class="hero-title">
+          Describe an API.<br />
+          <span class="hero-title-sweep">Get a server that runs.</span>
+        </h1>
+
         <p class="hero-subtitle">
-          MCP Everything turns a GitHub repository, a documentation site, a service name or a
-          plain-English description into a Model Context Protocol server &mdash; then builds it,
-          runs it in a Docker sandbox and calls its tools for real before handing it to you.
+          Not scaffolded. Not hopefully-correct. Compiled, started in a Docker sandbox and called
+          over JSON-RPC before it ever reaches you.
         </p>
+
+        <!--
+          The machine. One element replaces what used to be three sections:
+          the four accepted inputs (rotating), and the pipeline (the rail).
+          Purely decorative motion - the same facts are in the text.
+        -->
+        <div class="machine">
+          <div class="machine-bar" aria-hidden="true">
+            <span class="machine-dots"><i></i><i></i><i></i></span>
+            <span class="machine-title">new server</span>
+          </div>
+
+          <div class="machine-input">
+            <span class="machine-chevron" aria-hidden="true">&rsaquo;</span>
+            <span class="rotator">
+              <span class="rotator-track">
+                <span class="rotator-item"
+                  ><em>GitHub repository</em>github.com/stripe/stripe-node</span
+                >
+                <span class="rotator-item"><em>documentation site</em>docs.stripe.com/api</span>
+                <span class="rotator-item"><em>service name</em>the Notion API</span>
+                <span class="rotator-item"
+                  ><em>description</em>search my Postgres and return matching rows</span
+                >
+                <span class="rotator-item" aria-hidden="true"
+                  ><em>GitHub repository</em>github.com/stripe/stripe-node</span
+                >
+              </span>
+            </span>
+          </div>
+
+          <ol class="rail">
+            <li>Research</li>
+            <li>Plan tools</li>
+            <li>Build</li>
+            <li>Run in Docker</li>
+            <li>Repair &times;5</li>
+          </ol>
+        </div>
+
         <div class="hero-actions">
-          <a routerLink="/auth/register" class="mcp-btn-primary">Create a free account</a>
+          <a routerLink="/auth/register" class="mcp-btn-primary">Start free</a>
           <a routerLink="/explore" class="mcp-btn-secondary">Browse the catalogue</a>
         </div>
+
         <p class="hero-note">
-          Free accounts include five generations per month. No card required &mdash; there is no
-          paid plan to buy yet.
+          Five generations a month, free. No card &mdash; there is nothing to buy yet.
         </p>
       </div>
     </section>
 
-    <!-- Inputs ---------------------------------------------------------- -->
-    <section class="landing-section" aria-labelledby="inputs-heading">
-      <div class="landing-shell">
-        <h2 class="section-heading" id="inputs-heading">Four ways to start</h2>
-        <p class="section-intro">
-          You do not need a machine-readable specification. The research step works from whatever
-          you have.
-        </p>
-        <div class="input-grid">
-          <article class="input-card">
-            <h3>A GitHub repository</h3>
-            <p>
-              Paste a repository URL. The source, README, code examples and test patterns are read
-              with the GitHub API to work out what the tools should be.
-            </p>
-          </article>
-          <article class="input-card">
-            <h3>A documentation site</h3>
-            <p>
-              Point at a docs or developer portal URL. The pages are fetched and reduced to text
-              before planning begins.
-            </p>
-          </article>
-          <article class="input-card">
-            <h3>Just the service name</h3>
-            <p>
-              &ldquo;Stripe API&rdquo; is enough. The name is classified and researched from public
-              sources.
-            </p>
-          </article>
-          <article class="input-card">
-            <h3>A plain-English description</h3>
-            <p>
-              Describe the tools you want in a sentence or two and let the planning step turn that
-              into a concrete tool set.
-            </p>
-          </article>
-        </div>
+    <!-- Numbers band ------------------------------------------------------ -->
+    <section class="band" aria-label="At a glance">
+      <div class="landing-shell band-inner">
+        <div class="band-item"><b>4</b><span>ways in</span></div>
+        <div class="band-item"><b>5</b><span>repair rounds</span></div>
+        <div class="band-item"><b>2</b><span>MCP transports</span></div>
+        <div class="band-item"><b>6</b><span>tools for agents</span></div>
       </div>
     </section>
 
-    <!-- How it works ---------------------------------------------------- -->
-    <section class="landing-section" id="how-it-works" aria-labelledby="how-heading">
-      <div class="landing-shell">
-        <h2 class="section-heading" id="how-heading">How a generation runs</h2>
-        <p class="section-intro">
-          One explicit pipeline, not a black box. Every step records its own timings and token
-          usage.
-        </p>
-        <ol class="steps">
-          <li class="step">
-            <div>
-              <h3>Research</h3>
-              <p>
-                Your input is classified, then researched from the matching source &mdash; the
-                GitHub API for repositories, the live pages for documentation URLs, public sources
-                for a bare service name.
-              </p>
-            </div>
-          </li>
-          <li class="step">
-            <div>
-              <h3>Plan the tools</h3>
-              <p>
-                The research findings are turned into a concrete list of MCP tools, each with a name,
-                a description and a typed input schema.
-              </p>
-            </div>
-          </li>
-          <li class="step">
-            <div>
-              <h3>Ask, if something is missing</h3>
-              <p>
-                When there is a genuine gap &mdash; which authentication scheme, which endpoints
-                matter &mdash; the run pauses and asks. Your answer resumes it without repeating the
-                research.
-              </p>
-            </div>
-          </li>
-          <li class="step">
-            <div>
-              <h3>Build, run, repair</h3>
-              <p>
-                The server is compiled and started inside a Docker container, then driven over
-                JSON-RPC: initialise, list tools, call them. Failures feed back into up to five
-                automatic repair rounds.
-              </p>
-            </div>
-          </li>
-          <li class="step">
-            <div>
-              <h3>Take the code</h3>
-              <p>
-                You get the source, <code>package.json</code>, TypeScript config, tests, a Dockerfile
-                and documentation &mdash; published to a public Gist, or downloaded. Pushing to a
-                GitHub repository is built but currently gated to a paid tier, and there is no way
-                to buy one yet.
-              </p>
-            </div>
-          </li>
-        </ol>
-      </div>
-    </section>
+    <!-- For AI agents ----------------------------------------------------- -->
+    <section class="landing-section" id="agents" aria-labelledby="agents-heading">
+      <div class="landing-shell agent-grid">
+        <div>
+          <h2 class="section-heading" id="agents-heading">It is an MCP server too</h2>
+          <p class="section-intro">
+            <code>POST /mcp</code> speaks MCP Streamable HTTP, stateless, authenticated with an API
+            key. An agent can generate a server, answer its own clarifying questions, fetch the code
+            and search the catalogue without a browser in the loop.
+          </p>
 
-    <!-- Features -------------------------------------------------------- -->
-    <section class="landing-section" aria-labelledby="features-heading">
-      <div class="landing-shell">
-        <h2 class="section-heading" id="features-heading">What you actually get</h2>
-        <div class="feature-grid">
-          <article class="feature-card">
-            <h3>Servers that have been run, not just written</h3>
-            <p>
-              Generation refuses to execute model-written code on the host. Every candidate is built
-              and started in a Docker container, and its tools are invoked over real JSON-RPC before
-              the run is allowed to succeed.
-            </p>
-          </article>
-          <article class="feature-card">
-            <h3>Both MCP transports</h3>
-            <p>
-              Generated servers run over stdio by default &mdash; ready for Claude Desktop and other
-              local clients &mdash; and over MCP Streamable HTTP when
-              <code>MCP_TRANSPORT=http</code> is set. Built against the MCP TypeScript SDK, pinned
-              to a known version.
-            </p>
-          </article>
-          <article class="feature-card">
-            <h3>The code is yours</h3>
-            <p>
-              Output goes to a public Gist on your own GitHub account, or downloads directly, along
-              with a Dockerfile and a devcontainer definition. Nothing is locked to this platform
-              and nothing needs this service to keep running.
-            </p>
-          </article>
-          <article class="feature-card">
-            <h3>Sign in how you like</h3>
-            <p>
-              GitHub, Google, or an email address and password, with password reset. Conversations
-              and generated servers are scoped to your account.
-            </p>
-          </article>
-          <article class="feature-card">
-            <h3>Resumable conversations</h3>
-            <p>
-              Pipeline state is persisted per conversation, so a run that paused for a clarification
-              picks up where it left off instead of starting over.
-            </p>
-          </article>
-          <article class="feature-card">
-            <h3>A public catalogue</h3>
-            <p>
-              Published servers are browsable and searchable without an account, so you can look
-              before you sign up.
-            </p>
-          </article>
-        </div>
-      </div>
-    </section>
-
-    <!-- For AI agents --------------------------------------------------- -->
-    <section class="landing-section agent-section" id="for-agents" aria-labelledby="agents-heading">
-      <div class="landing-shell">
-        <h2 class="section-heading" id="agents-heading">For AI agents</h2>
-        <p class="section-intro">
-          MCP Everything is itself an MCP server. An agent with an API key can generate servers,
-          follow up on clarifying questions, retrieve finished code and search the catalogue without
-          a human touching the web UI.
-        </p>
-
-        <div class="agent-panel">
-          <dl class="agent-facts">
+          <dl class="facts">
             <div>
               <dt>Endpoint</dt>
-              <dd><code>POST /mcp</code> on the API host</dd>
-            </div>
-            <div>
-              <dt>Transport</dt>
-              <dd>MCP Streamable HTTP, stateless &mdash; no session id, no persisted handshake</dd>
-            </div>
-            <div>
-              <dt>Credential</dt>
-              <dd>
-                An API key beginning <code>{{ apiKeyPrefix }}</code>, created on the
-                <a routerLink="/account">account page</a>.
-              </dd>
+              <dd><code>{{ mcpEndpoint }}</code></dd>
             </div>
             <div>
               <dt>Header</dt>
@@ -278,180 +157,94 @@
             </div>
           </dl>
 
-          <h3 class="panel-heading">Tools exposed</h3>
-          <ul class="tool-list">
-            <li>
-              <code>generate_mcp_server</code>
-              <span>Start a generation from a description. Consumes one monthly generation.</span>
-            </li>
-            <li>
-              <code>continue_generation</code>
-              <span>Answer a clarifying question and resume a paused run.</span>
-            </li>
-            <li>
-              <code>get_generation_status</code>
-              <span>Check whether a run is waiting on you, finished, or still working.</span>
-            </li>
-            <li>
-              <code>get_generated_server</code>
-              <span>Fetch the generated source, tests and documentation.</span>
-            </li>
-            <li>
-              <code>list_conversations</code>
-              <span>List your generations, newest first.</span>
-            </li>
-            <li>
-              <code>search_marketplace</code>
-              <span>Search the public catalogue. Read-only and free.</span>
-            </li>
+          <ul class="tool-chips">
+            <li><code>generate_mcp_server</code></li>
+            <li><code>continue_generation</code></li>
+            <li><code>get_generation_status</code></li>
+            <li><code>get_generated_server</code></li>
+            <li><code>list_conversations</code></li>
+            <li><code>search_marketplace</code></li>
           </ul>
+        </div>
 
-          <!--
-            The snippet lives in the component rather than inline because the
-            JSON-RPC body contains braces, which Angular's template parser
-            treats as an ICU message and refuses to compile.
-          -->
-          <pre><code>{{ curlExample }}</code></pre>
+        <!--
+          The snippet lives in the component rather than inline because the
+          JSON-RPC body contains braces, which Angular's template parser
+          treats as an ICU message and refuses to compile.
 
-          <p class="panel-note">
-            <strong>Read this before wiring it up.</strong>
-            <code>generate_mcp_server</code> runs the whole pipeline before it returns, which takes
-            minutes &mdash; many clients will time out waiting. Start a run, then poll
-            <code>get_generation_status</code> and fetch with <code>get_generated_server</code>.
-            The endpoint is intended for server-side agents; browser-based clients are not currently
-            allowed by the CORS policy. And note the endpoint is not yet routed on this domain
-            &mdash; today it is reachable when you run the backend yourself. See
-            <a href="#status">what works today</a>.
+          The fineprint sits under the terminal rather than under the copy so
+          the two columns end at roughly the same depth - the terminal is four
+          lines tall and left an obvious void beside it otherwise.
+        -->
+        <div>
+          <div class="terminal">
+            <div class="terminal-bar" aria-hidden="true">
+              <span class="machine-dots"><i></i><i></i><i></i></span>
+              <span class="machine-title">tools/list</span>
+            </div>
+            <pre><code>{{ curlExample }}</code></pre>
+          </div>
+
+          <p class="fineprint">
+            A generation takes minutes, so start one and poll
+            <code>get_generation_status</code> rather than blocking on the call. Server-side agents
+            only &mdash; browser clients are refused by the CORS policy.
           </p>
-
-          <ul class="discovery-links">
-            <li><a href="/llms.txt">/llms.txt</a></li>
-            <li><a href="/sitemap.xml">/sitemap.xml</a></li>
-            <li><a href="/robots.txt">/robots.txt</a></li>
-            <li><a [href]="repoUrl" rel="noopener">Source on GitHub</a></li>
-          </ul>
         </div>
       </div>
     </section>
 
-    <!-- Honest status --------------------------------------------------- -->
-    <section class="landing-section" id="status" aria-labelledby="status-heading">
+    <!-- Straight talk ----------------------------------------------------- -->
+    <section class="landing-section status" id="status" aria-labelledby="status-heading">
       <div class="landing-shell">
-        <h2 class="section-heading" id="status-heading">What works today, and what doesn&rsquo;t</h2>
+        <h2 class="section-heading" id="status-heading">Straight talk</h2>
         <p class="section-intro">
-          This project is in active development and would rather tell you than let you find out.
+          Active development. You should hear it from us rather than find out.
         </p>
-        <div class="status-grid">
-          <article class="status-card status-card-ready">
-            <h3>Working now</h3>
+
+        <div class="ledger">
+          <div class="ledger-col ledger-col-ready">
+            <h3>Works today</h3>
             <ul>
-              <li>Generation from a repository, docs site, service name or description</li>
-              <li>Docker-sandboxed build, run and tool execution, with automatic repair</li>
-              <li>Generated servers speaking stdio and MCP Streamable HTTP</li>
-              <li>Publishing to a public Gist on your own GitHub account, or downloading the code</li>
-              <li>GitHub, Google and email sign-in, with password reset</li>
-              <li>The MCP endpoint and its six tools, when the backend is reachable</li>
-              <li>A public, account-free catalogue</li>
+              <li>Generation from a repo, a docs URL, a service name or a sentence</li>
+              <li>Docker-sandboxed build, run and real tool calls, with five repair rounds</li>
+              <li>Generated servers speaking both stdio and MCP Streamable HTTP</li>
+              <li>Code to a public Gist on your own GitHub account, or downloaded</li>
+              <li>The public MCP endpoint and its six tools</li>
             </ul>
-          </article>
-          <article class="status-card status-card-pending">
+          </div>
+
+          <div class="ledger-col ledger-col-pending">
             <h3>Not available yet</h3>
             <ul>
               <li>
-                <strong>Hosting servers on our infrastructure.</strong> The Kubernetes path has
-                never been run against a real cluster and is not offered.
+                <strong>Hosting on our cluster.</strong> The Kubernetes path now runs end to end on
+                real hardware, but it is not open to accounts.
               </li>
               <li>
-                <strong>Paid plans and billing.</strong> Nothing is for sale. There is no checkout
-                to complete and no price to quote.
+                <strong>Paid plans.</strong> Nothing is for sale, so no price is quoted anywhere.
               </li>
               <li>
-                <strong>Authentication for hosted servers.</strong> Not implemented, because hosting
-                is not offered.
+                <strong>Pushing to a GitHub repo.</strong> Built and working, but gated to a paid
+                tier nobody can buy. Free accounts publish a Gist.
               </li>
               <li>
-                <strong>A public MCP endpoint on this domain.</strong> The server exists and works;
-                the public route to it is not configured yet.
-              </li>
-              <li>
-                <strong>Pushing to a GitHub repository.</strong> Implemented and working, but gated
-                to a paid tier &mdash; and since nothing is for sale, no account can currently reach
-                it. Free accounts publish to a public Gist.
-              </li>
-              <li>
-                <strong>OpenAPI or GraphQL specification input.</strong> Despite what you may read
-                elsewhere, no specification parser exists. Use a repository or docs URL instead.
+                <strong>OpenAPI or GraphQL input.</strong> No specification parser exists. Point at
+                the repo or the docs instead.
               </li>
             </ul>
-          </article>
+          </div>
         </div>
       </div>
     </section>
 
-    <!-- FAQ ------------------------------------------------------------- -->
-    <section class="landing-section" aria-labelledby="faq-heading">
+    <!-- Closing ----------------------------------------------------------- -->
+    <section class="closing">
+      <div class="grid-field grid-field-bottom" aria-hidden="true"></div>
       <div class="landing-shell">
-        <h2 class="section-heading" id="faq-heading">Questions</h2>
-        <div class="faq-list">
-          <details class="faq-item">
-            <summary>What is an MCP server?</summary>
-            <p class="faq-answer">
-              A Model Context Protocol server exposes tools an AI assistant can call &mdash; reading
-              a file, querying an API, searching a database. MCP is the protocol clients such as
-              Claude Desktop use to talk to those tools.
-            </p>
-          </details>
-          <details class="faq-item">
-            <summary>Does it cost anything?</summary>
-            <p class="faq-answer">
-              No. Accounts are free and include five generations per month. There is no paid plan
-              available to buy, and no card is collected.
-            </p>
-          </details>
-          <details class="faq-item">
-            <summary>Do you host the server for me?</summary>
-            <p class="faq-answer">
-              Not yet. You get the source code, a Dockerfile and a devcontainer definition,
-              published to a public Gist on your own GitHub account or downloaded, and you run it
-              wherever you like. Hosting on our infrastructure is not offered today.
-            </p>
-          </details>
-          <details class="faq-item">
-            <summary>How do I know the generated server actually works?</summary>
-            <p class="faq-answer">
-              Because it was run. Each candidate is built and started inside a Docker container and
-              driven over JSON-RPC &mdash; initialise, list tools, call them. If that fails the code
-              goes back for repair, up to five times, before the run gives up.
-            </p>
-          </details>
-          <details class="faq-item">
-            <summary>Can an AI agent use this without a human?</summary>
-            <p class="faq-answer">
-              Yes. MCP Everything exposes its own MCP server over Streamable HTTP with six tools,
-              authenticated with an API key. Create a key on your account page and send it as
-              <code>X-API-Key</code> or a bearer token.
-            </p>
-          </details>
-          <details class="faq-item">
-            <summary>Can I generate from my OpenAPI specification?</summary>
-            <p class="faq-answer">
-              No. There is no OpenAPI or GraphQL parser. Point at the repository or the documentation
-              site instead &mdash; that is what the research step is built for.
-            </p>
-          </details>
-        </div>
-      </div>
-    </section>
-
-    <!-- Closing CTA ----------------------------------------------------- -->
-    <section class="landing-section closing" aria-labelledby="closing-heading">
-      <div class="landing-shell">
-        <h2 class="section-heading" id="closing-heading">Start with whatever you have</h2>
-        <p class="section-intro closing-intro">
-          A repository URL, a docs link, or one sentence about the API you wish you could call.
-        </p>
+        <h2 class="closing-title">Bring whatever you have.</h2>
         <div class="hero-actions">
-          <a routerLink="/auth/register" class="mcp-btn-primary">Create a free account</a>
+          <a routerLink="/auth/register" class="mcp-btn-primary">Start free</a>
           <a routerLink="/explore" class="mcp-btn-secondary">Browse the catalogue</a>
         </div>
       </div>
@@ -460,17 +253,16 @@
 
   <footer class="landing-footer">
     <div class="landing-shell footer-inner">
-      <div>
-        <ul class="footer-links">
-          <li><a routerLink="/explore">Explore</a></li>
-          <li><a routerLink="/auth/login">Sign in</a></li>
-          <li><a routerLink="/auth/register">Create account</a></li>
-          <li><a [href]="repoUrl" rel="noopener">GitHub</a></li>
-          <li><a href="/llms.txt">llms.txt</a></li>
-        </ul>
-        <p class="footer-meta">&copy; {{ currentYear }} MCP Everything &middot; open source</p>
+      <ul class="footer-links">
+        <li><a routerLink="/explore">Explore</a></li>
+        <li><a routerLink="/auth/login">Sign in</a></li>
+        <li><a [href]="repoUrl" rel="noopener">GitHub</a></li>
+        <li><a href="/llms.txt">llms.txt</a></li>
+      </ul>
+      <div class="footer-end">
+        <p class="footer-meta">&copy; {{ currentYear }} MCP Everything</p>
+        <mcp-theme-toggle></mcp-theme-toggle>
       </div>
-      <mcp-theme-toggle></mcp-theme-toggle>
     </div>
   </footer>
 </div>

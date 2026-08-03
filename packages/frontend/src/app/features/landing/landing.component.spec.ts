@@ -77,6 +77,14 @@ describe('LandingComponent', () => {
       expect(text).toContain('Authorization: Bearer');
     });
 
+    it('publishes the endpoint path the backend actually serves', () => {
+      // The MCP controller is mounted OUTSIDE the /api/v1 global prefix and
+      // the Ingress routes /mcp to the backend; /api/mcp is a 404. The page
+      // shipped the 404 form until 2026-08-03.
+      expect(text).toContain('https://mcpeverything.com/mcp');
+      expect(text).not.toContain('mcpeverything.com/api/mcp');
+    });
+
     it('lists exactly the six tools the MCP server registers', () => {
       // Mirrors backend mcp-tools.service.ts registerTools().
       [
@@ -90,6 +98,7 @@ describe('LandingComponent', () => {
     });
 
     it('names the four supported inputs', () => {
+      // Rendered as the rotating examples in the hero "machine".
       expect(text).toContain('GitHub repository');
       expect(text).toContain('documentation');
       expect(text).toContain('service name');
@@ -121,16 +130,14 @@ describe('LandingComponent', () => {
       // No OpenAPI or GraphQL parser exists anywhere in the backend, so the
       // words may appear only as an explicit denial - which must stay on the
       // page, because the in-product help text still wrongly offers it.
-      expect(text).toContain('no specification parser exists');
-      expect(text).toContain('There is no OpenAPI or GraphQL parser');
+      expect(text).toContain('No specification parser exists');
 
       // ...and never as one of the advertised inputs or capabilities. Checked
-      // structurally rather than by phrase-matching, so that the FAQ entry
-      // "Can I generate from my OpenAPI specification?" - a question whose
-      // answer is "no" - doesn't trip the guard.
+      // structurally rather than by phrase-matching, so the denial itself -
+      // which necessarily names OpenAPI - doesn't trip the guard.
       const promoted = Array.from(
         (fixture.nativeElement as HTMLElement).querySelectorAll(
-          '.input-card, .feature-card, .hero, .steps',
+          '.hero, .band, .agent-grid, .ledger-col-ready',
         ),
       )
         .map(el => el.textContent ?? '')
@@ -157,21 +164,17 @@ describe('LandingComponent', () => {
       expect(text.toLowerCase()).toContain('nothing is for sale');
     });
 
-    it('does not promise a public MCP endpoint on this domain', () => {
-      expect(text).toContain('not yet routed on this domain');
-    });
-
     it('does not offer GitHub repository push as an available destination', () => {
       // tier-config.ts gives the free tier deploymentTypes: ['gist'] and
       // deployment-router.service.ts throws TIER_RESTRICTION for 'repo'.
       // Since no paid tier is purchasable, no real account can push to a repo,
       // so the page must present it as gated rather than as a destination.
       const worksToday =
-        (fixture.nativeElement as HTMLElement).querySelector('.status-card-ready')?.textContent ??
-        '';
+        (fixture.nativeElement as HTMLElement).querySelector('.ledger-col-ready')?.textContent ?? '';
 
-      // ("repository" alone is fine there - it's also a generation *input*.)
-      expect(worksToday).not.toContain('GitHub repository');
+      // ("repo" alone is fine there - it's also a generation *input*, which is
+      // exactly why this checks for the *act of pushing* rather than the noun.)
+      expect(worksToday.toLowerCase()).not.toContain('push');
       expect(worksToday).toContain('Gist');
       expect(text).toContain('gated to a paid tier');
     });
