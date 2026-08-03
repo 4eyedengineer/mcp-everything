@@ -27,6 +27,46 @@ import { V1Deployment, V1Secret, V1Service } from '@kubernetes/client-node';
 /** Port the generated MCP servers listen on when MCP_TRANSPORT=http. */
 export const MCP_CONTAINER_PORT = 3000;
 
+/**
+ * Shared runner image used for BOTH containers of every hosted server. There
+ * are no per-server images any more; see packages/mcp-runner/README.md.
+ *
+ * Overridable with MCP_RUNNER_IMAGE so a cluster can pin an immutable
+ * `:<sha>` tag (which is what a production deployment should do) without a
+ * code change. Defined once here rather than inlined at each use site.
+ */
+export const DEFAULT_MCP_RUNNER_IMAGE =
+  'harbor.192.168.1.240.nip.io/mcp-everything/mcp-runner:latest';
+
+/** initContainer name - `kubectl logs <pod> -c mcp-runner-init` is the docs' advice. */
+export const MCP_INIT_CONTAINER_NAME = 'mcp-runner-init';
+
+/** Main (serving) container name. */
+export const MCP_MAIN_CONTAINER_NAME = 'mcp-server';
+
+/** emptyDir shared between the init and main containers. */
+export const MCP_APP_VOLUME_NAME = 'app';
+
+/** Where that emptyDir is mounted in both containers. */
+export const MCP_APP_MOUNT_PATH = '/app';
+
+/**
+ * uid/gid the runner image runs as (`USER 1000:1000`). fsGroup MUST match it:
+ * Kubernetes does not apply an image's directory ownership to a mounted
+ * emptyDir, so without this the initContainer dies immediately on its own
+ * writability check. See packages/mcp-runner/README.md.
+ */
+export const MCP_RUNNER_UID = 1000;
+
+/**
+ * The two env vars the initContainer needs to fetch its own source. They are
+ * minted per-deploy by HostingService and land in the same Secret as the
+ * user's env vars, so they are projected by secretKeyRef rather than inlined.
+ */
+export const MCP_SOURCE_URL_ENV = 'MCP_SOURCE_URL';
+export const MCP_SOURCE_TOKEN_ENV = 'MCP_SOURCE_TOKEN';
+export const MCP_SOURCE_ENV_VARS = [MCP_SOURCE_URL_ENV, MCP_SOURCE_TOKEN_ENV] as const;
+
 /** Port the per-server ClusterIP Service exposes. */
 export const MCP_SERVICE_PORT = 80;
 
@@ -51,12 +91,11 @@ export interface HostedServerSpec {
   serverId: string;
   serverName: string;
   /**
-   * Image reference as returned by ContainerRegistryService.buildAndPush,
-   * which ALREADY includes a tag (e.g. `ghcr.io/owner/repo/srv-abc:latest`).
-   * See resolveImageRef() for why `imageTag` is not blindly appended.
+   * Override for the shared runner image. Almost never set: the value comes
+   * from MCP_RUNNER_IMAGE (or DEFAULT_MCP_RUNNER_IMAGE). There is deliberately
+   * no per-server image field - the backend pod cannot build one.
    */
-  dockerImage: string;
-  imageTag?: string;
+  runnerImage?: string;
   namespace: string;
   replicas?: number;
   resources?: HostedServerResources;
@@ -68,6 +107,12 @@ export interface HostedServerSpec {
   envVars?: Record<string, string>;
   imagePullSecretName?: string;
   serviceAccountName?: string;
+  /**
+   * Resources for the initContainer, which is the expensive one: it runs
+   * `npm install` and `tsc`. Defaults are deliberately larger than the serving
+   * container's - a 256Mi cap OOM-kills the TypeScript compiler.
+   */
+  initResources?: HostedServerResources;
 }
 
 export interface HostedServerObjects {
@@ -87,28 +132,6 @@ export function secretNameFor(serverId: string): string {
   return `mcp-${serverId}-env`;
 }
 
-/**
- * `buildAndPush` returns a ref that already carries a tag, but callers also
- * pass an `imageTag` around. Naively doing `${dockerImage}:${imageTag}` (what
- * the old YAML generator did) produced `ghcr.io/o/r/srv:latest:latest`, an
- * invalid reference that would have made every pod ImagePullBackOff. Only
- * append a tag when the ref does not already have one.
- *
- * The `lastIndexOf('/')` guard is what stops a registry host port
- * (`localhost:5000/srv`) from being mistaken for a tag.
- */
-export function resolveImageRef(dockerImage: string, imageTag?: string): string {
-  const lastSlash = dockerImage.lastIndexOf('/');
-  const lastSegment = lastSlash === -1 ? dockerImage : dockerImage.slice(lastSlash + 1);
-
-  // Already tagged (or digest-pinned) - use verbatim.
-  if (lastSegment.includes(':') || lastSegment.includes('@')) {
-    return dockerImage;
-  }
-
-  return `${dockerImage}:${imageTag || 'latest'}`;
-}
-
 @Injectable()
 export class ManifestGeneratorService {
   private readonly defaultResources: Required<HostedServerResources> = {
@@ -117,9 +140,35 @@ export class ManifestGeneratorService {
     memoryRequest: '128Mi',
     memoryLimit: '256Mi',
   };
-  private readonly localDomain = 'mcp.localhost';
 
-  constructor(private readonly configService: ConfigService) {}
+  /**
+   * The initContainer compiles the server with `tsc`, which is both the
+   * slowest phase of cold start and by far the most memory-hungry thing in the
+   * pod. Giving it the serving container's 256Mi limit gets it OOMKilled, so it
+   * gets its own, larger budget. These are limits on a short-lived container,
+   * not a standing reservation.
+   */
+  private readonly defaultInitResources: Required<HostedServerResources> = {
+    cpuRequest: '250m',
+    cpuLimit: '1000m',
+    memoryRequest: '256Mi',
+    memoryLimit: '768Mi',
+  };
+
+  private readonly localDomain = 'mcp.localhost';
+  private readonly runnerImage: string;
+
+  constructor(private readonly configService: ConfigService) {
+    this.runnerImage = this.configService.get<string>(
+      'MCP_RUNNER_IMAGE',
+      DEFAULT_MCP_RUNNER_IMAGE,
+    );
+  }
+
+  /** The shared runner image this cluster is configured to use. */
+  resolveRunnerImage(spec?: Pick<HostedServerSpec, 'runnerImage'>): string {
+    return spec?.runnerImage || this.runnerImage;
+  }
 
   private isLocalDev(): boolean {
     return this.configService.get<string>('LOCAL_DEV') === 'true';
@@ -163,10 +212,45 @@ export class ManifestGeneratorService {
     };
   }
 
+  /**
+   * A hosted server's Deployment.
+   *
+   * Shape note, because it is unusual and load-bearing: there is NO per-server
+   * image. Both containers run the same shared `mcp-runner` image over one
+   * `emptyDir` at /app -
+   *
+   *   initContainer `mcp-runner-init`  fetch source tarball -> npm install -> tsc
+   *   container     `mcp-server`       node dist/index.js (MCP_TRANSPORT=http)
+   *
+   * The backend pod has no docker binary and no docker socket, so it cannot
+   * build a per-server image; the build moved into the pod that will run the
+   * server. This also removes an architecture trap - one multi-arch runner
+   * schedules anywhere on a mixed amd64/arm64 cluster, where a single-arch
+   * per-server image would ImagePullBackOff on most nodes.
+   *
+   * The `/health` probes stay on the main container and are unchanged: the
+   * initContainer gates startup, so nothing probes until the build is done and
+   * no probe timing needs to absorb the ~30s compile.
+   */
   buildDeployment(spec: HostedServerSpec): V1Deployment {
     const resources = { ...this.defaultResources, ...spec.resources };
+    const initResources = { ...this.defaultInitResources, ...spec.initResources };
     const name = objectNameFor(spec.serverId);
-    const hasEnvVars = Object.keys(spec.envVars || {}).length > 0;
+    const envVars = spec.envVars || {};
+    const hasEnvVars = Object.keys(envVars).length > 0;
+    const runnerImage = this.resolveRunnerImage(spec);
+    const secretName = secretNameFor(spec.serverId);
+
+    // Only the two source vars reach the initContainer, and only by reference.
+    // Projecting the whole Secret with envFrom would hand the build step every
+    // credential the user configured for their server, which it has no use for.
+    // Gated on actual presence so a spec without them produces a Deployment
+    // that fails with the runner's own explicit "MCP_SOURCE_URL is not set"
+    // message rather than a dangling secretKeyRef.
+    const sourceEnv = MCP_SOURCE_ENV_VARS.filter((key) => key in envVars).map((key) => ({
+      name: key,
+      valueFrom: { secretKeyRef: { name: secretName, key, optional: false } },
+    }));
 
     return {
       apiVersion: 'apps/v1',
@@ -199,15 +283,56 @@ export class ManifestGeneratorService {
               : {}),
             securityContext: {
               runAsNonRoot: true,
-              runAsUser: 1001,
-              runAsGroup: 1001,
-              fsGroup: 1001,
+              // Must match the runner image's `USER 1000:1000`. fsGroup in
+              // particular is not optional: it is what makes the shared
+              // emptyDir writable by a non-root process, and without it the
+              // initContainer exits immediately on its own write test.
+              runAsUser: MCP_RUNNER_UID,
+              runAsGroup: MCP_RUNNER_UID,
+              fsGroup: MCP_RUNNER_UID,
               seccompProfile: { type: 'RuntimeDefault' },
             },
+            initContainers: [
+              {
+                name: MCP_INIT_CONTAINER_NAME,
+                image: runnerImage,
+                command: [MCP_INIT_CONTAINER_NAME],
+                env: [
+                  { name: 'MCP_APP_DIR', value: MCP_APP_MOUNT_PATH },
+                  ...sourceEnv,
+                ],
+                resources: {
+                  requests: {
+                    cpu: initResources.cpuRequest,
+                    memory: initResources.memoryRequest,
+                  },
+                  limits: { cpu: initResources.cpuLimit, memory: initResources.memoryLimit },
+                },
+                securityContext: {
+                  runAsNonRoot: true,
+                  runAsUser: MCP_RUNNER_UID,
+                  allowPrivilegeEscalation: false,
+                  // The init script keeps every scratch file (and npm's cache,
+                  // via npm_config_cache=/app/.npm in the image) under /app,
+                  // so nothing outside the shared volume is ever written.
+                  readOnlyRootFilesystem: true,
+                  capabilities: { drop: ['ALL'] },
+                },
+                volumeMounts: [
+                  { name: MCP_APP_VOLUME_NAME, mountPath: MCP_APP_MOUNT_PATH },
+                  // The image points npm's cache at /app/.npm, but npm and tsc
+                  // both still reach for os.tmpdir() for scratch space, and
+                  // readOnlyRootFilesystem makes the image's own /tmp
+                  // unwritable. Cheaper to mount than to discover.
+                  { name: 'tmp', mountPath: '/tmp' },
+                ],
+              },
+            ],
             containers: [
               {
-                name: 'mcp-server',
-                image: resolveImageRef(spec.dockerImage, spec.imageTag),
+                name: MCP_MAIN_CONTAINER_NAME,
+                image: runnerImage,
+                command: ['mcp-runner-serve'],
                 ports: [{ name: 'http', containerPort: MCP_CONTAINER_PORT, protocol: 'TCP' }],
                 resources: {
                   requests: { cpu: resources.cpuRequest, memory: resources.memoryRequest },
@@ -239,15 +364,18 @@ export class ManifestGeneratorService {
                   : {}),
                 securityContext: {
                   runAsNonRoot: true,
-                  runAsUser: 1001,
+                  runAsUser: MCP_RUNNER_UID,
                   allowPrivilegeEscalation: false,
                   // Generated servers are stateless HTTP processes; the only
-                  // thing the Node runtime reliably needs to write is /tmp,
-                  // which gets an emptyDir below.
+                  // things the Node runtime reliably needs to write are /tmp
+                  // and the shared /app volume, both emptyDirs below.
                   readOnlyRootFilesystem: true,
                   capabilities: { drop: ['ALL'] },
                 },
-                volumeMounts: [{ name: 'tmp', mountPath: '/tmp' }],
+                volumeMounts: [
+                  { name: MCP_APP_VOLUME_NAME, mountPath: MCP_APP_MOUNT_PATH },
+                  { name: 'tmp', mountPath: '/tmp' },
+                ],
                 livenessProbe: {
                   httpGet: { path: '/health', port: MCP_CONTAINER_PORT },
                   initialDelaySeconds: 10,
@@ -260,7 +388,12 @@ export class ManifestGeneratorService {
                 },
               },
             ],
-            volumes: [{ name: 'tmp', emptyDir: {} }],
+            volumes: [
+              // The whole point of the shape: one volume, written by the init
+              // container and read (and run) by the main one.
+              { name: MCP_APP_VOLUME_NAME, emptyDir: {} },
+              { name: 'tmp', emptyDir: {} },
+            ],
           },
         },
       },

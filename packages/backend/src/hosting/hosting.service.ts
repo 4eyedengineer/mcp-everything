@@ -41,7 +41,6 @@ function generateSuffix(length = 8): string {
 }
 import { HostedServer, HostedServerStatus } from '../database/entities/hosted-server.entity';
 import { Deployment } from '../database/entities/deployment.entity';
-import { ContainerRegistryService } from './services/container-registry.service';
 import { ManifestGeneratorService, objectNameFor } from './services/manifest-generator.service';
 import { K8sControlPlaneService } from './services/k8s-control-plane.service';
 import { LocalDockerHostingService } from './services/local-docker-hosting.service';
@@ -116,11 +115,12 @@ export interface HostedServerLimitError {
 }
 
 /**
- * 'kubernetes' (default): build+push to a registry (GHCR or a local
- * registry:5000 in LOCAL_DEV) and then create the Deployment/Service/Secret
- * directly against the Kubernetes API (K8sControlPlaneService). Status is NOT
- * assumed - K8sReconcilerService observes the cluster and writes back what is
- * actually happening.
+ * 'kubernetes' (default): create the Deployment/Service/Secret directly
+ * against the Kubernetes API (K8sControlPlaneService). No image is built or
+ * pushed - every hosted server runs the one shared `mcp-runner` image and
+ * compiles its own source in an initContainer. Status is NOT assumed -
+ * K8sReconcilerService observes the cluster and writes back what is actually
+ * happening.
  *
  * 'docker-run': build the image locally and actually run it as a Docker
  * container on this host, verifying it's a real, responding MCP server via
@@ -139,6 +139,7 @@ export class HostingService implements OnModuleDestroy {
   private readonly namespace: string;
   private readonly hostingMode: HostingMode;
   private readonly gatewayBaseUrl: string;
+  private readonly sourceBaseUrl: string;
 
   /** How long buffered request counts may sit unwritten. See trackRequest(). */
   static readonly REQUEST_COUNT_FLUSH_INTERVAL_MS = 5_000;
@@ -151,7 +152,6 @@ export class HostingService implements OnModuleDestroy {
     private hostedServerRepo: Repository<HostedServer>,
     @InjectRepository(Deployment)
     private deploymentRepo: Repository<Deployment>,
-    private containerRegistryService: ContainerRegistryService,
     private manifestGeneratorService: ManifestGeneratorService,
     private k8sControlPlane: K8sControlPlaneService,
     private localDockerHostingService: LocalDockerHostingService,
@@ -168,6 +168,17 @@ export class HostingService implements OnModuleDestroy {
     // per-server wildcard scheme the gateway replaces.
     this.gatewayBaseUrl = this.configService
       .get<string>('MCP_GATEWAY_PUBLIC_URL', 'http://localhost:3000')
+      .replace(/\/+$/, '');
+    // Where a hosted server's POD fetches its own source from. Separate from
+    // the gateway origin on purpose: that one is public and, on this cluster,
+    // proxied through a CDN, so using it would send every cold start out to
+    // the internet and back in for a byte range that never left the cluster.
+    // In-cluster this should be the backend's ClusterIP Service
+    // (http://mcp-backend.mcp-everything.svc.cluster.local:3000), which is
+    // also exactly what the mcp-servers NetworkPolicy carves out. Defaults to
+    // the public origin so nothing changes for a single-host deployment.
+    this.sourceBaseUrl = this.configService
+      .get<string>('MCP_SOURCE_BASE_URL', this.gatewayBaseUrl)
       .replace(/\/+$/, '');
   }
 
@@ -274,8 +285,15 @@ export class HostingService implements OnModuleDestroy {
     const sourceEnv = await this.mintSourceAccessEnv(hostedServer);
     const envVarsWithSource = { ...(envVars ?? {}), ...sourceEnv.env };
 
-    const serverDir = deployment.localPath; // Path to generated server files
-    if (!serverDir) {
+    // A local source directory is required ONLY by docker-run, which builds an
+    // image from it on this host. The Kubernetes path no longer reads it at
+    // all: the pod fetches its own source from MCP_SOURCE_URL, which
+    // HostedServerSourceService serves out of Postgres. Insisting on
+    // `localPath` there would fail deploys for a reason that stopped being
+    // real - GENERATED_SERVERS_DIR is an emptyDir on the backend pod, so it is
+    // empty for any server generated before the last backend restart.
+    const serverDir = deployment.localPath;
+    if (this.isDockerRunMode() && !serverDir) {
       await this.updateStatus(hostedServer, 'failed', 'Deployment does not have localPath');
       return {
         success: false,
@@ -289,8 +307,8 @@ export class HostingService implements OnModuleDestroy {
     }
 
     const result = this.isDockerRunMode()
-      ? await this.deployToLocalDocker(hostedServer, serverDir, envVarsWithSource)
-      : await this.deployToKubernetes(hostedServer, deployment, serverDir, envVarsWithSource);
+      ? await this.deployToLocalDocker(hostedServer, serverDir as string, envVarsWithSource)
+      : await this.deployToKubernetes(hostedServer, deployment, envVarsWithSource);
 
     return {
       ...result,
@@ -300,12 +318,16 @@ export class HostingService implements OnModuleDestroy {
   }
 
   /**
-   * The URL a hosted server's pod fetches its own source from. Always the
-   * backend's public origin - the same one `gatewayUrlFor` uses, for the same
-   * reason (one origin, one certificate).
+   * The URL a hosted server's pod fetches its own source from.
+   *
+   * Defaults to the same public origin `gatewayUrlFor` uses, but is separately
+   * configurable via MCP_SOURCE_BASE_URL because the two have different
+   * audiences: the gateway URL is handed to users and must be public, while
+   * this one is only ever dialled by a pod in the neighbouring namespace and
+   * should stay inside the cluster.
    */
   sourceUrlFor(serverId: string): string {
-    return `${this.gatewayBaseUrl}/api/hosting/servers/${serverId}/source`;
+    return `${this.sourceBaseUrl}/api/hosting/servers/${serverId}/source`;
   }
 
   /**
@@ -340,8 +362,15 @@ export class HostingService implements OnModuleDestroy {
   }
 
   /**
-   * Production path: build+push to a registry, then create the
-   * Deployment/Service/Secret directly against the Kubernetes API.
+   * Production path: create the Deployment/Service/Secret directly against the
+   * Kubernetes API. No image is built and none is pushed - see the comment at
+   * the apply call below, and packages/mcp-runner/README.md.
+   *
+   * Because of that, the only statuses this path can produce are 'deploying'
+   * and 'failed'. 'building' and 'pushing' are gone from it entirely: they
+   * described backend-side work that no longer exists, and a stage the UI
+   * renders but nothing ever sets is precisely the bug this repo already had
+   * once with 'pushing'. The deploy-progress UI was narrowed to match.
    *
    * Two behaviour changes worth calling out, both deliberate:
    *
@@ -363,7 +392,6 @@ export class HostingService implements OnModuleDestroy {
   private async deployToKubernetes(
     hostedServer: HostedServer,
     deployment: Deployment,
-    serverDir: string,
     envVars?: Record<string, string>,
   ): Promise<DeploymentResult> {
     const serverId = hostedServer.serverId;
@@ -377,27 +405,25 @@ export class HostingService implements OnModuleDestroy {
         );
       }
 
-      // 4. Build the image, then push it - reported as the two distinct
-      // stages they are. 'pushing' is a real HostedServerStatus that the
-      // deploy-progress UI renders as stage 3 of 5; before the build/push
-      // split in ContainerRegistryService nothing could ever set it, so the
-      // progress bar jumped straight from 'building' to 'deploying' past a
-      // stage users were being shown.
-      await this.updateStatus(hostedServer, 'building', 'Building Docker image...');
-
-      const dockerImage = await this.containerRegistryService.buildImage(
-        serverDir,
-        serverId,
-        'latest',
-      );
-
-      hostedServer.dockerImage = dockerImage;
-      await this.hostedServerRepo.save(hostedServer);
-
-      await this.updateStatus(hostedServer, 'pushing', `Pushing image to registry: ${dockerImage}`);
-      await this.containerRegistryService.pushImage(dockerImage);
-
-      // 5. Create/patch the Deployment, Service and (if needed) env Secret
+      // 4. Create/patch the Deployment, Service and env Secret.
+      //
+      // There is no build or push step here any more, and there cannot be:
+      // the backend runs as a pod with no docker binary and no docker socket
+      // (verified on the live pod), so `docker build` was unreachable code
+      // that failed every Kubernetes deploy at the first stage. The build now
+      // happens inside the pod being deployed - the shared mcp-runner image
+      // is used as both an initContainer (fetch source from
+      // MCP_SOURCE_URL, npm install, tsc) and the main container. See
+      // ManifestGeneratorService.buildDeployment and packages/mcp-runner.
+      //
+      // `hostedServer.dockerImage` is therefore left as the empty string it
+      // was created with: this server owns no image. It is not set to the
+      // runner reference, which would be actively misleading - it is not
+      // this server's image, it is everyone's.
+      //
+      // The credential the initContainer needs (MCP_SOURCE_URL /
+      // MCP_SOURCE_TOKEN) is already inside `envVars`, put there by
+      // deployToCloud, and becomes part of the Kubernetes Secret below.
       await this.updateStatus(
         hostedServer,
         'deploying',
@@ -407,10 +433,6 @@ export class HostingService implements OnModuleDestroy {
       await this.k8sControlPlane.applyServer({
         serverId,
         serverName: deployment.serverName,
-        // Already `registry/owner/repo/serverId:tag` - buildImage returns the
-        // complete reference. Do NOT also pass a tag; see
-        // ManifestConfig.dockerImage.
-        dockerImage,
         envVars,
         replicas: 1,
       });
@@ -660,13 +682,11 @@ export class HostingService implements OnModuleDestroy {
       // history forever, which is the wrong answer for account deletion.
       await this.k8sControlPlane.deleteServer(serverId);
 
-      // Delete Docker image (optional, can keep for rollback)
-      try {
-        await this.containerRegistryService.deleteImage(serverId);
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        this.logger.warn(`Failed to delete image for ${serverId}: ${errorMessage}`);
-      }
+      // No per-server image to delete. Kubernetes-hosted servers all run the
+      // one shared mcp-runner image and fetch their source at startup, so
+      // there has never been a registry artefact belonging to this server.
+      // (The old ContainerRegistryService.deleteImage call here could only
+      // ever have warned.)
     }
 
     // Soft delete in database

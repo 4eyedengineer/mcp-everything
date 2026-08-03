@@ -1,10 +1,11 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 import {
+  DEFAULT_MCP_RUNNER_IMAGE,
   HostedServerSpec,
   ManifestGeneratorService,
+  MCP_INIT_CONTAINER_NAME,
   objectNameFor,
-  resolveImageRef,
   secretNameFor,
 } from './manifest-generator.service';
 
@@ -14,28 +15,35 @@ describe('ManifestGeneratorService', () => {
   const baseSpec: HostedServerSpec = {
     serverId: 'stripe-abc123',
     serverName: 'stripe-mcp',
-    dockerImage: 'ghcr.io/4eyedengineer/mcp-servers/stripe-abc123',
-    imageTag: 'latest',
     namespace: 'mcp-servers',
   };
 
-  beforeEach(async () => {
+  /** The env shape HostingService always injects for a real deploy. */
+  const sourceEnv = {
+    MCP_SOURCE_URL: 'http://mcp-backend.mcp-everything.svc.cluster.local:3000/api/hosting/servers/stripe-abc123/source',
+    MCP_SOURCE_TOKEN: 'mcpsrc_supersecrettokenvalue',
+  };
+
+  async function buildService(config: Record<string, unknown> = {}): Promise<ManifestGeneratorService> {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ManifestGeneratorService,
         {
           provide: ConfigService,
           useValue: {
-            get: jest.fn((key: string, defaultValue?: unknown) => {
-              if (key === 'LOCAL_DEV') return undefined;
-              return defaultValue;
-            }),
+            get: jest.fn((key: string, defaultValue?: unknown) =>
+              key in config ? config[key] : defaultValue,
+            ),
           },
         },
       ],
     }).compile();
 
-    service = module.get<ManifestGeneratorService>(ManifestGeneratorService);
+    return module.get<ManifestGeneratorService>(ManifestGeneratorService);
+  }
+
+  beforeEach(async () => {
+    service = await buildService();
   });
 
   it('should be defined', () => {
@@ -234,46 +242,171 @@ describe('ManifestGeneratorService', () => {
     });
   });
 
-  describe('resolveImageRef', () => {
+  /**
+   * The shape that makes Kubernetes hosting work at all.
+   *
+   * The backend pod has no docker binary and no docker socket, so it cannot
+   * build a per-server image. Instead every hosted server runs the ONE shared
+   * multi-arch `mcp-runner` image twice - as an initContainer that fetches and
+   * compiles the generated source, and as the main container that serves it -
+   * over a single emptyDir at /app.
+   */
+  describe('shared-runner deployment shape', () => {
+    const withSource: HostedServerSpec = { ...baseSpec, envVars: { ...sourceEnv } };
+
+    it('emits an initContainer running mcp-runner-init', () => {
+      const podSpec = service.buildDeployment(withSource).spec!.template!.spec!;
+
+      expect(podSpec.initContainers).toHaveLength(1);
+      const init = podSpec.initContainers![0];
+      expect(init.name).toBe(MCP_INIT_CONTAINER_NAME);
+      expect(init.command).toEqual(['mcp-runner-init']);
+    });
+
+    it('runs the same runner image for both containers', () => {
+      const podSpec = service.buildDeployment(withSource).spec!.template!.spec!;
+
+      expect(podSpec.initContainers![0].image).toBe(DEFAULT_MCP_RUNNER_IMAGE);
+      expect(podSpec.containers[0].image).toBe(DEFAULT_MCP_RUNNER_IMAGE);
+      expect(podSpec.containers[0].command).toEqual(['mcp-runner-serve']);
+    });
+
+    it('references NO per-server image anywhere in the Deployment', () => {
+      const deployment = service.buildDeployment(withSource);
+      const serialized = JSON.stringify(deployment);
+
+      // The old shape put `.../mcp-servers/<serverId>:<tag>` here. Nothing may
+      // name this server as an image any more: no such image is ever built.
+      const images = [
+        ...deployment.spec!.template!.spec!.containers.map((c) => c.image),
+        ...(deployment.spec!.template!.spec!.initContainers || []).map((c) => c.image),
+      ];
+      expect(new Set(images)).toEqual(new Set([DEFAULT_MCP_RUNNER_IMAGE]));
+      expect(serialized).not.toContain('mcp-servers/stripe-abc123');
+      expect(serialized).not.toContain('ghcr.io');
+    });
+
+    it('honours MCP_RUNNER_IMAGE so the tag can be pinned without a code change', async () => {
+      const pinned = 'harbor.example/mcp-everything/mcp-runner:a109d73';
+      const configured = await buildService({ MCP_RUNNER_IMAGE: pinned });
+      const podSpec = configured.buildDeployment(withSource).spec!.template!.spec!;
+
+      expect(podSpec.initContainers![0].image).toBe(pinned);
+      expect(podSpec.containers[0].image).toBe(pinned);
+    });
+
+    it('shares one emptyDir at /app between the init and main containers', () => {
+      const podSpec = service.buildDeployment(withSource).spec!.template!.spec!;
+
+      expect(podSpec.volumes).toContainEqual({ name: 'app', emptyDir: {} });
+      expect(podSpec.initContainers![0].volumeMounts).toContainEqual({
+        name: 'app',
+        mountPath: '/app',
+      });
+      expect(podSpec.containers[0].volumeMounts).toContainEqual({
+        name: 'app',
+        mountPath: '/app',
+      });
+    });
+
+    it('gives the initContainer a writable /tmp, since its root filesystem is read-only', () => {
+      const init = service.buildDeployment(withSource).spec!.template!.spec!.initContainers![0];
+
+      expect(init.securityContext?.readOnlyRootFilesystem).toBe(true);
+      expect(init.volumeMounts).toContainEqual({ name: 'tmp', mountPath: '/tmp' });
+    });
+
     /**
-     * ContainerRegistryService.buildAndPush returns an already-tagged ref, and
-     * the old YAML generator appended `:${imageTag}` to it unconditionally,
-     * producing `...stripe-abc123:latest:latest` - an invalid reference that
-     * would have put every pod into ImagePullBackOff.
+     * Kubernetes does not apply an image's directory ownership to a mounted
+     * emptyDir. Without fsGroup matching the runner's uid the initContainer
+     * dies on its very first write, every time.
      */
-    it('does not re-tag an already-tagged reference', () => {
-      expect(
-        resolveImageRef('ghcr.io/owner/repo/stripe-abc123:latest', 'latest'),
-      ).toBe('ghcr.io/owner/repo/stripe-abc123:latest');
+    it('sets fsGroup 1000 to match the runner image user', () => {
+      const podSpec = service.buildDeployment(withSource).spec!.template!.spec!;
+
+      expect(podSpec.securityContext?.fsGroup).toBe(1000);
+      expect(podSpec.securityContext?.runAsUser).toBe(1000);
+      expect(podSpec.securityContext?.runAsGroup).toBe(1000);
+      expect(podSpec.initContainers![0].securityContext?.runAsUser).toBe(1000);
+      expect(podSpec.containers[0].securityContext?.runAsUser).toBe(1000);
     });
 
-    it('appends the tag when the reference has none', () => {
-      expect(resolveImageRef('ghcr.io/owner/repo/stripe-abc123', 'v2')).toBe(
-        'ghcr.io/owner/repo/stripe-abc123:v2',
-      );
+    it('projects MCP_SOURCE_URL/MCP_SOURCE_TOKEN onto the INIT container from the Secret', () => {
+      const podSpec = service.buildDeployment(withSource).spec!.template!.spec!;
+      const init = podSpec.initContainers![0];
+
+      expect(init.env).toEqual([
+        { name: 'MCP_APP_DIR', value: '/app' },
+        {
+          name: 'MCP_SOURCE_URL',
+          valueFrom: {
+            secretKeyRef: {
+              name: 'mcp-stripe-abc123-env',
+              key: 'MCP_SOURCE_URL',
+              optional: false,
+            },
+          },
+        },
+        {
+          name: 'MCP_SOURCE_TOKEN',
+          valueFrom: {
+            secretKeyRef: {
+              name: 'mcp-stripe-abc123-env',
+              key: 'MCP_SOURCE_TOKEN',
+              optional: false,
+            },
+          },
+        },
+      ]);
     });
 
-    it('defaults to :latest when no tag is supplied', () => {
-      expect(resolveImageRef('ghcr.io/owner/repo/srv')).toBe('ghcr.io/owner/repo/srv:latest');
+    it('never inlines the source token as a literal value', () => {
+      const deployment = service.buildDeployment(withSource);
+
+      expect(JSON.stringify(deployment)).not.toContain('mcpsrc_supersecrettokenvalue');
     });
 
-    it('does not mistake a registry host port for a tag', () => {
-      expect(resolveImageRef('localhost:5000/srv', 'latest')).toBe('localhost:5000/srv:latest');
-      expect(resolveImageRef('localhost:5000/srv:dev', 'latest')).toBe('localhost:5000/srv:dev');
-    });
-
-    it('leaves a digest-pinned reference alone', () => {
-      const digest = 'ghcr.io/owner/repo/srv@sha256:' + 'a'.repeat(64);
-      expect(resolveImageRef(digest, 'latest')).toBe(digest);
-    });
-
-    it('is what buildDeployment uses for the container image', () => {
-      const container = service.buildDeployment({
+    it('does not hand the build step the user\'s own credentials', () => {
+      const podSpec = service.buildDeployment({
         ...baseSpec,
-        dockerImage: 'ghcr.io/owner/repo/stripe-abc123:latest',
-      }).spec!.template!.spec!.containers[0];
+        envVars: { ...sourceEnv, STRIPE_API_KEY: 'sk_live_supersecret' },
+      }).spec!.template!.spec!;
 
-      expect(container.image).toBe('ghcr.io/owner/repo/stripe-abc123:latest');
+      // envFrom would project the WHOLE Secret; the init container gets only
+      // the two keys it actually needs.
+      expect(podSpec.initContainers![0].envFrom).toBeUndefined();
+      expect(JSON.stringify(podSpec.initContainers![0])).not.toContain('STRIPE_API_KEY');
+    });
+
+    it('omits the source env when the spec carries none, rather than emitting a dangling ref', () => {
+      const init = service.buildDeployment(baseSpec).spec!.template!.spec!.initContainers![0];
+
+      expect(init.env).toEqual([{ name: 'MCP_APP_DIR', value: '/app' }]);
+    });
+
+    /**
+     * `tsc` is the dominant cost of cold start and the most memory-hungry
+     * thing in the pod. Sharing the serving container's 256Mi cap OOM-kills
+     * the build.
+     */
+    it('gives the initContainer its own, larger resource budget', () => {
+      const podSpec = service.buildDeployment(withSource).spec!.template!.spec!;
+      const init = podSpec.initContainers![0];
+
+      expect(init.resources?.limits?.memory).toBe('768Mi');
+      expect(init.resources?.limits?.cpu).toBe('1000m');
+      expect(podSpec.containers[0].resources?.limits?.memory).toBe('256Mi');
+    });
+
+    it('allows the init resources to be overridden per server', () => {
+      const init = service.buildDeployment({
+        ...withSource,
+        initResources: { memoryLimit: '1Gi' },
+      }).spec!.template!.spec!.initContainers![0];
+
+      expect(init.resources?.limits?.memory).toBe('1Gi');
+      // Unspecified fields still come from the defaults.
+      expect(init.resources?.limits?.cpu).toBe('1000m');
     });
   });
 

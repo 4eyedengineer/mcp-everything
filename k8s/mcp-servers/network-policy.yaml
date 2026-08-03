@@ -18,10 +18,12 @@
 # homelab node. Verified empirically on 2026-08-03: a hosted pod successfully
 # connected to postgres in the neighbouring namespace.
 #
-# So: DNS is permitted explicitly, then the public internet is permitted with
-# every private range carved out. Generated servers keep the outbound access
-# they need for third-party APIs and lose the ability to touch the LAN, the
-# cluster's own network, or link-local metadata endpoints.
+# So: DNS is permitted explicitly, then the backend pod (and only the backend
+# pod) is permitted on its HTTP port, then the public internet is permitted
+# with every private range carved out. Generated servers keep the outbound
+# access they need for third-party APIs and for fetching their own source, and
+# lose the ability to touch the LAN, Postgres, the kube-apiserver, or
+# link-local metadata endpoints.
 #
 # The 10.0.0.0/8 exclusion covers this cluster's pod CIDR (10.42.0.0/16) and
 # service CIDR (10.43.0.0/16), so it must be listed BEFORE any thought of
@@ -50,7 +52,7 @@ spec:
         - protocol: TCP
           port: 3000
   egress:
-    # 1. DNS resolution. CoreDNS sits inside the service CIDR that rule 2
+    # 1. DNS resolution. CoreDNS sits inside the service CIDR that rule 3
     #    excludes, so it needs its own rule or nothing resolves.
     - to:
         - namespaceSelector:
@@ -64,7 +66,36 @@ spec:
           port: 53
         - protocol: TCP
           port: 53
-    # 2. The public internet, and nothing private.
+    # 2. The backend, and ONLY the backend, in mcp-everything.
+    #
+    #    Rule 3 excludes all of 10.0.0.0/8, which is where this cluster's pod
+    #    and service CIDRs live - so without this rule a hosted server cannot
+    #    reach the platform at all. That matters now: every hosted pod's
+    #    initContainer fetches its own source from
+    #    GET /api/hosting/servers/<id>/source on the backend, and a pod that
+    #    cannot fetch its source never starts.
+    #
+    #    Deliberately expressed as namespaceSelector + podSelector, not as a
+    #    CIDR. A CIDR that covered the backend would also cover Postgres (pod
+    #    IPs are assigned from one flat per-node range, so no /24 separates
+    #    them) and would silently re-open the hole this policy was written to
+    #    close. Selecting the backend's pod labels leaves Postgres, the
+    #    kube-apiserver and everything else in 10.0.0.0/8 unreachable.
+    #
+    #    Note both selectors sit under a SINGLE `to` element: as two elements
+    #    they would mean "any pod in mcp-everything, OR any pod anywhere with
+    #    the backend's labels", which is not the intent.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: mcp-everything
+          podSelector:
+            matchLabels:
+              app: mcp-backend
+      ports:
+        - protocol: TCP
+          port: 3000
+    # 3. The public internet, and nothing private.
     - to:
         - ipBlock:
             cidr: 0.0.0.0/0

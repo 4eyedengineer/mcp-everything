@@ -60,9 +60,23 @@ export class DeployProgressComponent implements OnInit, OnDestroy {
   @Output() deploymentComplete = new EventEmitter<DeploymentCompleteEvent>();
   @Output() retry = new EventEmitter<void>();
 
+  /**
+   * The stages a deploy actually passes through.
+   *
+   * 'building' and 'pushing' used to be shown here. They described the backend
+   * building and pushing a per-server container image, which no longer
+   * happens and cannot: the backend runs as a pod with no docker daemon.
+   * Every hosted server now runs one shared runner image that fetches and
+   * compiles its own source in an initContainer, so the backend's whole
+   * contribution is "apply the objects" and the cluster does the rest.
+   *
+   * Keeping stages nothing can ever set is not cosmetic - a bar that shows
+   * 'Pushing to registry' as a step which never completes reads as a hung
+   * deploy. That bug already shipped here once (nothing set 'pushing' before
+   * the build/push split); this removes the possibility rather than papering
+   * over it. `statusOrder` below must stay in sync with this list.
+   */
   steps: DeploymentStep[] = [
-    { id: 'building', label: 'Building container', status: 'pending' },
-    { id: 'pushing', label: 'Pushing to registry', status: 'pending' },
     { id: 'deploying', label: 'Deploying to cluster', status: 'pending' },
     { id: 'running', label: 'Server ready', status: 'pending' }
   ];
@@ -172,7 +186,10 @@ export class DeployProgressComponent implements OnInit, OnDestroy {
    * Update step statuses based on server status
    */
   private updateSteps(status: HostedServerStatus): void {
-    const statusOrder: HostedServerStatus[] = ['pending', 'building', 'pushing', 'deploying', 'running'];
+    // Index 0 is the implicit "queued" state, which is not a rendered step;
+    // every later entry lines up 1:1 with `steps`. 'building'/'pushing' are
+    // deliberately absent - see the comment on `steps`.
+    const statusOrder: HostedServerStatus[] = ['pending', 'deploying', 'running'];
     const currentIndex = statusOrder.indexOf(status);
 
     for (let i = 0; i < this.steps.length; i++) {

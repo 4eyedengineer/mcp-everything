@@ -109,7 +109,7 @@ describe('K8sControlPlaneService', () => {
 
   describe('applyServer', () => {
     it('creates a Deployment and a Service for a server with no env vars, and no Secret', async () => {
-      await service.applyServer({ ...config, dockerImage: 'ghcr.io/o/r/x:latest' });
+      await service.applyServer(config);
 
       expect(coreApi.patchNamespacedSecret).not.toHaveBeenCalled();
 
@@ -128,7 +128,7 @@ describe('K8sControlPlaneService', () => {
     });
 
     it('never creates an Ingress', async () => {
-      await service.applyServer({ ...config, dockerImage: 'ghcr.io/o/r/x:latest' });
+      await service.applyServer(config);
 
       const allCalls = [
         ...appsApi.patchNamespacedDeployment.mock.calls,
@@ -144,7 +144,7 @@ describe('K8sControlPlaneService', () => {
       const envVars = { STRIPE_API_KEY: 'sk_live_supersecret', REGION: 'eu' };
 
       it('writes them to a Secret', async () => {
-        await service.applyServer({ ...config, dockerImage: 'ghcr.io/o/r/x:latest', envVars });
+        await service.applyServer({ ...config, envVars });
 
         expect(coreApi.patchNamespacedSecret).toHaveBeenCalledTimes(1);
         const [secretName, secretNs, secretBody] = coreApi.patchNamespacedSecret.mock.calls[0];
@@ -154,7 +154,7 @@ describe('K8sControlPlaneService', () => {
       });
 
       it('does NOT put them in the Deployment as literal values', async () => {
-        await service.applyServer({ ...config, dockerImage: 'ghcr.io/o/r/x:latest', envVars });
+        await service.applyServer({ ...config, envVars });
 
         const deploymentBody = appsApi.patchNamespacedDeployment.mock.calls[0][2];
         const serialized = JSON.stringify(deploymentBody);
@@ -168,7 +168,7 @@ describe('K8sControlPlaneService', () => {
       });
 
       it('creates the Secret before the Deployment that references it', async () => {
-        await service.applyServer({ ...config, dockerImage: 'ghcr.io/o/r/x:latest', envVars });
+        await service.applyServer({ ...config, envVars });
 
         const secretOrder = coreApi.patchNamespacedSecret.mock.invocationCallOrder[0];
         const deploymentOrder = appsApi.patchNamespacedDeployment.mock.invocationCallOrder[0];
@@ -177,7 +177,7 @@ describe('K8sControlPlaneService', () => {
     });
 
     it('uses server-side apply with a field manager, so concurrent deploys do not conflict', async () => {
-      await service.applyServer({ ...config, dockerImage: 'ghcr.io/o/r/x:latest' });
+      await service.applyServer(config);
 
       const call = appsApi.patchNamespacedDeployment.mock.calls[0];
       expect(call[5]).toBe('mcp-everything-control-plane'); // fieldManager
@@ -486,7 +486,7 @@ describe('K8sControlPlaneService', () => {
 
     it('fails with an actionable message instead of a stack trace', async () => {
       await expect(
-        service.applyServer({ ...config, dockerImage: 'x' }),
+        service.applyServer(config),
       ).rejects.toThrow(/HOSTING_MODE=docker-run/);
     });
 

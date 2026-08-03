@@ -45,8 +45,16 @@ export class ServerManagementCardComponent {
     return deployingStates.includes(this.server.status);
   }
 
+  /**
+   * 'building' and 'pushing' remain in `isDeploying` and in the status
+   * icon/class switches so historical rows still render as in-progress rather
+   * than "unknown", but they are gone from the progress scale: the Kubernetes
+   * path builds and pushes nothing (each hosted server compiles its own source
+   * in an initContainer from the shared runner image), so a scale that
+   * reserved 40% of the bar for them would never fill.
+   */
   get deployProgress(): number {
-    const stages: HostedServerStatus[] = ['pending', 'building', 'pushing', 'deploying', 'running'];
+    const stages: HostedServerStatus[] = ['pending', 'deploying', 'running'];
     const index = stages.indexOf(this.server.status);
     if (index === -1) return 0;
     return ((index + 1) / stages.length) * 100;
