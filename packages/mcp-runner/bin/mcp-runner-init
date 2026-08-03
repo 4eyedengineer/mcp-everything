@@ -1,0 +1,283 @@
+#!/bin/sh
+#
+# mcp-runner-init - initContainer entrypoint for hosted MCP servers.
+#
+# Fetches a generated MCP server's source tarball from the platform API,
+# unpacks it into /app, installs dependencies and compiles it. The main
+# container (mcp-runner-serve) then runs the compiled output from the same
+# shared emptyDir.
+#
+# Contract (env):
+#   MCP_SOURCE_URL    required - e.g. https://host/api/hosting/servers/<id>/source
+#   MCP_SOURCE_TOKEN  required - bearer token; NEVER logged, NEVER in argv
+#   MCP_APP_DIR       optional - default /app
+#   MCP_SOURCE_STRIP  optional - tar --strip-components; "auto" (default)
+#                                detects a single wrapping directory
+#   MCP_SOURCE_TIMEOUT optional - per-attempt curl timeout in seconds (default 120)
+#   MCP_SKIP_PREBAKE  optional - "1" disables seeding the pre-baked node_modules
+#
+# Every failure path exits non-zero with a message that names the step that
+# failed and what to check. A pod sitting in Init:Error must be diagnosable
+# from `kubectl logs -c init` alone.
+
+set -eu
+
+APP_DIR="${MCP_APP_DIR:-/app}"
+PREBAKE="${MCP_RUNNER_PREBAKE:-/opt/mcp-runner/node_modules}"
+STRIP="${MCP_SOURCE_STRIP:-auto}"
+TIMEOUT="${MCP_SOURCE_TIMEOUT:-120}"
+
+# Elapsed-time prefix on every line. Cold start is the headline cost of this
+# design, so the logs should make it obvious which phase is responsible when a
+# server is slow to come up.
+START_TS=$(date +%s)
+log() { echo "mcp-runner-init: [+$(( $(date +%s) - START_TS ))s] $*" >&2; }
+
+# Scratch files live under the app dir, not /tmp: /app is the only path this
+# container is guaranteed to be able to write (readOnlyRootFilesystem-safe).
+WORK="$APP_DIR/.mcp-runner"
+
+# Fail with an actionable message. Keep these specific - this text is the only
+# diagnostic a cluster operator gets from a crashed initContainer.
+die() {
+  echo "" >&2
+  echo "mcp-runner-init: FATAL: $1" >&2
+  shift
+  for line in "$@"; do
+    echo "mcp-runner-init:        $line" >&2
+  done
+  echo "" >&2
+  exit 1
+}
+
+# --------------------------------------------------------------------------
+# Step 0: validate configuration before doing any work.
+# --------------------------------------------------------------------------
+[ -n "${MCP_SOURCE_URL:-}" ] || die \
+  "MCP_SOURCE_URL is not set." \
+  "The initContainer needs the URL of the generated server's source tarball," \
+  "e.g. https://mcpeverything.com/api/hosting/servers/<serverId>/source"
+
+[ -n "${MCP_SOURCE_TOKEN:-}" ] || die \
+  "MCP_SOURCE_TOKEN is not set." \
+  "Expected a bearer token, normally projected from a Kubernetes Secret." \
+  "Check that the Secret exists in this namespace and that the env var's" \
+  "secretKeyRef name/key match it."
+
+[ -d "$APP_DIR" ] || die \
+  "App directory '$APP_DIR' does not exist." \
+  "It should be an emptyDir volume mounted at $APP_DIR."
+
+if ! touch "$APP_DIR/.mcp-runner-write-test" 2>/dev/null; then
+  die "App directory '$APP_DIR' is not writable by uid $(id -u)." \
+      "The runner deliberately runs as non-root. For an emptyDir volume set" \
+      "  spec.securityContext.fsGroup: 1000" \
+      "on the pod so the mounted volume is group-writable by this user."
+fi
+rm -f "$APP_DIR/.mcp-runner-write-test"
+
+cd "$APP_DIR"
+mkdir -p "$WORK"
+
+# --------------------------------------------------------------------------
+# Step 1: fetch the source tarball.
+#
+# The token is passed via a curl config file on stdin rather than -H, so it
+# never appears in argv (and therefore never in /proc, `ps`, or a crash dump).
+# --------------------------------------------------------------------------
+TARBALL="$WORK/source.tar.gz"
+log "fetching source from ${MCP_SOURCE_URL}"
+
+set +e
+http_code=$(
+  printf 'header = "Authorization: Bearer %s"\n' "$MCP_SOURCE_TOKEN" |
+  curl --config - \
+       --silent --show-error \
+       --location \
+       --retry 5 --retry-delay 2 --retry-connrefused \
+       --max-time "$TIMEOUT" \
+       --write-out '%{http_code}' \
+       --output "$TARBALL" \
+       "$MCP_SOURCE_URL" 2>"$WORK/curl.err"
+)
+curl_rc=$?
+set -e
+
+if [ "$curl_rc" -ne 0 ]; then
+  die "could not reach the source URL (curl exit $curl_rc)." \
+      "URL: ${MCP_SOURCE_URL}" \
+      "curl said: $(tr -d '\r' < "$WORK/curl.err" | tr '\n' ' ')" \
+      "Check that the backend Service is resolvable from this namespace and" \
+      "that any NetworkPolicy allows egress to it."
+fi
+
+case "$http_code" in
+  200) : ;;
+  401|403)
+    die "the platform rejected our credentials (HTTP $http_code)." \
+        "MCP_SOURCE_TOKEN is set but was not accepted for this server." \
+        "Check that the Secret holds a current token for THIS server id and" \
+        "that the token has not been rotated or expired." \
+        "(The token value is deliberately not logged.)"
+    ;;
+  404)
+    die "the source was not found (HTTP 404)." \
+        "URL: ${MCP_SOURCE_URL}" \
+        "The server id in the URL probably does not exist, or its generated" \
+        "source was never persisted."
+    ;;
+  *)
+    body_head=$(head -c 300 "$TARBALL" 2>/dev/null | tr -d '\000' | tr '\n' ' ')
+    die "unexpected HTTP $http_code fetching the source." \
+        "URL: ${MCP_SOURCE_URL}" \
+        "First bytes of the response: ${body_head}"
+    ;;
+esac
+
+[ -s "$TARBALL" ] || die \
+  "the source download succeeded (HTTP 200) but the body was empty." \
+  "Expected a gzipped tarball of the generated project."
+
+# Validate it really is a gzip stream before handing it to tar, so a stray
+# HTML error page produces a clear message instead of a tar parse error.
+if ! gzip -t "$TARBALL" 2>/dev/null; then
+  body_head=$(head -c 300 "$TARBALL" | tr -d '\000' | tr '\n' ' ')
+  die "the downloaded file is not a valid gzip archive." \
+      "Expected a .tar.gz from ${MCP_SOURCE_URL}" \
+      "First bytes received: ${body_head}"
+fi
+
+log "downloaded $(wc -c < "$TARBALL") bytes"
+
+# --------------------------------------------------------------------------
+# Step 2: unpack.
+#
+# Tarballs may or may not wrap the project in a single top-level directory.
+# Rather than guess wrong and produce a baffling "no package.json" error, we
+# detect the layout.
+# --------------------------------------------------------------------------
+if [ "$STRIP" = "auto" ]; then
+  # Locate package.json in the archive and strip exactly as deep as it sits.
+  # This is more reliable than reasoning about common prefixes, and it fails
+  # loudly if the archive simply is not an npm project.
+  pkg_path=$(tar -tzf "$TARBALL" | sed 's#^\./##' \
+             | grep -E '^([^/]+/)?package\.json$' | head -1 || true)
+
+  case "$pkg_path" in
+    package.json)   STRIP=0 ;;
+    */package.json) STRIP=1 ;;
+    *)
+      die "could not find package.json at the top level of the archive." \
+          "Archive contains: $(tar -tzf "$TARBALL" | head -20 | tr '\n' ' ')" \
+          "Expected a gzipped tarball of an npm project (package.json at the" \
+          "root, or inside a single wrapping directory)."
+      ;;
+  esac
+  log "auto-detected tar strip-components=$STRIP (package.json at '$pkg_path')"
+fi
+
+if ! tar -xzf "$TARBALL" -C "$APP_DIR" --strip-components="$STRIP" 2>"$WORK/tar.err"; then
+  die "failed to extract the source archive." \
+      "tar said: $(tr '\n' ' ' < "$WORK/tar.err")"
+fi
+rm -f "$TARBALL"
+
+[ -f "$APP_DIR/package.json" ] || die \
+  "no package.json in $APP_DIR after extracting the archive." \
+  "Contents: $(ls -A "$APP_DIR" | tr '\n' ' ')" \
+  "The archive layout is not what the runner expects; set" \
+  "MCP_SOURCE_STRIP explicitly (0 or 1) if auto-detection guessed wrong."
+
+log "extracted project: $(ls -A "$APP_DIR" | tr '\n' ' ')"
+
+# --------------------------------------------------------------------------
+# Step 3: seed the pre-baked dependency tree.
+#
+# This is the entire point of the shared-runner design. The image already
+# contains the dependency set that generatePackageJson() emits, so copying it
+# in turns the install below into a near no-op instead of a cold download of
+# several hundred packages.
+# --------------------------------------------------------------------------
+if [ "${MCP_SKIP_PREBAKE:-0}" != "1" ] && [ -d "$PREBAKE" ] && [ ! -d "$APP_DIR/node_modules" ]; then
+  log "seeding node_modules from pre-baked cache"
+
+  # Copy via a tar pipe rather than `cp -a`. `cp -a` preserves ownership, which
+  # a non-root process cannot do when the source tree is owned by another uid -
+  # it fails with "can't preserve ownership" on every file. tar, extracting as
+  # a non-root user, simply does not attempt the chown, while still preserving
+  # the symlinks in node_modules/.bin and the executable bits that matter.
+  # This also keeps the runner working under an arbitrary runAsUser.
+  if ! tar -cf - -C "$(dirname "$PREBAKE")" "$(basename "$PREBAKE")" \
+       | tar -xf - -C "$APP_DIR" 2>"$WORK/seed.err"; then
+    die "failed to seed the pre-baked node_modules." \
+        "tar said: $(tr '\n' ' ' < "$WORK/seed.err")"
+  fi
+
+  # The seed is an optimisation, but a half-copied tree is worse than none:
+  # verify the compiler survived the copy rather than discovering it at build.
+  [ -x "$APP_DIR/node_modules/.bin/tsc" ] || die \
+    "pre-baked seed completed but node_modules/.bin/tsc is missing or not executable." \
+    "The image's baked dependency tree looks corrupt; rebuild the runner image."
+
+  log "seeded $(du -sh "$APP_DIR/node_modules" 2>/dev/null | cut -f1) of dependencies"
+else
+  log "skipping pre-baked seed (already present, missing, or disabled)"
+fi
+
+# --------------------------------------------------------------------------
+# Step 4: install.
+#
+# --ignore-scripts is a hard security requirement: this is AI-generated,
+# user-influenced code and we will not run arbitrary lifecycle scripts.
+# --prefer-offline makes npm trust what we already seeded rather than
+# re-resolving it over the network.
+# --------------------------------------------------------------------------
+log "installing dependencies"
+# --include=dev is REQUIRED and must not be dropped: the image sets
+# NODE_ENV=production for the runtime, and under that setting npm omits (and
+# actively prunes) devDependencies - which is where generated projects declare
+# typescript and @types/node. Without this the seeded compiler is deleted and
+# the very next step fails with "sh: tsc: not found".
+#
+# Redirect to a file rather than piping into `tail`: in a pipeline the shell
+# reports the exit status of the LAST command, which would silently swallow an
+# npm failure and let a broken pod start.
+if ! npm install --include=dev --ignore-scripts --no-audit --no-fund --prefer-offline \
+     >"$WORK/npm-install.log" 2>&1; then
+  tail -40 "$WORK/npm-install.log" >&2
+  die "npm install failed." \
+      "See the npm output above. Common causes: a dependency the generated" \
+      "server declared does not exist or is unreachable, or the pod has no" \
+      "egress to the npm registry (check NetworkPolicy)."
+fi
+tail -3 "$WORK/npm-install.log" >&2
+
+# --------------------------------------------------------------------------
+# Step 5: build.
+# --------------------------------------------------------------------------
+if ! grep -q '"build"' "$APP_DIR/package.json"; then
+  die "the generated project has no \"build\" script in package.json." \
+      "The runner compiles with \`npm run build\` and then runs dist/index.js."
+fi
+
+log "building"
+if ! npm run build >"$WORK/npm-build.log" 2>&1; then
+  tail -60 "$WORK/npm-build.log" >&2
+  die "\`npm run build\` failed - the generated server does not compile." \
+      "See the TypeScript output above for the specific errors." \
+      "This is a defect in the generated source, not in the runner."
+fi
+
+# Verify the artefact directly - a build script can exit 0 while emitting
+# nothing useful (wrong outDir, empty rootDir).
+[ -f "$APP_DIR/dist/index.js" ] || die \
+  "build completed but $APP_DIR/dist/index.js does not exist." \
+  "Produced: $(ls -A "$APP_DIR/dist" 2>/dev/null | tr '\n' ' ')" \
+  "The runner starts the server with \`node dist/index.js\`, so tsconfig must" \
+  "emit to ./dist with an index.js entrypoint."
+
+log "OK - $APP_DIR/dist/index.js is ready"
+
+# Leave the phase logs behind but drop the archive scratch, so the volume the
+# main container sees contains the project and nothing surprising.
+rm -f "$WORK/curl.err" "$WORK/tar.err" "$WORK/seed.err"

@@ -1,0 +1,103 @@
+name: Deploy MCP Runner
+
+# Builds the shared MCP runner image and pushes it to the homelab Harbor
+# registry as mcp-everything/mcp-runner, tagged with the commit SHA (matching
+# how backend/frontend are tagged in deploy-homelab.yml) plus a moving :latest.
+#
+# This image is the runtime for EVERY hosted MCP server: it is used as both the
+# initContainer (fetch source, npm install, npm run build) and the main
+# container (node dist/index.js) of a generated server's Deployment. There are
+# no per-server image builds any more, which is what makes hosting possible at
+# all - the backend pod has no docker binary and no docker socket.
+#
+# It is deliberately on its OWN workflow with a narrow path filter: the runner
+# changes far less often than the application, and rebuilding it on every
+# backend commit would waste scarce cluster capacity.
+on:
+  push:
+    branches:
+      - rework/2026-07-review
+      - main
+    paths:
+      - 'packages/mcp-runner/**'
+      - '.github/workflows/deploy-mcp-runner.yml'
+  workflow_dispatch: {}
+
+env:
+  REGISTRY: harbor.192.168.1.240.nip.io
+  PROJECT: mcp-everything
+  IMAGE: mcp-runner
+
+jobs:
+  build-and-push:
+    runs-on: arc-runner-set
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      # The cluster is 4x arm64 + 2x amd64 and generated Deployments carry no
+      # nodeSelector, so this image MUST be multi-arch or roughly two thirds of
+      # schedulings would ImagePullBackOff. QEMU provides the arm64 emulation
+      # the runtime stage is assembled under.
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      # Unlike deploy-homelab.yml (driver: docker), this needs the
+      # docker-container driver: the classic/docker driver cannot produce a
+      # multi-platform manifest list at all.
+      #
+      # That driver does NOT inherit /etc/docker/daemon.json, so the dind
+      # sidecar's insecure-registries entry does not apply and Harbor's
+      # plain-HTTP endpoint has to be declared to BuildKit explicitly.
+      # network=host lets the builder container reach Harbor over the runner
+      # pod's own network.
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver: docker-container
+          driver-opts: network=host
+          buildkitd-config-inline: |
+            [registry."harbor.192.168.1.240.nip.io"]
+              http = true
+              insecure = true
+
+      - name: Log in to Harbor
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.HARBOR_USERNAME }}
+          password: ${{ secrets.HARBOR_PASSWORD }}
+
+      # Deployments should pin the immutable :<sha> tag. :latest exists for
+      # convenience and follows whichever deploy branch built most recently.
+      - name: Build and push mcp-runner image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./packages/mcp-runner
+          platforms: linux/amd64,linux/arm64
+          push: true
+          provenance: false
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.PROJECT }}/${{ env.IMAGE }}:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ env.PROJECT }}/${{ env.IMAGE }}:latest
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.PROJECT }}/${{ env.IMAGE }}:buildcache
+          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.PROJECT }}/${{ env.IMAGE }}:buildcache,mode=max
+
+      # Fail the build if the manifest is not actually multi-arch. Without this
+      # a silent regression to a single-arch image would only surface later as
+      # ImagePullBackOff on an arm64 node.
+      - name: Verify multi-arch manifest
+        run: |
+          set -euo pipefail
+          REF="${REGISTRY}/${PROJECT}/${IMAGE}:${GITHUB_SHA}"
+          echo "Inspecting $REF"
+          docker buildx imagetools inspect "$REF" > /tmp/manifest.txt
+          cat /tmp/manifest.txt
+          for want in linux/amd64 linux/arm64; do
+            grep -q "$want" /tmp/manifest.txt \
+              || { echo "::error::$REF is missing $want"; exit 1; }
+          done
+          echo "OK: manifest covers linux/amd64 and linux/arm64"
