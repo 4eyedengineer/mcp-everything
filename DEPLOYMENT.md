@@ -845,24 +845,46 @@ serving real MCP Streamable HTTP on `POST /mcp` (`PORT`, default 3000) plus
 `GET /health`. Each `HOSTING_MODE` below now selects and verifies whichever
 transport is appropriate for it:
 
-- **`kubernetes`** (default, unset): build+push the image to a container
-  registry (GHCR, or a local `localhost:5000` registry when `LOCAL_DEV=true`),
-  generate K8s manifests (`ManifestGeneratorService`), and commit them to a
-  GitOps repo (`GitOpsService`) for ArgoCD/a real cluster to reconcile. This
-  is the cluster-ready production path. `ManifestGeneratorService` sets
-  `MCP_TRANSPORT=http` (and `PORT=3000`) on every generated Deployment, so
-  its `GET /health` liveness/readiness probes now target a transport the
-  container actually implements - previously they didn't (see below).
-  **Its "running" status still only means "manifests committed for a
-  cluster to reconcile," not "verified serving traffic"** - nothing in this
-  codebase confirms a real cluster has ever scheduled one of these pods; the
-  fix here removes the transport mismatch that would have guaranteed
-  failure, it does not itself prove success on a real cluster. Also
-  unresolved: `ContainerRegistryService` builds/pushes by shelling out to
-  the `docker` CLI, which cannot run as an in-cluster build step (this
-  homelab's k3s nodes use containerd, not a Docker daemon) - in-cluster
-  image building is still an open problem, not something this change
-  touches.
+- **`kubernetes`** (default, unset): **no image is built and none is pushed.**
+  `HostingService` applies a Deployment, Service and Secret straight to the
+  Kubernetes API (`K8sControlPlaneService`), and every hosted server runs the
+  same shared, multi-arch `mcp-runner` image (`MCP_RUNNER_IMAGE`, see
+  `packages/mcp-runner/README.md`) twice over one `emptyDir` at `/app`:
+
+  | Phase | Container | Does |
+  |---|---|---|
+  | init | `mcp-runner-init` | fetch the source tarball from `MCP_SOURCE_URL` with `MCP_SOURCE_TOKEN`, `npm install`, `tsc` |
+  | main | `mcp-server` | `node dist/index.js` with `MCP_TRANSPORT=http` |
+
+  This exists because the backend runs as a pod with **no docker binary and
+  no docker socket**, so the old `ContainerRegistryService.buildImage/
+  pushImage` calls on this path were unreachable code that failed every cloud
+  deploy at its first stage. It also removes an architecture trap: this
+  cluster is mostly arm64 and generated Deployments carry no `nodeSelector`,
+  so a per-server single-arch image would `ImagePullBackOff` on most
+  schedulings.
+
+  Two consequences worth knowing:
+
+  - The pod **must** have `securityContext.fsGroup: 1000`, or the
+    initContainer cannot write the mounted `emptyDir` and dies immediately.
+    `ManifestGeneratorService` sets it; do not remove it.
+  - Cold start is ~35-45s (dominated by `tsc`), paid on every pod start, not
+    just the first deploy. The runner image pre-bakes the exact dependency
+    set `generatePackageJson()` emits to keep the install phase a cache hit.
+
+  Status on this path goes `pending -> deploying`, and then whatever
+  `K8sReconcilerService` actually observes in the cluster (`running` /
+  `failed`). It never reports `building` or `pushing`: no such work happens
+  here any more.
+
+  `MCP_SOURCE_BASE_URL` should be set to the backend's in-cluster Service
+  (`http://mcp-backend.<ns>.svc.cluster.local:3000`). It defaults to the
+  public `MCP_GATEWAY_PUBLIC_URL`, which works but sends every cold start out
+  through whatever fronts the public origin and back in.
+  `k8s/mcp-servers/network-policy.yaml` carves exactly that one destination
+  out of an otherwise total RFC1918 egress block - hosted pods can reach the
+  backend on port 3000 and nothing else private, Postgres included.
 - **`docker-run`**: build the image locally and run it as a real Docker
   container on the host, verifying it's an actual working MCP server via the
   MCP `initialize`/`tools/list` handshake before ever reporting `running`
