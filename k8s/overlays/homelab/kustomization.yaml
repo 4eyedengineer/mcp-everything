@@ -58,6 +58,20 @@ configMapGenerator:
       # production was handing users before this was added (verified
       # 2026-08-03: routing worked, the advertised URL did not).
       - MCP_GATEWAY_PUBLIC_URL=https://mcpeverything.com
+      # Origin a hosted server's POD dials to fetch its own generated source.
+      # Deliberately NOT the public origin above: that one is proxied through
+      # Cloudflare, so using it would send every hosted-server cold start out
+      # to the internet and back for bytes that never had to leave the
+      # cluster. This is the in-cluster Service, and it is exactly the one
+      # destination k8s/mcp-servers/network-policy.yaml carves out of the
+      # otherwise total RFC1918 egress block for hosted pods.
+      - MCP_SOURCE_BASE_URL=http://mcp-backend.mcp-everything.svc.cluster.local:3000
+      # The ONE image every hosted MCP server runs, as both its initContainer
+      # (fetch source, npm install, tsc) and its main container. There are no
+      # per-server image builds - the backend pod has no docker daemon. Must
+      # be multi-arch: this cluster is 4x arm64 + 3x amd64 and generated
+      # Deployments carry no nodeSelector. See packages/mcp-runner/README.md.
+      - MCP_RUNNER_IMAGE=harbor.192.168.1.240.nip.io/mcp-everything/mcp-runner:latest
       - MCP_TESTING_ALLOW_UNSANDBOXED=true
       - GENERATED_SERVERS_DIR=/data/generated-servers
       - PIPELINE_INTENT_CONFIDENCE_MIN=0.75
