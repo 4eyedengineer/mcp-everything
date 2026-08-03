@@ -1087,7 +1087,7 @@ Model Context Protocol provides tools and resources that extend LLM capabilities
 **What I can do:**
 • Generate MCP servers from GitHub repositories
 • Create MCP tools for any API (Stripe, GitHub, OpenAI, etc.)
-• Build servers from API specifications (OpenAPI, GraphQL)
+• Research a service from its public documentation
 • Design MCP integrations from natural language descriptions
 
 **Example requests:**

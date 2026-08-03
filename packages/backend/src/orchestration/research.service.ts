@@ -748,10 +748,16 @@ ${results.map((r, i) => `${i + 1}. [${r.title}](${r.url})\n   ${r.snippet}`).joi
   /**
    * API Documentation Agent (GitHub-specific)
    *
-   * Extracts API documentation from GitHub repository:
-   * - OpenAPI/Swagger specs (openapi.json, swagger.yaml, etc.)
+   * Extracts API documentation from a GitHub repository:
    * - README.md API sections
-   * - Inline code documentation and examples
+   * - API patterns detected by GitHubAnalysisService
+   * - Inline code documentation and source snippets
+   *
+   * NOTE: this does NOT fetch or parse OpenAPI/Swagger spec files, despite
+   * what this comment used to claim - there is no spec parser anywhere in the
+   * backend and no way for a user to submit a spec. Everything here is
+   * README/source text synthesised by the LLM. Do not reintroduce the claim
+   * without the parser to back it.
    *
    * Uses LLM to synthesize API patterns from repository content.
    *
