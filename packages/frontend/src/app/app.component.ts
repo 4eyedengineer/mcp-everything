@@ -39,6 +39,12 @@ export class AppComponent implements OnInit {
   sidebarOpen = signal(this.getInitialSidebarState());
   conversations = signal<Conversation[]>([]);
   isLoadingConversations = signal(false);
+  /**
+   * Whether the current route renders "bare" - without the app shell (top nav
+   * + conversation sidebar). True for /auth/* and for the public landing page
+   * at '/', both of which are full-page flows that bring their own chrome.
+   * Named `isAuthRoute` historically; it now covers the landing page too.
+   */
   isAuthRoute = signal(false);
   sessionId: string;
 
@@ -197,8 +203,20 @@ export class AppComponent implements OnInit {
     }
   }
 
+  /**
+   * Routes that render without the app shell: the auth flow, and the public
+   * landing page at '/' (which has its own marketing header and footer, and
+   * must not show a conversation sidebar to a logged-out visitor).
+   *
+   * The landing check strips the query string and fragment before comparing,
+   * so '/?utm_source=x' and '/#for-agents' are still recognised as the root.
+   */
   private computeIsAuthRoute(url: string): boolean {
-    return url.startsWith('/auth');
+    if (url.startsWith('/auth')) {
+      return true;
+    }
+    const path = url.split('?')[0].split('#')[0];
+    return path === '' || path === '/';
   }
 
   private getPrefersReducedMotion(): boolean {

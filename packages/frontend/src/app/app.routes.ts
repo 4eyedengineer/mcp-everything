@@ -1,11 +1,24 @@
 import { Routes } from '@angular/router';
 import { authGuard, noAuthGuard } from './core/guards/auth.guard';
+import { landingGuard } from './core/guards/landing.guard';
 
 export const routes: Routes = [
   {
+    // Public marketing page. This used to `redirectTo: '/chat'`, which is
+    // auth-guarded - so an anonymous visitor to the bare domain was bounced
+    // straight to a login form with nothing explaining what the product was.
+    // `landingGuard` keeps the old behaviour for signed-in users (they still
+    // land on /chat) and shows the marketing page to everyone else.
     path: '',
-    redirectTo: '/chat',
-    pathMatch: 'full'
+    loadComponent: () => import('./features/landing/landing.component').then(m => m.LandingComponent),
+    canActivate: [landingGuard],
+    pathMatch: 'full',
+    title: 'MCP Everything - Generate working MCP servers from any API',
+    data: {
+      title: 'Home',
+      description:
+        'Turn a GitHub repository, documentation site, service name or plain-English description into a working Model Context Protocol server, validated in a Docker sandbox.'
+    }
   },
   {
     path: 'auth',
@@ -71,7 +84,11 @@ export const routes: Routes = [
     pathMatch: 'full'
   },
   {
+    // Unknown URLs now land on '/' rather than '/chat'. For a signed-in user
+    // that is identical - landingGuard forwards them to /chat - but an
+    // anonymous visitor following a stale link gets the marketing page
+    // instead of an unexplained login form.
     path: '**',
-    redirectTo: '/chat'
+    redirectTo: ''
   }
 ];

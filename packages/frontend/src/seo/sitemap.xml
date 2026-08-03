@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Only genuinely public, content-bearing routes are listed.
+
+  Deliberately excluded: /chat, /servers, /account, /auth/* and the password
+  reset routes. All are behind auth guards, and because this SPA has no
+  server-side rendering they would each return the same HTML shell as "/" -
+  listing them would submit a set of duplicate URLs with no unique content.
+
+  /explore is included because every marketplace browse endpoint is public
+  (see backend marketplace.controller.ts @Public()) and the route carries no
+  auth guard. Note that individual server detail pages are not listed: they
+  are generated from database rows, and this file is a static asset with no
+  build-time access to them.
+-->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://mcpeverything.com/</loc>
+    <changefreq>weekly</changefreq>
+    <priority>1.0</priority>
+  </url>
+  <url>
+    <loc>https://mcpeverything.com/explore</loc>
+    <changefreq>daily</changefreq>
+    <priority>0.7</priority>
+  </url>
+</urlset>

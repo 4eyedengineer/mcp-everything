@@ -1,0 +1,58 @@
+# robots.txt for https://mcpeverything.com
+#
+# Served from the site root by the nginx container that hosts this SPA
+# (packages/frontend/nginx.conf `try_files $uri ...` picks it up before the
+# index.html fallback). Copied to the root of the build output by the
+# "src/seo" asset glob in angular.json.
+
+# ---------------------------------------------------------------------------
+# Default: everything public is crawlable, application routes are not.
+#
+# The disallowed paths are all behind the app's auth guards and render no
+# meaningful HTML to a crawler anyway - this SPA has no server-side rendering,
+# so every one of these URLs returns the same shell as "/". Keeping them out
+# of the index avoids a pile of duplicate-content URLs.
+# ---------------------------------------------------------------------------
+User-agent: *
+Allow: /
+Disallow: /chat
+Disallow: /servers
+Disallow: /account
+Disallow: /auth
+Disallow: /reset-password
+Disallow: /forgot-password
+
+# ---------------------------------------------------------------------------
+# AI crawlers, listed explicitly and allowed.
+#
+# These are the user-agent tokens the operators actually document. They are
+# spelled out rather than left to the `User-agent: *` group on purpose: this
+# is a developer-tools product whose users find it *through* assistants, so
+# being present in training corpora and in assistant-side search indexes is
+# the point. Blocking them would remove the product from the corpora that
+# make models aware it exists.
+#
+# Note Google-Extended is not a crawler - it is a Gemini/Vertex training
+# opt-out control only, and has no effect on Googlebot or AI Overviews.
+# ---------------------------------------------------------------------------
+User-agent: ClaudeBot
+User-agent: Claude-User
+User-agent: Claude-SearchBot
+User-agent: anthropic-ai
+User-agent: GPTBot
+User-agent: OAI-SearchBot
+User-agent: ChatGPT-User
+User-agent: PerplexityBot
+User-agent: Perplexity-User
+User-agent: Google-Extended
+User-agent: Applebot-Extended
+User-agent: meta-externalagent
+User-agent: Bytespider
+User-agent: CCBot
+Allow: /
+Disallow: /chat
+Disallow: /servers
+Disallow: /account
+Disallow: /auth
+
+Sitemap: https://mcpeverything.com/sitemap.xml
