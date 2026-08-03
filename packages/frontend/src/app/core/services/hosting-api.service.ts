@@ -120,6 +120,46 @@ export interface ServerListResponse {
   };
 }
 
+/**
+ * Metadata for a hosted server's API key. Never contains the secret - the
+ * backend only ever returns the plaintext key once, at creation
+ * (see {@link CreatedHostedServerApiKey}).
+ */
+export interface HostedServerApiKey {
+  id: string;
+  label: string;
+  /** Non-secret leading chars, e.g. `mcps_A1b2c3`. */
+  keyPrefix: string;
+  /** Last 4 chars of the key, for disambiguation in a list. */
+  lastFour: string;
+  createdAt: Date;
+  lastUsedAt: Date | null;
+  expiresAt: Date | null;
+  revokedAt: Date | null;
+  /** Derived by the backend: not revoked and not past its expiry. */
+  active: boolean;
+}
+
+/** Request body for creating a hosted-server API key. */
+export interface CreateHostedServerApiKeyRequest {
+  label: string;
+  /** Optional lifetime in days. Omit for a key that never expires. */
+  expiresInDays?: number;
+}
+
+/**
+ * Response from creating a hosted-server API key - the ONLY response that
+ * ever carries the plaintext `key`. It cannot be retrieved again afterwards.
+ */
+export interface CreatedHostedServerApiKey {
+  key: string;
+  apiKey: HostedServerApiKey;
+  warning: {
+    shownOnce: string;
+    usage: string;
+  };
+}
+
 @Injectable({
   providedIn: 'root'
 })
@@ -229,6 +269,45 @@ export class HostingApiService {
     return this.http
       .delete<{ success: boolean; message: string }>(`${this.baseUrl}/servers/${serverId}`)
       .pipe(catchError((error) => this.handleError(error, 'deleteServer')));
+  }
+
+  /**
+   * Create an API key for a hosted server the current user owns.
+   * The response's `key` field is the plaintext credential and is only ever
+   * returned here - it cannot be looked up again afterwards.
+   */
+  createServerApiKey(
+    serverId: string,
+    data: CreateHostedServerApiKeyRequest
+  ): Observable<CreatedHostedServerApiKey> {
+    return this.http
+      .post<CreatedHostedServerApiKey>(`${this.baseUrl}/servers/${serverId}/keys`, data)
+      .pipe(catchError((error) => this.handleError(error, 'createServerApiKey')));
+  }
+
+  /**
+   * List API key metadata (active and revoked) for a hosted server. Never
+   * includes the secret - the backend does not store it to return.
+   */
+  listServerApiKeys(serverId: string): Observable<{ apiKeys: HostedServerApiKey[] }> {
+    return this.http
+      .get<{ apiKeys: HostedServerApiKey[] }>(`${this.baseUrl}/servers/${serverId}/keys`)
+      .pipe(catchError((error) => this.handleError(error, 'listServerApiKeys')));
+  }
+
+  /**
+   * Revoke an API key on a hosted server. Takes effect on the key's next use
+   * at the MCP gateway; other keys on the same server keep working.
+   */
+  revokeServerApiKey(
+    serverId: string,
+    keyId: string
+  ): Observable<{ success: boolean; apiKey: HostedServerApiKey }> {
+    return this.http
+      .delete<{ success: boolean; apiKey: HostedServerApiKey }>(
+        `${this.baseUrl}/servers/${serverId}/keys/${keyId}`
+      )
+      .pipe(catchError((error) => this.handleError(error, 'revokeServerApiKey')));
   }
 
   /**

@@ -83,6 +83,14 @@
     </button>
     <button
       mat-button
+      (click)="onManageApiKeys()"
+      class="action-btn"
+      matTooltip="Manage API keys">
+      <mat-icon>key</mat-icon>
+      API keys
+    </button>
+    <button
+      mat-button
       (click)="onViewLogs()"
       class="action-btn"
       matTooltip="View logs">

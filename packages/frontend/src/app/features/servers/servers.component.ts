@@ -14,6 +14,7 @@ import { ConversationService } from '../../core/services/conversation.service';
 import { ServerManagementCardComponent } from './components/server-management-card/server-management-card.component';
 import { LogsModalComponent } from './components/logs-modal/logs-modal.component';
 import { ConfirmModalComponent } from './components/confirm-modal/confirm-modal.component';
+import { ApiKeysModalComponent } from './components/api-keys-modal/api-keys-modal.component';
 import { downloadServerZip, GeneratedServerCode } from '../../shared/utils/server-zip.util';
 
 /**
@@ -40,7 +41,8 @@ interface ServerRow {
     MatSnackBarModule,
     ServerManagementCardComponent,
     LogsModalComponent,
-    ConfirmModalComponent
+    ConfirmModalComponent,
+    ApiKeysModalComponent
   ],
   templateUrl: './servers.component.html',
   styleUrls: ['./servers.component.scss']
@@ -52,6 +54,7 @@ export class ServersComponent implements OnInit, OnDestroy {
 
   selectedServerForLogs: HostedServer | null = null;
   serverToDelete: HostedServer | null = null;
+  selectedServerForApiKeys: HostedServer | null = null;
 
   private destroy$ = new Subject<void>();
   private refreshInterval = 30000; // 30 seconds
@@ -240,5 +243,13 @@ export class ServersComponent implements OnInit, OnDestroy {
 
   closeLogs(): void {
     this.selectedServerForLogs = null;
+  }
+
+  openApiKeys(server: HostedServer): void {
+    this.selectedServerForApiKeys = server;
+  }
+
+  closeApiKeys(): void {
+    this.selectedServerForApiKeys = null;
   }
 }

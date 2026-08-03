@@ -95,7 +95,8 @@
         (start)="startServer($event)"
         (stop)="stopServer($event)"
         (delete)="openDeleteConfirmation($event)"
-        (viewLogs)="openLogs($event)">
+        (viewLogs)="openLogs($event)"
+        (manageApiKeys)="openApiKeys($event)">
         <ng-container cardActions>
           <button mat-button (click)="openChat(row.entry.conversationId)" class="action-btn">
             <mat-icon>chat_bubble_outline</mat-icon>
@@ -169,4 +170,11 @@
     (confirm)="confirmDelete()"
     (cancel)="cancelDelete()">
   </mcp-confirm-modal>
+
+  <!-- API Keys Modal -->
+  <mcp-api-keys-modal
+    *ngIf="selectedServerForApiKeys as server"
+    [server]="server"
+    (close)="closeApiKeys()">
+  </mcp-api-keys-modal>
 </div>

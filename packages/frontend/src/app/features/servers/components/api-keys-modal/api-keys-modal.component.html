@@ -1,0 +1,180 @@
+<div class="modal-overlay" (click)="onOverlayClick($event)">
+  <div class="modal-content api-keys-modal" role="dialog" aria-modal="true" [attr.aria-label]="'API keys for ' + server.serverName">
+    <header class="modal-header">
+      <div class="header-title">
+        <mat-icon>key</mat-icon>
+        <div>
+          <h2>API keys</h2>
+          <p class="header-subtitle">{{ server.serverName }}</p>
+        </div>
+      </div>
+      <button
+        class="icon-button close-btn"
+        [disabled]="showingSecret()"
+        [matTooltip]="showingSecret() ? 'Save your key below before closing' : 'Close'"
+        (click)="onClose()"
+        aria-label="Close API keys">
+        <mat-icon>close</mat-icon>
+      </button>
+    </header>
+
+    <div class="modal-body">
+      <!-- The one-time secret reveal. This is the only screen that will ever show this key. -->
+      <div class="secret-reveal" *ngIf="justCreated() as created">
+        <div class="secret-reveal-header">
+          <mat-icon>warning</mat-icon>
+          <h3>API key created &mdash; this is the only time you'll see it</h3>
+        </div>
+        <p class="secret-reveal-warning">
+          Copy this key now and store it securely. For your security, MCP Everything cannot show
+          you this key again &mdash; if you lose it, you'll need to revoke it and create a new one.
+        </p>
+
+        <label class="field-label" for="secret-key-input">Your new API key</label>
+        <div class="input-with-button">
+          <input
+            id="secret-key-input"
+            type="text"
+            class="form-input key-display"
+            [value]="created.key"
+            readonly
+            (click)="$any($event.target).select()">
+          <button class="icon-button" matTooltip="Copy key to clipboard" (click)="copySecretKey()">
+            <mat-icon>{{ copiedKey() ? 'check' : 'content_copy' }}</mat-icon>
+          </button>
+        </div>
+        <p class="copy-status" *ngIf="copiedKey()">Copied to clipboard.</p>
+        <p class="field-error" *ngIf="copyKeyError()">{{ copyKeyError() }}</p>
+
+        <div class="config-copy">
+          <div class="config-copy-text">
+            <strong>Ready-to-use Claude Desktop config</strong>
+            <span>Includes the key above &mdash; paste it directly into <code>claude_desktop_config.json</code>.</span>
+          </div>
+          <button class="mcp-btn-secondary" (click)="copyConfigWithKey()">
+            <mat-icon>{{ copiedConfig() ? 'check' : 'integration_instructions' }}</mat-icon>
+            <span>{{ copiedConfig() ? 'Copied' : 'Copy Claude Desktop config' }}</span>
+          </button>
+        </div>
+        <p class="field-error" *ngIf="copyConfigError()">{{ copyConfigError() }}</p>
+
+        <label class="ack-checkbox">
+          <input type="checkbox" [ngModel]="acknowledged()" (ngModelChange)="acknowledged.set($event)">
+          <span>I've copied this key and saved it somewhere safe</span>
+        </label>
+
+        <div class="form-actions">
+          <button
+            class="mcp-btn-primary"
+            [disabled]="!acknowledged()"
+            [matTooltip]="!acknowledged() ? 'Confirm you\'ve saved the key before closing' : ''"
+            (click)="acknowledgeAndDismiss()">
+            <span>Done</span>
+          </button>
+        </div>
+      </div>
+
+      <ng-container *ngIf="!showingSecret()">
+        <!-- Create flow -->
+        <div class="create-key-form" *ngIf="isCreating()">
+          <div class="form-group">
+            <label class="field-label" for="new-key-label">Label</label>
+            <input
+              id="new-key-label"
+              type="text"
+              class="form-input"
+              [ngModel]="newLabel()"
+              (ngModelChange)="newLabel.set($event)"
+              placeholder="e.g. ci-runner, laptop"
+              maxlength="100"
+              (keydown.enter)="submitCreate()">
+          </div>
+          <div class="form-group">
+            <label class="field-label" for="new-key-expiry">Expiry</label>
+            <select
+              id="new-key-expiry"
+              class="form-input"
+              [ngModel]="newExpiryDays()"
+              (ngModelChange)="newExpiryDays.set($event)">
+              <option *ngFor="let option of expiryOptions" [ngValue]="option.days">{{ option.label }}</option>
+            </select>
+          </div>
+          <p class="field-error" *ngIf="createError()">{{ createError() }}</p>
+          <div class="form-actions">
+            <button class="mcp-btn-primary" [disabled]="createSubmitting()" (click)="submitCreate()">
+              <mat-icon *ngIf="!createSubmitting()">vpn_key</mat-icon>
+              <mat-icon *ngIf="createSubmitting()" class="spinning">sync</mat-icon>
+              <span>{{ createSubmitting() ? 'Creating...' : 'Create key' }}</span>
+            </button>
+            <button class="mcp-btn-secondary" [disabled]="createSubmitting()" (click)="cancelCreating()">
+              <span>Cancel</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="section-actions" *ngIf="!isCreating()">
+          <button
+            class="mcp-btn-primary"
+            [disabled]="atCap()"
+            [matTooltip]="atCap() ? 'Maximum of ' + MAX_ACTIVE_KEYS + ' active keys reached - revoke one to create another' : ''"
+            (click)="startCreating()">
+            <mat-icon>add</mat-icon>
+            <span>Create API key</span>
+          </button>
+          <span class="key-count" [class.at-cap]="atCap()">{{ activeCount() }} / {{ MAX_ACTIVE_KEYS }} active</span>
+        </div>
+
+        <p class="loading-note" *ngIf="loading()">Loading API keys...</p>
+        <p class="field-error" *ngIf="error() && !loading()">{{ error() }}</p>
+        <p class="field-error" *ngIf="revokeError()">{{ revokeError() }}</p>
+
+        <p class="empty-note" *ngIf="!loading() && !error() && keys().length === 0">
+          This server has no API keys yet. Create one to connect it through the MCP gateway -
+          for example, from Claude Desktop.
+        </p>
+
+        <div class="api-key-list" *ngIf="!loading() && keys().length > 0">
+          <div class="api-key-row" *ngFor="let key of keys()" [class.inactive]="!key.active">
+            <div class="api-key-info">
+              <div class="api-key-name">
+                {{ key.label }}
+                <span class="status-badge" [ngClass]="statusLabel(key).toLowerCase()">{{ statusLabel(key) }}</span>
+              </div>
+              <div class="api-key-meta">
+                <code class="api-key-prefix">{{ key.keyPrefix }}&hellip;{{ key.lastFour }}</code>
+                <span class="meta-sep">&middot;</span>
+                <span>Created {{ key.createdAt | date:'mediumDate' }}</span>
+                <span class="meta-sep">&middot;</span>
+                <span>{{ key.lastUsedAt ? ('Last used ' + (key.lastUsedAt | date:'mediumDate')) : 'Never used' }}</span>
+                <span class="meta-sep">&middot;</span>
+                <span>{{ key.expiresAt ? ((statusLabel(key) === 'Expired' ? 'Expired ' : 'Expires ') + (key.expiresAt | date:'mediumDate')) : 'Never expires' }}</span>
+              </div>
+            </div>
+            <div class="api-key-actions">
+              <button
+                class="mcp-btn-danger btn-sm"
+                *ngIf="key.active"
+                [disabled]="isRevoking(key.id)"
+                (click)="requestRevoke(key)">
+                <mat-icon *ngIf="!isRevoking(key.id)">block</mat-icon>
+                <mat-icon *ngIf="isRevoking(key.id)" class="spinning">sync</mat-icon>
+                <span>{{ isRevoking(key.id) ? 'Revoking...' : 'Revoke' }}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </ng-container>
+    </div>
+  </div>
+</div>
+
+<mcp-confirm-modal
+  *ngIf="revokeTarget() as target"
+  title="Revoke API key"
+  [message]="'Revoke \'' + target.label + '\'? Any connection using this key (e.g. Claude Desktop) will lose access immediately. This cannot be undone.'"
+  confirmText="Revoke"
+  cancelText="Cancel"
+  [isDanger]="true"
+  (confirm)="confirmRevoke()"
+  (cancel)="cancelRevoke()">
+</mcp-confirm-modal>

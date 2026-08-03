@@ -38,6 +38,7 @@ export class ServerManagementCardComponent {
   @Output() stop = new EventEmitter<HostedServer>();
   @Output() delete = new EventEmitter<HostedServer>();
   @Output() viewLogs = new EventEmitter<HostedServer>();
+  @Output() manageApiKeys = new EventEmitter<HostedServer>();
 
   get isDeploying(): boolean {
     const deployingStates: HostedServerStatus[] = ['pending', 'building', 'pushing', 'deploying'];
@@ -124,5 +125,9 @@ export class ServerManagementCardComponent {
 
   onViewLogs(): void {
     this.viewLogs.emit(this.server);
+  }
+
+  onManageApiKeys(): void {
+    this.manageApiKeys.emit(this.server);
   }
 }

@@ -62,3 +62,7 @@ generated-servers/
 
 # Agent worktrees (transient)
 .claude/worktrees/
+
+# Pre-existing scratch planning docs (Dec 2025), deliberately untracked
+INTEGRATION_TEST_PLAN.md
+PARALLEL_EXECUTION_PLAN.md
