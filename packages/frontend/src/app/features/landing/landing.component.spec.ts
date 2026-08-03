@@ -105,10 +105,14 @@ describe('LandingComponent', () => {
       expect(text).toContain('description');
     });
 
-    it('describes the Docker-sandboxed validation loop', () => {
-      expect(text).toContain('Docker');
-      expect(text).toContain('JSON-RPC');
-      expect(text).toContain('five');
+    it('promises the servers are tested and repaired before delivery', () => {
+      // The underlying mechanism (a Docker sandbox, JSON-RPC tool calls, five
+      // refinement iterations) is real - see mcp-testing.service.ts and
+      // MAX_REFINEMENT_ITERATIONS - but it is deliberately NOT named on the
+      // page any more. What must survive is the promise itself.
+      const lower = text.toLowerCase();
+      expect(lower).toContain('tested');
+      expect(lower).toMatch(/fixed|repair/);
     });
   });
 
@@ -130,7 +134,8 @@ describe('LandingComponent', () => {
       // No OpenAPI or GraphQL parser exists anywhere in the backend, so the
       // words may appear only as an explicit denial - which must stay on the
       // page, because the in-product help text still wrongly offers it.
-      expect(text).toContain('No specification parser exists');
+      expect(text).toContain('OpenAPI or GraphQL specs');
+      expect(text).toContain('We don’t read them');
 
       // ...and never as one of the advertised inputs or capabilities. Checked
       // structurally rather than by phrase-matching, so the denial itself -
@@ -160,8 +165,30 @@ describe('LandingComponent', () => {
 
     it('keeps an explicit "not available yet" disclosure on the page', () => {
       expect(text).toContain('Not available yet');
-      expect(text).toContain('Kubernetes');
       expect(text.toLowerCase()).toContain('nothing is for sale');
+      // Hosting must still be disclosed as unavailable - just without naming
+      // the cluster it does not yet run for users on.
+      expect(text).toContain('Hosting');
+      expect(text.toLowerCase()).toContain('run your server for you');
+    });
+
+    /**
+     * The pitch describes what the reader gets; it does not describe how we
+     * built it. This page shipped Docker, JSON-RPC, "repair rounds",
+     * stdio/Streamable HTTP and Kubernetes in its marketing copy until
+     * 2026-08-03. The "For agents" block is exempt by design - there the
+     * protocol details ARE the product surface, not implementation trivia.
+     */
+    it('keeps implementation vocabulary out of the marketing copy', () => {
+      const el = fixture.nativeElement as HTMLElement;
+      const pitch = Array.from(el.querySelectorAll('.hero, .band, .status, .closing'))
+        .map(node => node.textContent ?? '')
+        .join(' ')
+        .toLowerCase();
+
+      ['docker', 'json-rpc', 'kubernetes', 'stdio', 'sandbox', 'pipeline', 'repair round'].forEach(
+        term => expect(pitch).not.toContain(term),
+      );
     });
 
     it('does not offer GitHub repository push as an available destination', () => {
@@ -176,7 +203,7 @@ describe('LandingComponent', () => {
       // exactly why this checks for the *act of pushing* rather than the noun.)
       expect(worksToday.toLowerCase()).not.toContain('push');
       expect(worksToday).toContain('Gist');
-      expect(text).toContain('gated to a paid tier');
+      expect(text.toLowerCase()).toContain('gated to a paid tier');
     });
   });
 });

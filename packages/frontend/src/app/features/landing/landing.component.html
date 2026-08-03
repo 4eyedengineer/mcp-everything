@@ -7,12 +7,13 @@
         -> research.service.ts routeResearchStrategy(): four real strategies.
            There is deliberately no "OpenAPI spec" input - no OpenAPI or
            GraphQL parser exists anywhere in the backend.
-    "Docker" / "five" repair rounds / "JSON-RPC"
+    "built, tested and fixed until it works"
         -> testing/mcp-testing.service.ts (real `docker run`, initialize ->
            tools/list -> tools/call) and pipeline.service.ts
            MAX_REFINEMENT_ITERATIONS = 5.
-    "stdio and MCP Streamable HTTP"
-        -> refinement.service.ts reference implementation + MCP_TRANSPORT.
+    "Claude Desktop, or ... behind HTTP"
+        -> refinement.service.ts reference implementation + MCP_TRANSPORT
+           (stdio default, Streamable HTTP opt-in).
     the MCP endpoint block
         -> mcp-server/mcp-server.controller.ts + mcp-tools.service.ts.
            Verified live on 2026-08-03: POST https://mcpeverything.com/mcp
@@ -30,6 +31,13 @@
   future tense, and nowhere else. Keep this page short: it lost an FAQ, six
   feature cards and a five-step walkthrough on 2026-08-03 because a landing
   page that reads like a manual does not convert.
+
+  SAY WHAT THE BUYER GETS, NOT HOW WE BUILT IT. On 2026-08-03 this page was
+  stripped of Docker, JSON-RPC, "repair rounds", stdio/Streamable HTTP and
+  Kubernetes - our plumbing, leaking into the pitch. Every claim is unchanged
+  and still traceable above; only the vocabulary is now the reader's. The
+  "For agents" section is the deliberate exception: it is API documentation,
+  where the protocol details ARE the product surface.
 -->
 <div class="landing">
   <a class="skip-link" href="#main">Skip to content</a>
@@ -68,8 +76,8 @@
         </h1>
 
         <p class="hero-subtitle">
-          Not scaffolded. Not hopefully-correct. Compiled, started in a Docker sandbox and called
-          over JSON-RPC before it ever reaches you.
+          Not a scaffold, and not a guess. Every server is built, tested and fixed until it works
+          &mdash; before it ever reaches you.
         </p>
 
         <!--
@@ -104,10 +112,10 @@
 
           <ol class="rail">
             <li>Research</li>
-            <li>Plan tools</li>
+            <li>Design</li>
             <li>Build</li>
-            <li>Run in Docker</li>
-            <li>Repair &times;5</li>
+            <li>Test</li>
+            <li>Deliver</li>
           </ol>
         </div>
 
@@ -125,10 +133,10 @@
     <!-- Numbers band ------------------------------------------------------ -->
     <section class="band" aria-label="At a glance">
       <div class="landing-shell band-inner">
-        <div class="band-item"><b>4</b><span>ways in</span></div>
-        <div class="band-item"><b>5</b><span>repair rounds</span></div>
-        <div class="band-item"><b>2</b><span>MCP transports</span></div>
+        <div class="band-item"><b>4</b><span>ways to start</span></div>
+        <div class="band-item"><b>5</b><span>a month, free</span></div>
         <div class="band-item"><b>6</b><span>tools for agents</span></div>
+        <div class="band-item"><b>0</b><span>lock-in</span></div>
       </div>
     </section>
 
@@ -138,9 +146,9 @@
         <div>
           <h2 class="section-heading" id="agents-heading">It is an MCP server too</h2>
           <p class="section-intro">
-            <code>POST /mcp</code> speaks MCP Streamable HTTP, stateless, authenticated with an API
-            key. An agent can generate a server, answer its own clarifying questions, fetch the code
-            and search the catalogue without a browser in the loop.
+            <code>POST /mcp</code> speaks MCP Streamable HTTP, authenticated with an API key. An
+            agent can generate a server, answer its own clarifying questions, fetch the code and
+            search the catalogue without a browser in the loop.
           </p>
 
           <dl class="facts">
@@ -206,11 +214,11 @@
           <div class="ledger-col ledger-col-ready">
             <h3>Works today</h3>
             <ul>
-              <li>Generation from a repo, a docs URL, a service name or a sentence</li>
-              <li>Docker-sandboxed build, run and real tool calls, with five repair rounds</li>
-              <li>Generated servers speaking both stdio and MCP Streamable HTTP</li>
+              <li>Start from a repo, a docs URL, a service name or a sentence</li>
+              <li>Every server tested before you get it, and fixed if it fails</li>
+              <li>Drops straight into Claude Desktop, or runs behind HTTP wherever you put it</li>
               <li>Code to a public Gist on your own GitHub account, or downloaded</li>
-              <li>The public MCP endpoint and its six tools</li>
+              <li>The MCP endpoint and its six tools</li>
             </ul>
           </div>
 
@@ -218,19 +226,19 @@
             <h3>Not available yet</h3>
             <ul>
               <li>
-                <strong>Hosting on our cluster.</strong> The Kubernetes path now runs end to end on
-                real hardware, but it is not open to accounts.
+                <strong>Hosting.</strong> We don&rsquo;t run your server for you yet. You take the
+                code and run it wherever you like.
               </li>
               <li>
                 <strong>Paid plans.</strong> Nothing is for sale, so no price is quoted anywhere.
               </li>
               <li>
-                <strong>Pushing to a GitHub repo.</strong> Built and working, but gated to a paid
-                tier nobody can buy. Free accounts publish a Gist.
+                <strong>Pushing straight to a GitHub repo.</strong> Gated to a paid tier, and there
+                is no paid tier to buy. Free accounts publish a Gist.
               </li>
               <li>
-                <strong>OpenAPI or GraphQL input.</strong> No specification parser exists. Point at
-                the repo or the docs instead.
+                <strong>OpenAPI or GraphQL specs.</strong> We don&rsquo;t read them. Point at the
+                repo or the docs instead.
               </li>
             </ul>
           </div>

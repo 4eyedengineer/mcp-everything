@@ -6,7 +6,7 @@
   <base href="/">
   <meta name="viewport" content="width=device-width, initial-scale=1">
 
-  <meta name="description" content="Turn a GitHub repository, documentation site, service name or plain-English description into a working Model Context Protocol server. Every server is built and run in a Docker sandbox and its tools called for real before you get it.">
+  <meta name="description" content="Turn a GitHub repository, documentation site, service name or plain-English description into a working Model Context Protocol server. Every server is built, tested and fixed until it works before you get it.">
   <link rel="canonical" href="https://mcpeverything.com/">
   <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
   <meta name="color-scheme" content="light dark">
@@ -18,7 +18,7 @@
   <meta property="og:site_name" content="MCP Everything">
   <meta property="og:url" content="https://mcpeverything.com/">
   <meta property="og:title" content="MCP Everything - Generate working MCP servers from any API">
-  <meta property="og:description" content="Describe an API and get a Model Context Protocol server that has actually been built, run and tested in a Docker sandbox - not just written.">
+  <meta property="og:description" content="Describe an API and get a Model Context Protocol server that has actually been built and tested - not just written.">
   <meta property="og:image" content="https://mcpeverything.com/og-image.png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
@@ -28,7 +28,7 @@
   <!-- Twitter / X card -->
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="MCP Everything - Generate working MCP servers from any API">
-  <meta name="twitter:description" content="Describe an API and get a Model Context Protocol server that has actually been built, run and tested in a Docker sandbox - not just written.">
+  <meta name="twitter:description" content="Describe an API and get a Model Context Protocol server that has actually been built and tested - not just written.">
   <meta name="twitter:image" content="https://mcpeverything.com/og-image.png">
   <meta name="twitter:image:alt" content="MCP Everything - generate working MCP servers from any API">
 
@@ -83,13 +83,13 @@
         "operatingSystem": "Web",
         "publisher": { "@id": "https://mcpeverything.com/#organization" },
         "isAccessibleForFree": true,
-        "description": "Generates Model Context Protocol (MCP) servers from a GitHub repository, a documentation site, a service name or a plain-English description. Each generated server is compiled, started inside a Docker container and driven over JSON-RPC before the run is allowed to succeed.",
+        "description": "Generates Model Context Protocol (MCP) servers from a GitHub repository, a documentation site, a service name or a plain-English description. Each generated server is built and tested, and fixed if it fails, before the run is allowed to succeed.",
         "featureList": [
           "Generate an MCP server from a GitHub repository URL",
           "Generate an MCP server from a documentation site URL",
           "Generate an MCP server from a service name or plain-English description",
-          "Docker-sandboxed build, run and tool execution with up to five automatic repair rounds",
-          "Generated servers support both stdio and MCP Streamable HTTP transports",
+          "Every generated server is tested before delivery, and repaired automatically if a tool call fails",
+          "Generated servers drop into Claude Desktop, or run behind HTTP wherever you host them",
           "Publish generated code to a public Gist on your own GitHub account, or download it",
           "Exposes its own MCP server so AI agents can drive generation programmatically",
           "Public, account-free catalogue of published MCP servers"
@@ -122,7 +122,7 @@
             "name": "Does MCP Everything host the generated server for me?",
             "acceptedAnswer": {
               "@type": "Answer",
-              "text": "Not yet. You get the source code, a Dockerfile and a devcontainer definition, published to a public Gist on your own GitHub account or downloaded, and you run it wherever you like. Hosting on MCP Everything infrastructure is not offered today."
+              "text": "Not yet. You get the source code, published to a public Gist on your own GitHub account or downloaded, and you run it wherever you like. We do not run your server for you today."
             }
           },
           {
@@ -130,7 +130,7 @@
             "name": "How do I know the generated server actually works?",
             "acceptedAnswer": {
               "@type": "Answer",
-              "text": "Because it was run. Each candidate is built and started inside a Docker container and driven over JSON-RPC - initialise, list tools, call them. If that fails the code goes back for repair, up to five times, before the run gives up."
+              "text": "Because it was run, not just written. Every candidate server is started and its tools are actually called; if that fails, the code is repaired and tested again before the run gives up."
             }
           },
           {
@@ -174,16 +174,15 @@
         <h1>Describe an API. Get a server that runs.</h1>
         <p class="boot-lede">
           MCP Everything turns a GitHub repository, a documentation site, a service name or a
-          plain-English description into a Model Context Protocol server &mdash; then compiles it,
-          starts it in a Docker sandbox and calls its tools over JSON-RPC, with up to five automatic
-          repair rounds, before handing it to you.
+          plain-English description into a Model Context Protocol server &mdash; built, tested and
+          fixed until it works, before it ever reaches you.
         </p>
 
         <h2>What you get</h2>
         <ul>
           <li>A server that was actually built and run, not just written</li>
-          <li>Both MCP transports: stdio by default, MCP Streamable HTTP when <code>MCP_TRANSPORT=http</code> is set</li>
-          <li>Source, tests, a Dockerfile and documentation, published to a public Gist on your own GitHub account or downloaded</li>
+          <li>Something that drops straight into Claude Desktop, or runs behind HTTP wherever you put it</li>
+          <li>Source, tests and documentation, published to a public Gist on your own GitHub account or downloaded</li>
           <li>Sign-in with GitHub, Google, or an email address and password</li>
           <li>Five generations a month, free. Nothing is for sale and no card is collected.</li>
         </ul>
@@ -203,10 +202,10 @@
 
         <h2>Not available yet</h2>
         <ul>
-          <li>Hosting MCP servers on MCP Everything infrastructure &mdash; the Kubernetes path now runs end to end on real hardware, but it is not open to accounts</li>
+          <li>Hosting &mdash; we don&rsquo;t run your server for you yet; you take the code and run it wherever you like</li>
           <li>Paid plans, billing and subscriptions &mdash; nothing is for sale</li>
-          <li>Pushing to a GitHub repository &mdash; implemented, but gated to a paid tier that cannot currently be purchased. Free accounts publish to a public Gist.</li>
-          <li>OpenAPI or GraphQL specification input &mdash; no specification parser exists</li>
+          <li>Pushing straight to a GitHub repository &mdash; gated to a paid tier, and there is no paid tier to buy. Free accounts publish to a public Gist.</li>
+          <li>OpenAPI or GraphQL specs &mdash; we don&rsquo;t read them; point at the repository or the docs instead</li>
         </ul>
 
         <p class="boot-actions">
