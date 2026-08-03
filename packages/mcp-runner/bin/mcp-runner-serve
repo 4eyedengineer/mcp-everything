@@ -1,0 +1,52 @@
+#!/bin/sh
+#
+# mcp-runner-serve - main container entrypoint for hosted MCP servers.
+#
+# Runs the artefact that mcp-runner-init compiled into the shared /app volume.
+# Generated servers are dual-transport; hosting always wants Streamable HTTP,
+# so MCP_TRANSPORT=http is forced here rather than left to chance. The server
+# then serves MCP at POST /mcp and a liveness endpoint at GET /health.
+#
+# Contract (env):
+#   MCP_APP_DIR    optional - default /app
+#   PORT           optional - default 3000
+#   MCP_TRANSPORT  forced to "http" unless explicitly overridden
+
+set -eu
+
+APP_DIR="${MCP_APP_DIR:-/app}"
+ENTRY="${MCP_ENTRYPOINT:-dist/index.js}"
+
+export MCP_TRANSPORT="${MCP_TRANSPORT:-http}"
+export PORT="${PORT:-3000}"
+
+log() { echo "mcp-runner-serve: $*" >&2; }
+
+die() {
+  echo "" >&2
+  echo "mcp-runner-serve: FATAL: $1" >&2
+  shift
+  for line in "$@"; do
+    echo "mcp-runner-serve:        $line" >&2
+  done
+  echo "" >&2
+  exit 1
+}
+
+cd "$APP_DIR" 2>/dev/null || die \
+  "app directory '$APP_DIR' does not exist." \
+  "Expected the emptyDir shared with the init container to be mounted here."
+
+[ -f "$APP_DIR/$ENTRY" ] || die \
+  "'$APP_DIR/$ENTRY' not found - nothing to run." \
+  "This almost always means the initContainer did not complete successfully," \
+  "or the init and main containers are not sharing the same volume." \
+  "Check: kubectl logs <pod> -c <init-container-name>" \
+  "Present in $APP_DIR: $(ls -A "$APP_DIR" 2>/dev/null | tr '\n' ' ')"
+
+log "starting $ENTRY (transport=$MCP_TRANSPORT port=$PORT) as uid $(id -u)"
+
+# exec so node replaces the shell as PID 1 and receives SIGTERM directly from
+# the kubelet - without this, shutdown would always wait out the full
+# terminationGracePeriodSeconds.
+exec node "$ENTRY"

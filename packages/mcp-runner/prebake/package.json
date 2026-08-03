@@ -1,0 +1,15 @@
+{
+  "name": "mcp-runner-prebake",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Dependency set pre-baked into the mcp-runner image. MUST mirror the dependencies emitted by generatePackageJson() in packages/backend/src/orchestration/refinement.service.ts - every version that drifts here is a cache miss (a real network download) on every hosted-server cold start.",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "zod": "^4.4.3",
+    "axios": "^1.7.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  }
+}
