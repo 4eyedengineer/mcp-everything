@@ -51,6 +51,13 @@ configMapGenerator:
       # HTTP. Used for password-reset email links and Stripe redirects, so it
       # must be the public https origin, not the LAN nip.io host.
       - FRONTEND_URL=https://mcpeverything.com
+      # Public origin of the hosted-server MCP gateway. HostingService writes
+      # each hosted server's endpointUrl as
+      #   <MCP_GATEWAY_PUBLIC_URL>/api/hosting/servers/<serverId>/mcp
+      # and defaults to http://localhost:3000 when unset - which is what
+      # production was handing users before this was added (verified
+      # 2026-08-03: routing worked, the advertised URL did not).
+      - MCP_GATEWAY_PUBLIC_URL=https://mcpeverything.com
       - MCP_TESTING_ALLOW_UNSANDBOXED=true
       - GENERATED_SERVERS_DIR=/data/generated-servers
       - PIPELINE_INTENT_CONFIDENCE_MIN=0.75

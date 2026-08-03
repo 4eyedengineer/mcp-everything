@@ -292,65 +292,74 @@
   display: flex;
   gap: 12px;
   margin-top: 24px;
+}
 
-  .action-button {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    padding: 12px 24px;
-    border-radius: 8px;
-    font-size: 15px;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    border: none;
+// Reusable hand-rolled action button. Deliberately NOT nested inside
+// `.form-actions` (it previously was) - `.action-button` is also used
+// standalone outside any `.form-actions` row (the Subscription section's
+// "Manage Subscription" button, and the Pro/Enterprise "Upgrade" buttons
+// inside `.pricing-cards`). Scoping this entire block - including the
+// `mat-icon` size override below - under `.form-actions` meant those
+// standalone buttons fell back to an unstyled native <button> (no
+// padding/radius/background from this rule) with a Material-default
+// 24px icon that didn't fit, instead of the intended 20px.
+.action-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 24px;
+  border-radius: 8px;
+  font-size: 15px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border: none;
 
-    mat-icon {
-      font-size: 20px;
-      width: 20px;
-      height: 20px;
+  mat-icon {
+    font-size: 20px;
+    width: 20px;
+    height: 20px;
+  }
+
+  &.primary {
+    background-color: var(--primary-color);
+    color: var(--text-inverse);
+
+    &:hover {
+      background-color: var(--primary-hover);
     }
 
-    &.primary {
+    &:active {
+      transform: scale(0.98);
+    }
+  }
+
+  &.secondary {
+    background-color: var(--surface-color);
+    color: var(--text-primary);
+    border: 1px solid var(--border-medium);
+
+    &:hover {
+      background-color: var(--surface-alt);
+      border-color: var(--border-dark);
+    }
+
+    &:active {
+      transform: scale(0.98);
+    }
+  }
+
+  &.danger {
+    background-color: var(--warn-color);
+    color: var(--text-inverse);
+
+    &:hover {
       background-color: var(--primary-color);
-      color: var(--text-inverse);
-
-      &:hover {
-        background-color: var(--primary-hover);
-      }
-
-      &:active {
-        transform: scale(0.98);
-      }
     }
 
-    &.secondary {
-      background-color: var(--surface-color);
-      color: var(--text-primary);
-      border: 1px solid var(--border-medium);
-
-      &:hover {
-        background-color: var(--surface-alt);
-        border-color: var(--border-dark);
-      }
-
-      &:active {
-        transform: scale(0.98);
-      }
-    }
-
-    &.danger {
-      background-color: var(--warn-color);
-      color: var(--text-inverse);
-
-      &:hover {
-        background-color: var(--primary-color);
-      }
-
-      &:active {
-        transform: scale(0.98);
-      }
+    &:active {
+      transform: scale(0.98);
     }
   }
 }

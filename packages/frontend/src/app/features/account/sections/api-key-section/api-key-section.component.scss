@@ -158,65 +158,73 @@
   display: flex;
   gap: 12px;
   margin-top: 16px;
+}
 
-  .action-button {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    padding: 12px 24px;
-    border-radius: 8px;
-    font-size: 15px;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    border: none;
+// Reusable hand-rolled action button. Deliberately NOT nested inside
+// `.form-actions` (it previously was) - the per-row "Revoke" button in
+// the API key list below lives in `.api-key-actions`, not `.form-actions`,
+// so scoping this whole block - including the `mat-icon` size override -
+// under `.form-actions` meant it fell back to an unstyled native
+// <button> (no padding/radius/background from this rule) with a
+// Material-default 24px icon that didn't fit, instead of the intended
+// 20px.
+.action-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 24px;
+  border-radius: 8px;
+  font-size: 15px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border: none;
 
-    mat-icon {
-      font-size: 20px;
-      width: 20px;
-      height: 20px;
+  mat-icon {
+    font-size: 20px;
+    width: 20px;
+    height: 20px;
 
-      &.spinning {
-        animation: spin 1s linear infinite;
-      }
+    &.spinning {
+      animation: spin 1s linear infinite;
     }
+  }
 
-    // .primary was replaced by the shared .mcp-btn-primary (styles/_buttons.scss)
-    // on the "Create key"/"Create API key" buttons above.
+  // .primary was replaced by the shared .mcp-btn-primary (styles/_buttons.scss)
+  // on the "Create key"/"Create API key" buttons above.
 
-    &.secondary {
-      background-color: var(--surface-color);
-      color: var(--text-primary);
-      border: 1px solid var(--border-medium);
+  &.secondary {
+    background-color: var(--surface-color);
+    color: var(--text-primary);
+    border: 1px solid var(--border-medium);
 
-      &:hover:not(:disabled) {
-        background-color: var(--surface-alt);
-        border-color: var(--border-dark);
-      }
+    &:hover:not(:disabled) {
+      background-color: var(--surface-alt);
+      border-color: var(--border-dark);
     }
+  }
 
-    &.danger {
-      background-color: var(--surface-color);
-      color: var(--error-text);
-      border: 1px solid var(--error-border);
-      padding: 8px 16px;
-      font-size: 14px;
+  &.danger {
+    background-color: var(--surface-color);
+    color: var(--error-text);
+    border: 1px solid var(--error-border);
+    padding: 8px 16px;
+    font-size: 14px;
 
-      &:hover:not(:disabled) {
-        background-color: var(--error-bg);
-        border-color: var(--error-border-hover);
-      }
+    &:hover:not(:disabled) {
+      background-color: var(--error-bg);
+      border-color: var(--error-border-hover);
     }
+  }
 
-    &:disabled {
-      opacity: 0.6;
-      cursor: not-allowed;
-    }
+  &:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
 
-    &:active:not(:disabled) {
-      transform: scale(0.98);
-    }
+  &:active:not(:disabled) {
+    transform: scale(0.98);
   }
 }
 

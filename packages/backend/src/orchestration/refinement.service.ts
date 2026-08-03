@@ -239,7 +239,13 @@ async function runHttp(): Promise<void> {
         // A new session is created ONLY on a real initialize request.
         transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: () => randomUUID(),
-          onsessioninitialized: (newSessionId) => transports.set(newSessionId, transport),
+          // Braces matter: a concise arrow body would return the Map, and the
+          // SDK types this callback as () => void | Promise<void>, so the
+          // expression form fails strict tsc with TS2322. Every generated
+          // server copies this verbatim - keep the block body.
+          onsessioninitialized: (newSessionId) => {
+            transports.set(newSessionId, transport);
+          },
         });
         transport.onclose = () => {
           if (transport.sessionId) transports.delete(transport.sessionId);

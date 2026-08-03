@@ -405,7 +405,12 @@
     margin-bottom: 32px;
 
     .featured-grid {
-      grid-template-columns: 1fr;
+      // minmax(0, ...), not a bare 1fr: a plain `1fr` track still has an
+      // implicit min-width of `auto` (its content's max-content size), so
+      // a card with unbreakable content can force the single column - and
+      // the whole page - wider than the viewport. minmax(0, 1fr) lets the
+      // track actually shrink to fit.
+      grid-template-columns: minmax(0, 1fr);
       gap: 16px;
     }
   }
@@ -430,7 +435,11 @@
   }
 
   .servers-grid {
-    grid-template-columns: 1fr;
+    // See .featured-grid above: minmax(0, 1fr), not a bare 1fr, so the
+    // track can actually shrink to the viewport instead of growing to fit
+    // a card's unbreakable content (this was the cause of a ~9-15px
+    // horizontal overflow/scroll at 375px).
+    grid-template-columns: minmax(0, 1fr);
     gap: 16px;
   }
 

@@ -1,16 +1,32 @@
 # Network isolation for hosted MCP server pods.
 #
-# Changed from the deleted `mcp-server-deployments/base/network-policy.yaml`
-# in one important way: that version allowed ingress only from the
-# `ingress-nginx` namespace, which matched the old per-server-Ingress design.
-# Per-server Ingress is deferred (a backend gateway on a single public origin
-# is the pending direction), and this cluster's ingress controller is Traefik
-# rather than nginx anyway - so that rule pointed at a namespace that does not
-# exist here and would have blackholed all traffic.
+# These pods run AI-generated code written from an untrusted prompt. Treat
+# them as hostile-by-default: the threat is not only a malicious user, but an
+# ordinary hallucination - a generated "helper" that scans a subnet, or a
+# wrong hostname that happens to resolve to something internal.
 #
-# Ingress is therefore allowed from the `mcp-everything` namespace, i.e. from
-# the backend that will proxy MCP traffic to these ClusterIP Services. Update
-# this if/when the routing decision lands somewhere else.
+# INGRESS: only from `mcp-everything` (the backend gateway proxying MCP
+# traffic to these ClusterIP Services), only on the server port. The deleted
+# `mcp-server-deployments/base/network-policy.yaml` allowed ingress from an
+# `ingress-nginx` namespace that does not exist on this Traefik cluster, which
+# would have blackholed everything.
+#
+# EGRESS: this previously read `- {}` (allow all), justified by "a generated
+# MCP server's entire purpose is usually to call an external third-party API".
+# That is true and still honoured - but allow-all also reached the platform's
+# own Postgres in `mcp-everything`, the kube-apiserver, Harbor, and SSH on the
+# homelab node. Verified empirically on 2026-08-03: a hosted pod successfully
+# connected to postgres in the neighbouring namespace.
+#
+# So: DNS is permitted explicitly, then the public internet is permitted with
+# every private range carved out. Generated servers keep the outbound access
+# they need for third-party APIs and lose the ability to touch the LAN, the
+# cluster's own network, or link-local metadata endpoints.
+#
+# The 10.0.0.0/8 exclusion covers this cluster's pod CIDR (10.42.0.0/16) and
+# service CIDR (10.43.0.0/16), so it must be listed BEFORE any thought of
+# narrowing it - kube-dns lives at 10.43.0.10 and is reachable only via the
+# dedicated DNS rule below, not via the ipBlock rule.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -34,7 +50,28 @@ spec:
         - protocol: TCP
           port: 3000
   egress:
-    # Allow all egress: a generated MCP server's entire purpose is usually to
-    # call an external third-party API. Restricting this per-server would need
-    # per-server policy generation, which is out of scope here.
-    - {}
+    # 1. DNS resolution. CoreDNS sits inside the service CIDR that rule 2
+    #    excludes, so it needs its own rule or nothing resolves.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # 2. The public internet, and nothing private.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8 # RFC1918 - includes this cluster's pod + service CIDRs
+              - 172.16.0.0/12 # RFC1918 - includes docker bridge networks on the nodes
+              - 192.168.0.0/16 # RFC1918 - the homelab LAN itself
+              - 169.254.0.0/16 # link-local, incl. cloud metadata endpoints
+              - 100.64.0.0/10 # CGNAT / Tailscale
+              - 127.0.0.0/8 # loopback
