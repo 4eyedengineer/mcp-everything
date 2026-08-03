@@ -5,6 +5,7 @@ import { NotFoundException, BadRequestException, ForbiddenException } from '@nes
 import { HostingService } from './hosting.service';
 import { UserService } from '../user/user.service';
 import { TokenEncryptionService } from '../common/token-encryption/token-encryption.service';
+import { HostedServerSourceTokenService } from './hosted-server-source-token.service';
 import { UserTier } from '../subscription/tier-config';
 import { HostedServer } from '../database/entities/hosted-server.entity';
 import { Deployment } from '../database/entities/deployment.entity';
@@ -27,6 +28,7 @@ describe('HostingService', () => {
   let userService: { findById: jest.Mock };
   let deploymentRepo: { findOne: jest.Mock };
   let tokenEncryptionService: { enabled: boolean; encrypt: jest.Mock; decrypt: jest.Mock };
+  let sourceTokenService: { mintToken: jest.Mock; revokeAllForServer: jest.Mock };
   let containerRegistryService: {
     buildAndPush: jest.Mock;
     buildImage: jest.Mock;
@@ -133,6 +135,16 @@ describe('HostingService', () => {
       getLogs: jest.fn(),
     };
 
+    sourceTokenService = {
+      mintToken: jest.fn().mockResolvedValue({
+        token: 'mcpsrc_test-token',
+        id: 'source-token-1',
+        tokenPrefix: 'mcpsrc_abcdef',
+        expiresAt: new Date('2026-09-01T00:00:00.000Z'),
+      }),
+      revokeAllForServer: jest.fn().mockResolvedValue(0),
+    };
+
     service = await buildService();
   });
 
@@ -156,6 +168,7 @@ describe('HostingService', () => {
         { provide: ConfigService, useValue: mockConfigService },
         { provide: UserService, useValue: userService },
         { provide: TokenEncryptionService, useValue: tokenEncryptionService },
+        { provide: HostedServerSourceTokenService, useValue: sourceTokenService },
       ],
     }).compile();
 
@@ -389,8 +402,50 @@ describe('HostingService', () => {
         await service.deployToCloud('conv-1', 'user-1', { GITHUB_TOKEN: 'ghp_secret' });
 
         expect(k8sControlPlane.applyServer).toHaveBeenCalledWith(
-          expect.objectContaining({ envVars: { GITHUB_TOKEN: 'ghp_secret' } }),
+          expect.objectContaining({
+            envVars: expect.objectContaining({ GITHUB_TOKEN: 'ghp_secret' }),
+          }),
         );
+      });
+
+      /**
+       * The pod cannot read the backend pod's GENERATED_SERVERS_DIR emptyDir,
+       * so it fetches its own source over HTTP - which needs a URL and a
+       * credential. They ride in on the same envVars that already become a
+       * Kubernetes Secret, which is why this needs no change to
+       * ManifestGeneratorService or K8sControlPlaneService.
+       */
+      it('injects the source URL and a minted source token into the pod env', async () => {
+        deploymentRepo.findOne.mockResolvedValue(baseDeployment);
+        containerRegistryService.buildAndPush.mockResolvedValue('ghcr.io/owner/repo/x:latest');
+
+        const result = await service.deployToCloud('conv-1', 'user-1');
+
+        expect(sourceTokenService.mintToken).toHaveBeenCalledTimes(1);
+        expect(k8sControlPlane.applyServer).toHaveBeenCalledWith(
+          expect.objectContaining({
+            envVars: expect.objectContaining({
+              MCP_SOURCE_URL: `http://localhost:3000/api/hosting/servers/${result.serverId}/source`,
+              MCP_SOURCE_TOKEN: 'mcpsrc_test-token',
+            }),
+          }),
+        );
+      });
+
+      /**
+       * The token plaintext must never leave the deploy path. Only its
+       * non-secret identity and expiry are reported, so an operator can
+       * correlate a pod's 401s with a specific credential.
+       */
+      it('reports the source token identity but never the token itself', async () => {
+        deploymentRepo.findOne.mockResolvedValue(baseDeployment);
+        containerRegistryService.buildAndPush.mockResolvedValue('ghcr.io/owner/repo/x:latest');
+
+        const result = await service.deployToCloud('conv-1', 'user-1');
+
+        expect(result.sourceTokenId).toBe('source-token-1');
+        expect(result.sourceTokenExpiresAt).toEqual(new Date('2026-09-01T00:00:00.000Z'));
+        expect(JSON.stringify(result)).not.toContain('mcpsrc_test-token');
       });
 
       it('records where the objects live so the reconciler can find them', async () => {
@@ -503,7 +558,7 @@ describe('HostingService', () => {
         expect(localDockerHostingService.startAndVerify).toHaveBeenCalledWith(
           result.serverId,
           'mcp-local/x:latest',
-          { GITHUB_TOKEN: 'abc' },
+          expect.objectContaining({ GITHUB_TOKEN: 'abc' }),
         );
 
         // The saved HostedServer should carry real handshake evidence, not a
@@ -774,8 +829,19 @@ describe('HostingService', () => {
       expect(saved.config.transportEnv).toEqual({ MCP_TRANSPORT: 'http' });
       // ...secrets only ever encrypted - `env_var_names` exists precisely so
       // that values are never stored in the clear.
-      expect(saved.deployEnvEncrypted).toBe('enc({"MCP_TRANSPORT":"http","API_KEY":"sk-secret"})');
+      // The source token is part of the deploy env and is therefore persisted
+      // here too - encrypted, like every other secret. That is deliberate: a
+      // `startServer` restart replays this env, and the pod must still be able
+      // to fetch its source. See HostedServerSourceTokenService on why the
+      // token is reusable rather than single-use.
+      expect(saved.deployEnvEncrypted).toBe(
+        'enc({"MCP_TRANSPORT":"http","API_KEY":"sk-secret",' +
+          `"MCP_SOURCE_URL":"http://localhost:3000/api/hosting/servers/${saved.serverId}/source",` +
+          '"MCP_SOURCE_TOKEN":"mcpsrc_test-token"})',
+      );
       expect(JSON.stringify(saved.config)).not.toContain('sk-secret');
+      // The token must never reach the cleartext config column.
+      expect(JSON.stringify(saved.config)).not.toContain('mcpsrc_test-token');
     });
 
     it('deleteServer stops the container for docker-run servers instead of touching the cluster/registry', async () => {

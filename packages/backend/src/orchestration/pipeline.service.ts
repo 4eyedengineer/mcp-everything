@@ -7,6 +7,7 @@ import { mkdirSync, writeFileSync, existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { Conversation, PipelineRun } from '../database/entities';
 import { PipelineState, PipelineStepName } from './types';
+import { buildGeneratedFileMap } from './generated-code-layout';
 import { ResearchService } from './research.service';
 import { ClarificationService } from './clarification.service';
 import { RefinementService } from './refinement.service';
@@ -1571,6 +1572,17 @@ What would you like to create?`;
   /**
    * FIX #128: Write generated files to disk for deployment
    * This ensures deployment service can read files from the filesystem
+   *
+   * The path layout comes from `buildGeneratedFileMap`, which is shared with
+   * `HostedServerSourceService` - the source-serving endpoint a hosted server's
+   * pod fetches from. That sharing is the point: if this file and that endpoint
+   * disagreed about where `mainFile` goes, a server would build here and fail
+   * in the cluster for reasons invisible in either file.
+   *
+   * NOTE this disk copy is no longer the only way to reach the generated
+   * source. It lives durably in `conversations.state.generatedCode` (written by
+   * `syncGeneratedCodeToConversation` just above); `GENERATED_SERVERS_DIR` is
+   * an `emptyDir` on the backend pod and is invisible to every other pod.
    */
   private async writeGeneratedFilesToDisk(
     conversationId: string,
@@ -1588,40 +1600,19 @@ What would you like to create?`;
         mkdirSync(serverDir, { recursive: true });
       }
 
-      if (generatedCode.mainFile) {
-        const mainPath = join(serverDir, 'src', 'index.ts');
-        const mainDir = dirname(mainPath);
-        if (!existsSync(mainDir)) {
-          mkdirSync(mainDir, { recursive: true });
+      for (const [relativePath, content] of buildGeneratedFileMap(generatedCode)) {
+        const filePath = join(serverDir, relativePath);
+        const fileDir = dirname(filePath);
+        if (!existsSync(fileDir)) {
+          mkdirSync(fileDir, { recursive: true });
         }
-        writeFileSync(mainPath, generatedCode.mainFile);
-        this.logger.log(`Wrote main file: ${mainPath}`);
+        writeFileSync(filePath, content);
+        this.logger.log(`Wrote generated file: ${filePath}`);
       }
 
-      if (generatedCode.packageJson) {
-        const pkgPath = join(serverDir, 'package.json');
-        writeFileSync(pkgPath, generatedCode.packageJson);
-        this.logger.log(`Wrote package.json: ${pkgPath}`);
-      }
-
-      if (generatedCode.tsConfig) {
-        const tsconfigPath = join(serverDir, 'tsconfig.json');
-        writeFileSync(tsconfigPath, generatedCode.tsConfig);
-        this.logger.log(`Wrote tsconfig.json: ${tsconfigPath}`);
-      }
-
-      if (generatedCode.supportingFiles) {
-        for (const [path, content] of Object.entries(generatedCode.supportingFiles)) {
-          const filePath = join(serverDir, path);
-          const fileDir = dirname(filePath);
-          if (!existsSync(fileDir)) {
-            mkdirSync(fileDir, { recursive: true });
-          }
-          writeFileSync(filePath, content);
-          this.logger.log(`Wrote supporting file: ${filePath}`);
-        }
-      }
-
+      // Not part of buildGeneratedFileMap: the README is a human-facing extra
+      // this pipeline adds, not something `generatedCode` holds, and nothing
+      // building the server needs it.
       writeFileSync(join(serverDir, 'README.md'), this.generateReadme(generatedCode));
 
       this.logger.log(`Successfully wrote generated files to ${serverDir}`);

@@ -46,6 +46,7 @@ import { ManifestGeneratorService, objectNameFor } from './services/manifest-gen
 import { K8sControlPlaneService } from './services/k8s-control-plane.service';
 import { LocalDockerHostingService } from './services/local-docker-hosting.service';
 import { TokenEncryptionService } from '../common/token-encryption/token-encryption.service';
+import { HostedServerSourceTokenService } from './hosted-server-source-token.service';
 import { ConfigService } from '@nestjs/config';
 import { UserService } from '../user/user.service';
 import { TIER_CONFIG, TIER_DISPLAY_NAMES, UserTier } from '../subscription/tier-config';
@@ -71,6 +72,19 @@ export interface DeploymentResult {
   endpointUrl: string;
   status: HostedServerStatus;
   error?: string;
+  /**
+   * Non-secret identity of the source token minted for this deploy, and when
+   * it expires. Reported so an operator can correlate a pod's source-fetch
+   * failures with a specific credential without the credential itself ever
+   * leaving the deploy path.
+   *
+   * The token PLAINTEXT is deliberately absent from this type. It goes into
+   * the pod's environment (and thence a Kubernetes Secret) and nowhere else -
+   * putting it here would put it one careless `return result` away from an
+   * HTTP response body. See HostingService.mintSourceAccessEnv.
+   */
+  sourceTokenId?: string;
+  sourceTokenExpiresAt?: Date;
 }
 
 /**
@@ -144,6 +158,7 @@ export class HostingService implements OnModuleDestroy {
     private tokenEncryptionService: TokenEncryptionService,
     private configService: ConfigService,
     private userService: UserService,
+    private sourceTokenService: HostedServerSourceTokenService,
   ) {
     this.domain = this.configService.get('MCP_HOSTING_DOMAIN', 'mcp.example.com');
     this.namespace = this.configService.get('K8S_NAMESPACE', 'mcp-servers');
@@ -246,6 +261,19 @@ export class HostingService implements OnModuleDestroy {
 
     await this.hostedServerRepo.save(hostedServer);
 
+    // 3b. Mint the credential this server's pod will use to fetch its own
+    // source. Done here, once, immediately after the row exists and before any
+    // build work, so every deploy of this server carries a fresh token (see
+    // HostedServerSourceTokenService on why one live token per server).
+    //
+    // The plaintext is put into the deploy env under MCP_SOURCE_TOKEN and
+    // therefore lands in the Kubernetes Secret that `envVars` already becomes -
+    // which is the correct home for a credential and requires no change to
+    // ManifestGeneratorService or K8sControlPlaneService. Only non-secret
+    // metadata (id, expiry) travels back out on the DeploymentResult.
+    const sourceEnv = await this.mintSourceAccessEnv(hostedServer);
+    const envVarsWithSource = { ...(envVars ?? {}), ...sourceEnv.env };
+
     const serverDir = deployment.localPath; // Path to generated server files
     if (!serverDir) {
       await this.updateStatus(hostedServer, 'failed', 'Deployment does not have localPath');
@@ -255,14 +283,60 @@ export class HostingService implements OnModuleDestroy {
         endpointUrl,
         status: 'failed',
         error: 'Deployment does not have localPath',
+        sourceTokenId: sourceEnv.tokenId,
+        sourceTokenExpiresAt: sourceEnv.expiresAt,
       };
     }
 
-    if (this.isDockerRunMode()) {
-      return this.deployToLocalDocker(hostedServer, serverDir, envVars);
-    }
+    const result = this.isDockerRunMode()
+      ? await this.deployToLocalDocker(hostedServer, serverDir, envVarsWithSource)
+      : await this.deployToKubernetes(hostedServer, deployment, serverDir, envVarsWithSource);
 
-    return this.deployToKubernetes(hostedServer, deployment, serverDir, envVars);
+    return {
+      ...result,
+      sourceTokenId: sourceEnv.tokenId,
+      sourceTokenExpiresAt: sourceEnv.expiresAt,
+    };
+  }
+
+  /**
+   * The URL a hosted server's pod fetches its own source from. Always the
+   * backend's public origin - the same one `gatewayUrlFor` uses, for the same
+   * reason (one origin, one certificate).
+   */
+  sourceUrlFor(serverId: string): string {
+    return `${this.gatewayBaseUrl}/api/hosting/servers/${serverId}/source`;
+  }
+
+  /**
+   * Mint a source token and shape it as pod environment variables.
+   *
+   * MCP_SOURCE_TOKEN is a credential: it is written to the returned env (bound
+   * for a Secret) and to nothing else. It is never logged, never returned to an
+   * HTTP client, and never placed in a URL - MCP_SOURCE_URL is deliberately a
+   * separate variable rather than a token-bearing URL, because URLs end up in
+   * access logs, proxy logs and crash dumps.
+   *
+   * A failure to mint is FATAL to the deploy rather than a warning: a pod
+   * started without a working source token cannot fetch its source and will
+   * crash-loop, which is a far worse outcome to debug than a deploy that
+   * refused up front.
+   */
+  private async mintSourceAccessEnv(hostedServer: HostedServer): Promise<{
+    env: Record<string, string>;
+    tokenId: string;
+    expiresAt: Date;
+  }> {
+    const minted = await this.sourceTokenService.mintToken(hostedServer.id);
+
+    return {
+      env: {
+        MCP_SOURCE_URL: this.sourceUrlFor(hostedServer.serverId),
+        MCP_SOURCE_TOKEN: minted.token,
+      },
+      tokenId: minted.id,
+      expiresAt: minted.expiresAt,
+    };
   }
 
   /**

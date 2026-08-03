@@ -4,6 +4,7 @@ import { AuthGuard } from '@nestjs/passport';
 import { Request } from 'express';
 import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
 import { IS_HOSTED_SERVER_GATEWAY_KEY } from '../decorators/hosted-server-gateway.decorator';
+import { IS_HOSTED_SERVER_SOURCE_KEY } from '../decorators/hosted-server-source.decorator';
 import { ApiKeyService } from '../../api-key/api-key.service';
 import { UserService } from '../../user/user.service';
 
@@ -14,6 +15,17 @@ import { UserService } from '../../user/user.service';
  * `jwt-auth.guard.spec.ts`.
  */
 const HOSTED_SERVER_KEY_PREFIX = 'mcps_';
+
+/**
+ * Prefix of a hosted-server source-fetch credential
+ * (`HostedServerSourceTokenService.TOKEN_PREFIX`). Duplicated for the same
+ * reason as above, and asserted to agree by `jwt-auth.guard.spec.ts`.
+ *
+ * Note this does NOT overlap `mcps_`: `'mcpsrc_x'.startsWith('mcps_')` is
+ * false. The two prefix checks below are therefore mutually exclusive, which
+ * is what keeps a gateway key from being routed as a source token.
+ */
+const HOSTED_SERVER_SOURCE_PREFIX = 'mcpsrc_';
 
 @Injectable()
 export class JwtAuthGuard extends AuthGuard('jwt') {
@@ -46,6 +58,14 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
     // whose entire contract is to produce a user. See
     // `@HostedServerGatewayRoute()`.
     if (this.isHostedServerGatewayRoute(context) && this.hasHostedServerKey(request)) {
+      return true;
+    }
+
+    // Hosted-server source route carrying a source token (`mcpsrc_`). Same
+    // deferral as above and for the same reason - the credential maps to a
+    // SERVER, not a user - closed by HostedServerSourceGuard, which is
+    // mandatory on the route. See `@HostedServerSourceRoute()`.
+    if (this.isHostedServerSourceRoute(context) && this.hasHostedServerSourceToken(request)) {
       return true;
     }
 
@@ -83,14 +103,32 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
     );
   }
 
+  private isHostedServerSourceRoute(context: ExecutionContext): boolean {
+    return (
+      this.reflector.getAllAndOverride<boolean>(IS_HOSTED_SERVER_SOURCE_KEY, [
+        context.getHandler(),
+        context.getClass(),
+      ]) === true
+    );
+  }
+
   /** True when the request presents an `mcps_`-prefixed bearer token. */
   private hasHostedServerKey(request: Request): boolean {
+    return this.hasBearerTokenWithPrefix(request, HOSTED_SERVER_KEY_PREFIX);
+  }
+
+  /** True when the request presents an `mcpsrc_`-prefixed bearer token. */
+  private hasHostedServerSourceToken(request: Request): boolean {
+    return this.hasBearerTokenWithPrefix(request, HOSTED_SERVER_SOURCE_PREFIX);
+  }
+
+  private hasBearerTokenWithPrefix(request: Request, prefix: string): boolean {
     const authHeader = request.headers['authorization'];
     if (typeof authHeader !== 'string') {
       return false;
     }
     const [scheme, token] = authHeader.split(' ');
-    return scheme?.toLowerCase() === 'bearer' && !!token?.startsWith(HOSTED_SERVER_KEY_PREFIX);
+    return scheme?.toLowerCase() === 'bearer' && !!token?.startsWith(prefix);
   }
 
   /** Extracts a raw `mcpe_...` API key from the X-API-Key header or an Authorization: Bearer header. */

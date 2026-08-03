@@ -48,14 +48,14 @@ export class GlobalExceptionFilter implements ExceptionFilter {
         error,
         level,
         service: 'HTTP',
-        method: `${request.method} ${request.url}`,
+        method: `${request.method} ${this.redactUrl(request.url)}`,
         conversationId,
         userId,
         context: {
           statusCode: status,
-          path: request.url,
+          path: this.redactUrl(request.url),
           method: request.method,
-          query: request.query,
+          query: this.sanitizeQuery(request.query as Record<string, any>),
           params: request.params,
           body: this.sanitizeBody(request.body),
           headers: this.sanitizeHeaders(request.headers),
@@ -84,7 +84,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     const response: Record<string, any> = {
       statusCode: status,
       timestamp: new Date().toISOString(),
-      path: request.url,
+      path: this.redactUrl(request.url),
       message: this.getErrorMessage(error, status),
     };
 
@@ -179,6 +179,40 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     }
 
     return undefined;
+  }
+
+  /**
+   * Redact credential-looking values out of a URL before it is logged.
+   *
+   * `sanitizeHeaders` already redacts `Authorization`, so a credential sent the
+   * correct way never reaches a log. A credential sent the WRONG way - in the
+   * query string - was landing in `method`, `context.path`, `context.query` and
+   * the error response body in full, and error logs are persisted to the
+   * database and readable through the log-viewer endpoints.
+   *
+   * That matters most for hosted-server source tokens (`mcpsrc_`), which grant
+   * read access to a user's generated source and are held by a pod rather than
+   * a human, so a misconfigured deployment could quietly log one on every
+   * failed request. `HostedServerSourceGuard` deliberately refuses a token in
+   * the query string - this makes sure the rejected request does not preserve
+   * it either. The other two platform credential prefixes are covered too,
+   * since they had exactly the same exposure.
+   */
+  private redactUrl(url: string): string {
+    return url
+      .replace(/\b(mcpsrc_|mcps_|mcpe_)[A-Za-z0-9_-]+/g, '$1[REDACTED]')
+      .replace(/([?&](?:token|ticket|api_?key|access_?token|password)=)[^&#]*/gi, '$1[REDACTED]');
+  }
+
+  /** Same redaction, applied to a parsed query object. */
+  private sanitizeQuery(query: Record<string, any>): Record<string, any> {
+    const sanitized: Record<string, any> = {};
+
+    for (const [key, value] of Object.entries(query ?? {})) {
+      sanitized[key] = typeof value === 'string' ? this.redactUrl(value) : value;
+    }
+
+    return sanitized;
   }
 
   /**

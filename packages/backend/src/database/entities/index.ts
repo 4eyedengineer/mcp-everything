@@ -6,6 +6,7 @@ export { Subscription } from './subscription.entity';
 export { UsageRecord } from './usage.entity';
 export { HostedServer } from './hosted-server.entity';
 export { HostedServerApiKey } from './hosted-server-api-key.entity';
+export { HostedServerSourceToken } from './hosted-server-source-token.entity';
 export { ErrorLog } from './error-log.entity';
 export { McpServer } from './mcp-server.entity';
 export { ApiKey } from './api-key.entity';
