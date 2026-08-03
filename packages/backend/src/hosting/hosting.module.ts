@@ -8,6 +8,10 @@ import { LocalDockerHostingService } from './services/local-docker-hosting.servi
 import { HostingService } from './hosting.service';
 import { HostedServerApiKeyService } from './hosted-server-api-key.service';
 import { HostingController } from './hosting.controller';
+import { McpGatewayController } from './mcp-gateway.controller';
+import { McpProxyService } from './services/mcp-proxy.service';
+import { McpUpstreamResolver } from './services/mcp-upstream-resolver.service';
+import { HostedServerGatewayGuard } from './guards/hosted-server-gateway.guard';
 import { HostedServer } from '../database/entities/hosted-server.entity';
 import { HostedServerApiKey } from '../database/entities/hosted-server-api-key.entity';
 import { Deployment } from '../database/entities/deployment.entity';
@@ -25,7 +29,11 @@ import { UserModule } from '../user/user.module';
     // concurrent hosted-server cap.
     UserModule,
   ],
-  controllers: [HostingController],
+  // McpGatewayController is the data plane (proxying MCP traffic to hosted
+  // servers); HostingController is the control plane (deploy/stop/keys). They
+  // share the `api/hosting` prefix but no routes - the gateway owns exactly
+  // `servers/:serverId/mcp`.
+  controllers: [HostingController, McpGatewayController],
   providers: [
     ContainerRegistryService,
     ManifestGeneratorService,
@@ -34,6 +42,9 @@ import { UserModule } from '../user/user.module';
     LocalDockerHostingService,
     HostingService,
     HostedServerApiKeyService,
+    McpProxyService,
+    McpUpstreamResolver,
+    HostedServerGatewayGuard,
   ],
   exports: [
     ContainerRegistryService,
@@ -43,6 +54,8 @@ import { UserModule } from '../user/user.module';
     LocalDockerHostingService,
     HostingService,
     HostedServerApiKeyService,
+    McpProxyService,
+    McpUpstreamResolver,
   ],
 })
 export class HostingModule implements OnModuleInit {

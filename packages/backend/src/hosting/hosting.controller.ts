@@ -265,11 +265,9 @@ export class HostingController {
   // -------------------------------------------------------------------------
   // Per-server API key credentials
   //
-  // HONESTY NOTE: these endpoints issue and manage credentials for hosted MCP
-  // servers, but nothing verifies those credentials on a request path yet -
-  // there is no gateway in front of hosted servers, so a hosted server still
-  // accepts traffic from anyone who knows its endpoint URL. Creating a key
-  // here does NOT lock down a server today. See HostedServerApiKeyService.
+  // These are enforced: McpGatewayController fronts every hosted MCP server and
+  // HostedServerGatewayGuard verifies the key on each request. Revoking a key
+  // here takes effect on the next request.
   // -------------------------------------------------------------------------
 
   /**
@@ -296,8 +294,9 @@ export class HostingController {
       warning: {
         shownOnce:
           'This is the only time this key will be shown. Store it now - it cannot be retrieved again.',
-        notYetEnforced:
-          'Hosted MCP servers are not yet behind a credential-checking gateway. This key is issued and revocable, but nothing verifies it on incoming requests today.',
+        usage:
+          'Send this key as "Authorization: Bearer <key>" to the server\'s MCP gateway endpoint. ' +
+          'It is verified on every request and stops working the moment it is revoked.',
       },
     };
   }

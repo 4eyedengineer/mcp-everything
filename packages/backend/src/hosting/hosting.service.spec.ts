@@ -21,6 +21,8 @@ describe('HostingService', () => {
     findOne: jest.Mock;
     count: jest.Mock;
     createQueryBuilder: jest.Mock;
+    increment: jest.Mock;
+    update: jest.Mock;
   };
   let userService: { findById: jest.Mock };
   let deploymentRepo: { findOne: jest.Mock };
@@ -77,6 +79,8 @@ describe('HostingService', () => {
       findOne: jest.fn(),
       // Quota counting: default to "no servers yet" so existing tests deploy.
       count: jest.fn().mockResolvedValue(0),
+      increment: jest.fn().mockResolvedValue({ affected: 1 }),
+      update: jest.fn().mockResolvedValue({ affected: 1 }),
       createQueryBuilder: jest.fn(),
     };
     userService = {
@@ -281,7 +285,12 @@ describe('HostingService', () => {
         const result = await service.deployToCloud('conv-1', 'user-1');
 
         expect(result.success).toBe(true);
-        expect(result.endpointUrl).toMatch(/^https:\/\//);
+        // Every hosting mode now advertises the gateway URL, not a per-server
+        // subdomain - nothing ever served `https://<serverId>.<domain>` because
+        // ManifestGeneratorService creates no Ingress.
+        expect(result.endpointUrl).toBe(
+          `http://localhost:3000/api/hosting/servers/${result.serverId}/mcp`,
+        );
         // Build and push are separate calls so the 'pushing' stage the UI
         // renders is actually reachable.
         expect(containerRegistryService.buildImage).toHaveBeenCalledWith(
@@ -483,7 +492,12 @@ describe('HostingService', () => {
 
         expect(result.success).toBe(true);
         expect(result.status).toBe('running');
-        expect(result.endpointUrl).toMatch(/^docker-exec:\/\//);
+        // Even a stdio docker-run server advertises the gateway URL. It will
+        // be rejected with a specific 503 by McpUpstreamResolver rather than
+        // advertising the `docker-exec://` pseudo-URL it used to.
+        expect(result.endpointUrl).toBe(
+          `http://localhost:3000/api/hosting/servers/${result.serverId}/mcp`,
+        );
         expect(containerRegistryService.buildAndPush).not.toHaveBeenCalled();
         expect(k8sControlPlane.applyServer).not.toHaveBeenCalled();
         expect(localDockerHostingService.startAndVerify).toHaveBeenCalledWith(
@@ -503,7 +517,7 @@ describe('HostingService', () => {
         });
       });
 
-      it('reports a real http://localhost endpointUrl when MCP_TRANSPORT=http is requested', async () => {
+      it('advertises the gateway URL (not the loopback port) for an HTTP-transport server', async () => {
         deploymentRepo.findOne.mockResolvedValue(baseDeployment);
         localDockerHostingService.buildImage.mockResolvedValue('mcp-local/x:latest');
         localDockerHostingService.startAndVerify.mockResolvedValue({
@@ -520,8 +534,12 @@ describe('HostingService', () => {
         const result = await service.deployToCloud('conv-1', 'user-1', { MCP_TRANSPORT: 'http' });
 
         expect(result.success).toBe(true);
-        expect(result.endpointUrl).toMatch(/^http:\/\/localhost:\d+$/);
-        expect(localDockerHostingService.httpHostPortFor).toHaveBeenCalledWith(result.serverId);
+        // The loopback port is an internal upstream detail now; it is
+        // recomputed by McpUpstreamResolver and never published.
+        expect(result.endpointUrl).toBe(
+          `http://localhost:3000/api/hosting/servers/${result.serverId}/mcp`,
+        );
+        expect(result.endpointUrl).not.toMatch(/localhost:2\d{4}/);
 
         const savedCalls = hostedServerRepo.save.mock.calls.map((c) => c[0]);
         const finalSave = savedCalls[savedCalls.length - 1];
@@ -822,4 +840,96 @@ describe('HostingService', () => {
       await expect(service.stopServer('missing')).rejects.toThrow(NotFoundException);
     });
   });
+
+  /**
+   * trackRequest is the gateway's usage hook, and the gateway calls it on every
+   * MCP message. These tests pin the batching behaviour, because the naive
+   * write-through version issued two row-locking writes per request.
+   */
+  describe('trackRequest / flushRequestCounts', () => {
+    it('does not touch the database until flushed', async () => {
+      await service.trackRequest('srv-1');
+      await service.trackRequest('srv-1');
+
+      expect(hostedServerRepo.increment).not.toHaveBeenCalled();
+      expect(hostedServerRepo.update).not.toHaveBeenCalled();
+    });
+
+    it('collapses many requests for one server into a single increment', async () => {
+      for (let i = 0; i < 25; i++) {
+        await service.trackRequest('srv-1');
+      }
+
+      await service.flushRequestCounts();
+
+      expect(hostedServerRepo.increment).toHaveBeenCalledTimes(1);
+      expect(hostedServerRepo.increment).toHaveBeenCalledWith(
+        { serverId: 'srv-1' },
+        'requestCount',
+        25,
+      );
+      expect(hostedServerRepo.update).toHaveBeenCalledTimes(1);
+      expect(hostedServerRepo.update).toHaveBeenCalledWith(
+        { serverId: 'srv-1' },
+        { lastRequestAt: expect.any(Date) },
+      );
+    });
+
+    it('keeps per-server counts separate', async () => {
+      await service.trackRequest('srv-1');
+      await service.trackRequest('srv-2');
+      await service.trackRequest('srv-1');
+
+      await service.flushRequestCounts();
+
+      expect(hostedServerRepo.increment).toHaveBeenCalledWith(
+        { serverId: 'srv-1' },
+        'requestCount',
+        2,
+      );
+      expect(hostedServerRepo.increment).toHaveBeenCalledWith(
+        { serverId: 'srv-2' },
+        'requestCount',
+        1,
+      );
+    });
+
+    it('empties the buffer, so a second flush is a no-op', async () => {
+      await service.trackRequest('srv-1');
+      await service.flushRequestCounts();
+      hostedServerRepo.increment.mockClear();
+
+      await service.flushRequestCounts();
+
+      expect(hostedServerRepo.increment).not.toHaveBeenCalled();
+    });
+
+    it('never lets a database failure escape into the request path', async () => {
+      hostedServerRepo.increment.mockRejectedValueOnce(new Error('deadlock detected'));
+      await service.trackRequest('srv-1');
+
+      await expect(service.flushRequestCounts()).resolves.toBeUndefined();
+    });
+
+    it('flushes on orderly shutdown so a normal restart loses nothing', async () => {
+      await service.trackRequest('srv-1');
+
+      await service.onModuleDestroy();
+
+      expect(hostedServerRepo.increment).toHaveBeenCalledWith(
+        { serverId: 'srv-1' },
+        'requestCount',
+        1,
+      );
+    });
+  });
+
+  describe('gatewayUrlFor', () => {
+    it('builds a path-addressed URL on one origin, not a per-server subdomain', () => {
+      expect(service.gatewayUrlFor('stripe-abc123k9')).toBe(
+        'http://localhost:3000/api/hosting/servers/stripe-abc123k9/mcp',
+      );
+    });
+  });
+
 });

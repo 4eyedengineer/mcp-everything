@@ -4,7 +4,14 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 
 import { loadConfig } from './config';
 import { getApiKey } from './auth';
-import { resolveServerBaseUrl, mcpEndpoint, healthEndpoint, DEFAULT_DOMAIN } from './url';
+import {
+  resolveServerBaseUrl,
+  mcpEndpoint,
+  healthEndpoint,
+  supportsHealthCheck,
+  normalizePlatformUrl,
+  DEFAULT_PLATFORM_URL,
+} from './url';
 import { formatTransportError } from './errors';
 import { McpProxy, ProxyLogger } from './proxy';
 
@@ -21,7 +28,8 @@ const logger: ProxyLogger = {
 interface CliArgs {
   serverArg?: string;
   url?: string;
-  domain?: string;
+  /** Platform origin hosting the MCP gateway. `--domain` is a legacy alias. */
+  platformUrl?: string;
   apiKey?: string;
   help: boolean;
 }
@@ -40,8 +48,11 @@ function parseArgs(argv: string[]): CliArgs {
       case '--url':
         args.url = argv[++i];
         break;
+      // --platform-url is the accurate name now that a bare server ID expands
+      // to a path on one gateway origin rather than its own subdomain.
+      case '--platform-url':
       case '--domain':
-        args.domain = argv[++i];
+        args.platformUrl = argv[++i];
         break;
       case '--api-key':
         args.apiKey = argv[++i];
@@ -63,47 +74,57 @@ Connects Claude Desktop (over stdio) to a cloud-hosted MCP server that
 speaks the real MCP Streamable HTTP protocol: POST /mcp, SSE-framed
 responses, Mcp-Session-Id, protocol version 2025-11-25.
 
-    Claude Desktop  <--stdio-->  mcp-connect (this)  <--HTTPS-->  hosted server
+  Claude Desktop <--stdio--> mcp-connect <--HTTPS--> MCP Everything gateway
+                                                       |
+                                                       +--> hosted server
+
+Hosted servers are reached through the platform gateway on one origin
+(https://<platform>/api/hosting/servers/<server-id>/mcp), not on a
+per-server subdomain. The gateway authenticates every request, so an API
+key is REQUIRED - see --api-key below.
 
 Arguments:
   server-id-or-url   Either:
-                       - a full base URL, e.g.
-                         https://my-server.mcp.example.com, or
-                         http://localhost:8080 (local docker-run hosting)
                        - a bare server ID, e.g. stripe-abc123k9, expanded to
-                         https://<server-id>.<domain>
+                         <platform-url>/api/hosting/servers/<id>, or
+                       - a full base URL, used verbatim, e.g. for a server you
+                         are running yourself (http://localhost:20123)
 
 Options:
   --url <url>        Same as passing a full URL positionally. Takes priority
                       over the positional argument and $MCPEVERYTHING_BASE_URL.
-  --domain <domain>  Domain suffix used when the argument is a bare server ID.
-                      Default: $MCP_HOSTING_DOMAIN, then "${DEFAULT_DOMAIN}".
-  --api-key <key>    Bearer token forwarded as "Authorization: Bearer <key>".
-                      Hosted servers do not enforce any auth scheme today, so
-                      omitting this (and $MCPEVERYTHING_API_KEY) is a no-op -
-                      nothing pretends to check it.
+  --platform-url <u> Origin of the MCP Everything backend, used when the
+                      argument is a bare server ID.
+                      Default: $MCPEVERYTHING_PLATFORM_URL, then
+                      "${DEFAULT_PLATFORM_URL}".
+  --domain <domain>  Deprecated alias for --platform-url. A bare domain is
+                      interpreted as "https://<domain>".
+  --api-key <key>    Per-server key (starts with "mcps_"), sent as
+                      "Authorization: Bearer <key>". Create one with
+                      POST /api/hosting/servers/<server-id>/keys. Required
+                      unless you are the server's owner and are supplying a
+                      session token instead.
   -h, --help         Show this help.
 
 Environment Variables:
-  MCPEVERYTHING_API_KEY     API key for authentication (same as --api-key)
-  MCPEVERYTHING_BASE_URL    Full base URL; overrides the positional argument
-  MCP_HOSTING_DOMAIN        Domain suffix for bare server IDs (see --domain)
+  MCPEVERYTHING_API_KEY       API key for authentication (same as --api-key)
+  MCPEVERYTHING_BASE_URL      Full base URL; overrides the positional argument
+  MCPEVERYTHING_PLATFORM_URL  Platform origin (see --platform-url)
+  MCP_HOSTING_DOMAIN          Deprecated; treated as a platform origin
 
 Config File (~/.mcpeverything/config.json or ~/.config/mcpeverything/config.json):
   {
-    "baseUrl": "https://my-server.mcp.example.com",
-    "domain": "mcp.example.com",
+    "platformUrl": "https://api.mcpeverything.com",
     "apiKeys": {
-      "default": "your-default-api-key",
-      "server-id": "server-specific-key"
+      "default": "mcps_your-default-key",
+      "stripe-abc123k9": "mcps_server-specific-key"
     }
   }
 
 Examples:
-  mcp-connect stripe-abc123k9
-  mcp-connect https://stripe-abc123k9.mcp.example.com
-  mcp-connect http://localhost:8080
-  MCPEVERYTHING_API_KEY=sk-xxx mcp-connect stripe-abc123k9
+  MCPEVERYTHING_API_KEY=mcps_xxx mcp-connect stripe-abc123k9
+  mcp-connect stripe-abc123k9 --api-key mcps_xxx
+  mcp-connect http://localhost:20123
 `);
 }
 
@@ -149,7 +170,14 @@ async function main(): Promise<void> {
   const config = loadConfig();
   const serverArg = args.serverArg ?? '';
   const apiKey = args.apiKey || getApiKey(serverArg) || process.env.MCPEVERYTHING_API_KEY;
-  const domain = args.domain || process.env.MCP_HOSTING_DOMAIN || config.domain || DEFAULT_DOMAIN;
+  const platformUrl = normalizePlatformUrl(
+    args.platformUrl ||
+      process.env.MCPEVERYTHING_PLATFORM_URL ||
+      process.env.MCP_HOSTING_DOMAIN ||
+      config.platformUrl ||
+      config.domain ||
+      DEFAULT_PLATFORM_URL,
+  );
 
   // Priority: --url flag > $MCPEVERYTHING_BASE_URL > positional server-id-or-url
   // > config file's "baseUrl" (only as a last resort, e.g. `mcp-connect` with
@@ -161,7 +189,7 @@ async function main(): Promise<void> {
     } else if (process.env.MCPEVERYTHING_BASE_URL) {
       baseUrl = process.env.MCPEVERYTHING_BASE_URL;
     } else if (serverArg) {
-      baseUrl = resolveServerBaseUrl(serverArg, domain);
+      baseUrl = resolveServerBaseUrl(serverArg, platformUrl);
     } else if (config.baseUrl) {
       baseUrl = config.baseUrl;
     } else {
@@ -179,7 +207,19 @@ async function main(): Promise<void> {
   const mcpUrl = mcpEndpoint(baseUrl);
   logger.info(`mcp-connect: target server ${mcpUrl}${apiKey ? ' (API key set)' : ' (no API key)'}`);
 
-  await checkHealth(baseUrl);
+  // The gateway rejects unauthenticated requests, so this is now a real
+  // misconfiguration rather than the no-op it used to be.
+  if (!apiKey && !supportsHealthCheck(baseUrl)) {
+    logger.error(
+      'mcp-connect: warning: no API key set, but the MCP Everything gateway requires one. ' +
+        'Set $MCPEVERYTHING_API_KEY or pass --api-key <mcps_...>, or the first request will fail with HTTP 401.',
+    );
+  }
+
+  // The gateway exposes only /mcp per server; see supportsHealthCheck().
+  if (supportsHealthCheck(baseUrl)) {
+    await checkHealth(baseUrl);
+  }
 
   const headers: Record<string, string> = {};
   if (apiKey) {
@@ -226,6 +266,12 @@ if (require.main === module) {
 // Export for programmatic use / testing.
 export { loadConfig, saveConfig, getConfigPath } from './config';
 export { getApiKey } from './auth';
-export { resolveServerBaseUrl, mcpEndpoint, healthEndpoint } from './url';
+export {
+  resolveServerBaseUrl,
+  mcpEndpoint,
+  healthEndpoint,
+  supportsHealthCheck,
+  normalizePlatformUrl,
+} from './url';
 export { formatTransportError } from './errors';
 export { McpProxy } from './proxy';

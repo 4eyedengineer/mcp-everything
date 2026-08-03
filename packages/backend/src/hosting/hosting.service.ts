@@ -4,6 +4,7 @@ import {
   NotFoundException,
   BadRequestException,
   ForbiddenException,
+  OnModuleDestroy,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
@@ -118,11 +119,18 @@ export interface HostedServerLimitError {
 type HostingMode = 'kubernetes' | 'docker-run';
 
 @Injectable()
-export class HostingService {
+export class HostingService implements OnModuleDestroy {
   private readonly logger = new Logger(HostingService.name);
   private readonly domain: string;
   private readonly namespace: string;
   private readonly hostingMode: HostingMode;
+  private readonly gatewayBaseUrl: string;
+
+  /** How long buffered request counts may sit unwritten. See trackRequest(). */
+  static readonly REQUEST_COUNT_FLUSH_INTERVAL_MS = 5_000;
+
+  private pendingRequestCounts = new Map<string, { count: number; lastRequestAt: Date }>();
+  private requestCountFlushTimer: NodeJS.Timeout | null = null;
 
   constructor(
     @InjectRepository(HostedServer)
@@ -140,6 +148,28 @@ export class HostingService {
     this.domain = this.configService.get('MCP_HOSTING_DOMAIN', 'mcp.example.com');
     this.namespace = this.configService.get('K8S_NAMESPACE', 'mcp-servers');
     this.hostingMode = this.configService.get<HostingMode>('HOSTING_MODE', 'kubernetes');
+    // Public origin of THIS backend - the one origin every hosted server is
+    // now reached through. Not MCP_HOSTING_DOMAIN, which described the
+    // per-server wildcard scheme the gateway replaces.
+    this.gatewayBaseUrl = this.configService
+      .get<string>('MCP_GATEWAY_PUBLIC_URL', 'http://localhost:3000')
+      .replace(/\/+$/, '');
+  }
+
+  /**
+   * The URL a user points an MCP client at. Always the gateway - one public
+   * origin, path-addressed by serverId, for every hosting mode.
+   *
+   * This replaced three different per-mode URLs, none of which worked:
+   * `https://<serverId>.<domain>` needed wildcard DNS and a per-server Ingress
+   * that `ManifestGeneratorService` deliberately does not create (so it
+   * resolved to nothing); `http://localhost:<port>` was only dialable from the
+   * backend's own host; and `docker-exec://...` was never a URL at all. Because
+   * the gateway authenticates and meters, the address it hands out is also the
+   * first one that is safe to give someone.
+   */
+  gatewayUrlFor(serverId: string): string {
+    return `${this.gatewayBaseUrl}/api/hosting/servers/${serverId}/mcp`;
   }
 
   private isDockerRunMode(): boolean {
@@ -188,17 +218,12 @@ export class HostingService {
 
     // 2. Generate unique server ID
     const serverId = this.generateServerId(deployment.serverName);
-    // docker-run + MCP_TRANSPORT=http gets a real, dialable URL (the port
-    // LocalDockerHostingService will publish is a pure function of serverId,
-    // so it's safe to compute here before the container actually starts);
-    // docker-run + stdio has no network endpoint at all, so `docker-exec://`
-    // stays an honest (if fake-scheme) placeholder rather than a URL nothing
-    // can actually connect to.
-    const endpointUrl = this.isDockerRunMode()
-      ? envVars?.MCP_TRANSPORT?.toLowerCase() === 'http'
-        ? `http://localhost:${this.localDockerHostingService.httpHostPortFor(serverId)}`
-        : `docker-exec://${this.localDockerHostingService.containerNameFor(serverId)}`
-      : `https://${serverId}.${this.domain}`;
+
+    // Every hosting mode now advertises the same gateway URL. The mode-specific
+    // upstream address (ClusterIP service DNS, or the deterministic loopback
+    // port) is recomputed inside the backend by McpUpstreamResolver and is
+    // never published - see gatewayUrlFor().
+    const endpointUrl = this.gatewayUrlFor(serverId);
 
     // 3. Create hosted server record
     const hostedServer = this.hostedServerRepo.create({
@@ -603,11 +628,101 @@ export class HostingService {
   }
 
   /**
-   * Increment request count (called by MCP proxy)
+   * Record that a hosted server served a request. Called by
+   * `McpGatewayController` on every proxied MCP call - its first caller ever,
+   * which is why `requestCount`/`lastRequestAt` were previously stuck at
+   * 0/null.
+   *
+   * ---------------------------------------------------------------------------
+   * WHY THIS BUFFERS INSTEAD OF WRITING THROUGH
+   * ---------------------------------------------------------------------------
+   * The original implementation issued TWO database round-trips per call
+   * (`increment` then `update`). That was harmless while nothing called it, but
+   * on the gateway's hot path it would mean two writes to the same row for
+   * every MCP message - and MCP is chatty: one agent turn is easily a dozen
+   * `tools/call`s. Worse, they are writes to the SAME row, so concurrent
+   * traffic to one popular server would serialise on a row lock that has
+   * nothing to do with serving the request.
+   *
+   * So counts accumulate in memory and are flushed on a timer. The trade is
+   * explicit: up to FLUSH_INTERVAL_MS of counts are lost if the process is
+   * killed uncleanly (SIGKILL/OOM - `onModuleDestroy` covers orderly shutdown).
+   * That is the right trade here because this number drives idle-server garbage
+   * collection and usage display, where "within five seconds" is
+   * indistinguishable from exact, and because the alternative degrades the
+   * latency of the request being counted. It would be the WRONG trade if these
+   * counts were billed on directly - that would want a durable append-only
+   * write, which is a different mechanism (see `UsageRecord`), not a tweak to
+   * this one.
+   *
+   * Returns immediately; the returned promise is not the database write. The
+   * gateway deliberately does not await it.
+   * ---------------------------------------------------------------------------
    */
   async trackRequest(serverId: string): Promise<void> {
-    await this.hostedServerRepo.increment({ serverId }, 'requestCount', 1);
-    await this.hostedServerRepo.update({ serverId }, { lastRequestAt: new Date() });
+    const pending = this.pendingRequestCounts.get(serverId);
+    if (pending) {
+      pending.count += 1;
+      pending.lastRequestAt = new Date();
+    } else {
+      this.pendingRequestCounts.set(serverId, { count: 1, lastRequestAt: new Date() });
+    }
+
+    this.scheduleRequestCountFlush();
+  }
+
+  /**
+   * Write buffered request counts out. Public so a test (or an operator-facing
+   * endpoint) can force a flush instead of sleeping through the interval.
+   */
+  async flushRequestCounts(): Promise<void> {
+    if (this.requestCountFlushTimer) {
+      clearTimeout(this.requestCountFlushTimer);
+      this.requestCountFlushTimer = null;
+    }
+
+    if (this.pendingRequestCounts.size === 0) {
+      return;
+    }
+
+    // Swap the buffer out before awaiting anything, so requests arriving during
+    // the flush accumulate into the next batch rather than being lost.
+    const batch = this.pendingRequestCounts;
+    this.pendingRequestCounts = new Map();
+
+    for (const [serverId, { count, lastRequestAt }] of batch) {
+      try {
+        await this.hostedServerRepo.increment({ serverId }, 'requestCount', count);
+        await this.hostedServerRepo.update({ serverId }, { lastRequestAt });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        // Usage bookkeeping must never take down the process that serves
+        // traffic. Dropped counts are logged and abandoned, not retried
+        // forever into an unbounded buffer.
+        this.logger.warn(
+          `Failed to flush ${count} request(s) for hosted server ${serverId}: ${message}`,
+        );
+      }
+    }
+  }
+
+  private scheduleRequestCountFlush(): void {
+    if (this.requestCountFlushTimer) {
+      return;
+    }
+
+    this.requestCountFlushTimer = setTimeout(() => {
+      this.requestCountFlushTimer = null;
+      void this.flushRequestCounts();
+    }, HostingService.REQUEST_COUNT_FLUSH_INTERVAL_MS);
+
+    // Never hold the event loop (or a Jest worker) open just to flush counters.
+    this.requestCountFlushTimer.unref?.();
+  }
+
+  /** Flush on orderly shutdown so a normal restart loses nothing. */
+  async onModuleDestroy(): Promise<void> {
+    await this.flushRequestCounts();
   }
 
   /**

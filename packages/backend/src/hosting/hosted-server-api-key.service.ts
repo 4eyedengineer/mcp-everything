@@ -44,16 +44,19 @@ export interface CreateHostedServerApiKeyOptions {
  * Issues, lists, revokes and verifies per-hosted-server API key credentials.
  *
  * ---------------------------------------------------------------------------
- * SCOPE / HONESTY NOTE - READ BEFORE ASSUMING THIS SECURES ANYTHING
+ * SCOPE NOTE - WHAT THESE KEYS NOW DO
  * ---------------------------------------------------------------------------
- * Nothing in this repository calls `verifyKey()` on a request path. Hosted MCP
- * servers are still reachable at their `endpointUrl` with NO authentication;
- * the only thing protecting them is that the URL contains an unguessable id.
+ * These keys are enforced. `verifyKey()` is called on the request path by
+ * `HostedServerGatewayGuard`, which fronts every hosted MCP server at
+ * `ALL /api/hosting/servers/:serverId/mcp`; a request without a valid key (or
+ * an owner session) is rejected there and never reaches the hosted process.
  *
- * The intended enforcement point is a backend gateway that proxies traffic to
- * hosted pods and rejects requests without a valid key. That gateway does not
- * exist yet. Until it does, creating a key here provisions a credential and
- * changes nothing about who can reach a hosted server.
+ * The remaining caveat is about REACHABILITY, not authentication: the gateway
+ * is the only published route to a hosted server, but it is not a network
+ * boundary. A hosted server's pod is reachable in-cluster by anything that can
+ * talk to its ClusterIP Service; what stops that being an exposure is the
+ * NetworkPolicy in k8s/mcp-servers/network-policy.yaml and the absence of any
+ * Ingress, not this file.
  * ---------------------------------------------------------------------------
  */
 @Injectable()
@@ -201,11 +204,10 @@ export class HostedServerApiKeyService {
    * Returns the matching row, or null when the key is unknown, revoked,
    * expired, or belongs to a different server.
    *
-   * !! THIS METHOD HAS NO CALLER YET !!
-   * It is the verification primitive a future hosted-MCP gateway would call.
-   * No request path in this repository invokes it, so hosted servers currently
-   * accept traffic without presenting any credential at all. The existence of
-   * this method is NOT evidence that hosted servers are authenticated.
+   * Called on every gateway request by `HostedServerGatewayGuard`. All four
+   * failure modes collapse to `null` on purpose: the caller must not be able to
+   * tell "no such key" from "key for another server" from "revoked", or the
+   * gateway becomes an oracle for enumerating other users' server ids.
    */
   async verifyKey(
     serverId: string,

@@ -10,7 +10,10 @@ import {
   HostedServerStatus,
   ServerStatusResponse
 } from '../../../../core/services/hosting-api.service';
-import { buildClaudeDesktopConfigJson } from '../../../../shared/utils/claude-desktop-config.util';
+import {
+  buildClaudeDesktopConfigJson,
+  claudeDesktopApiKeyHint
+} from '../../../../shared/utils/claude-desktop-config.util';
 
 /**
  * Deployment step status
@@ -239,9 +242,18 @@ export class DeployProgressComponent implements OnInit, OnDestroy {
    * local stdio processes, so a hosted server is reached through the local
    * `mcp-connect` proxy (see claude-desktop-config.util.ts) - this does not
    * depend on `endpointUrl` at all, only on `serverId`.
+   *
+   * The snippet now carries an API key placeholder, because hosted servers sit
+   * behind the authenticating MCP gateway; see `claudeDesktopApiKeyHint`, which
+   * must be shown alongside it.
    */
   get claudeDesktopConfig(): string {
     return buildClaudeDesktopConfigJson(this.serverName, this.serverId);
+  }
+
+  /** Instruction to render next to the snippet: it is not usable unedited. */
+  get claudeDesktopApiKeyHint(): string {
+    return claudeDesktopApiKeyHint(this.serverId);
   }
 
   /**

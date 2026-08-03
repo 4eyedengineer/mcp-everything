@@ -53,10 +53,16 @@ export class CreatedHostedServerApiKeyResponseDto {
 
   /**
    * Machine-readable statement of the two things a caller must understand:
-   * the secret is shown once, and nothing verifies it yet.
+   * the secret is shown once, and how to actually use it.
+   *
+   * `notYetEnforced` was removed rather than reworded when the MCP gateway
+   * landed - it said "nothing verifies it on incoming requests today", which
+   * stopped being true the moment `HostedServerGatewayGuard` started calling
+   * `verifyKey()`. A field whose name asserts a security property must not
+   * outlive that property.
    */
   warning: {
     shownOnce: string;
-    notYetEnforced: string;
+    usage: string;
   };
 }

@@ -6,7 +6,13 @@ const mockFs = fs as jest.Mocked<typeof fs>;
 
 import { loadConfig, saveConfig, getConfigPath, Config } from '../src/config';
 import { getApiKey } from '../src/auth';
-import { resolveServerBaseUrl, mcpEndpoint, healthEndpoint, DEFAULT_DOMAIN } from '../src/url';
+import {
+  resolveServerBaseUrl,
+  mcpEndpoint,
+  healthEndpoint,
+  supportsHealthCheck,
+  DEFAULT_PLATFORM_URL,
+} from '../src/url';
 import { formatTransportError } from '../src/errors';
 import { McpProxy, ProxyLogger } from '../src/proxy';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
@@ -161,14 +167,28 @@ describe('resolveServerBaseUrl', () => {
     expect(resolveServerBaseUrl('http://localhost:8080')).toBe('http://localhost:8080');
   });
 
-  it('expands a bare server ID into https://<id>.<domain>, matching HostingService.deployToCloud', () => {
-    expect(resolveServerBaseUrl('stripe-abc123k9', 'mcp.example.com')).toBe(
-      'https://stripe-abc123k9.mcp.example.com',
+  it('expands a bare server ID into a gateway PATH, not a subdomain', () => {
+    // The per-server subdomain shape was removed: nothing ever served it (no
+    // Ingress, no wildcard DNS, no certificate). See url.ts.
+    expect(resolveServerBaseUrl('stripe-abc123k9', 'https://api.example.com')).toBe(
+      'https://api.example.com/api/hosting/servers/stripe-abc123k9',
     );
   });
 
-  it('uses DEFAULT_DOMAIN when no domain is supplied', () => {
-    expect(resolveServerBaseUrl('stripe-abc123k9')).toBe(`https://stripe-abc123k9.${DEFAULT_DOMAIN}`);
+  it('treats a legacy bare --domain value as an https platform origin', () => {
+    expect(resolveServerBaseUrl('stripe-abc123k9', 'mcp.example.com')).toBe(
+      'https://mcp.example.com/api/hosting/servers/stripe-abc123k9',
+    );
+  });
+
+  it('uses DEFAULT_PLATFORM_URL when no platform URL is supplied', () => {
+    expect(resolveServerBaseUrl('stripe-abc123k9')).toBe(
+      `${DEFAULT_PLATFORM_URL}/api/hosting/servers/stripe-abc123k9`,
+    );
+  });
+
+  it('leaves a full URL alone, so a directly-run server is still reachable', () => {
+    expect(resolveServerBaseUrl('http://localhost:20123')).toBe('http://localhost:20123');
   });
 
   it('rejects input that is neither a URL nor a valid server ID', () => {
@@ -352,5 +372,17 @@ describe('McpProxy', () => {
     await proxy.close();
     expect(local.closed).toBe(false);
     expect(remote.closed).toBe(false);
+  });
+});
+
+describe('supportsHealthCheck', () => {
+  it('is false for a gateway URL, which serves only /mcp per server', () => {
+    expect(
+      supportsHealthCheck('https://api.example.com/api/hosting/servers/stripe-abc123k9'),
+    ).toBe(false);
+  });
+
+  it('is true for a server addressed directly, which serves /health next to /mcp', () => {
+    expect(supportsHealthCheck('http://localhost:20123')).toBe(true);
   });
 });

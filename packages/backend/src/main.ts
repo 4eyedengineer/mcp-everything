@@ -42,7 +42,17 @@ async function bootstrap() {
     origin: ['http://localhost:4200', 'http://localhost:8080', 'http://127.0.0.1:8080'],
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
     credentials: true,
-    exposedHeaders: ['Content-Type', 'Cache-Control', 'X-Accel-Buffering'],
+    // Mcp-Session-Id must be *exposed*, not just allowed: a Streamable HTTP
+    // client reads it off the initialize response and echoes it on every
+    // subsequent request. Without it here the browser hides the header and
+    // every session silently degrades to a new one per request.
+    exposedHeaders: [
+      'Content-Type',
+      'Cache-Control',
+      'X-Accel-Buffering',
+      'Mcp-Session-Id',
+      'Mcp-Protocol-Version',
+    ],
     allowedHeaders: [
       'Content-Type',
       'Authorization',
@@ -52,6 +62,9 @@ async function bootstrap() {
       'X-App-Version',
       'X-Client-Id',
       'X-Session-Id',
+      'Mcp-Session-Id',
+      'Mcp-Protocol-Version',
+      'Last-Event-Id',
     ],
   });
 

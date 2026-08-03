@@ -112,8 +112,11 @@ describe('HostingController', () => {
       });
       expect(result.key).toBe('mcps_PLAINTEXT');
       expect(result.warning.shownOnce).toMatch(/only time/i);
-      // The response must not overstate what a key does today.
-      expect(result.warning.notYetEnforced).toMatch(/nothing verifies it/i);
+      // The response must tell the caller how to actually present the key. The
+      // old `notYetEnforced` warning ("nothing verifies it") was deleted rather
+      // than reworded when the MCP gateway made it false.
+      expect(result.warning.usage).toMatch(/authorization: bearer/i);
+      expect(result.warning).not.toHaveProperty('notYetEnforced');
     });
 
     it('forwards an optional expiry', async () => {

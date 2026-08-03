@@ -6,9 +6,16 @@ export interface Config {
   /** Full base URL of a hosted MCP server, e.g. "https://my-server.mcp.example.com". */
   baseUrl?: string;
   /**
-   * Domain suffix to append to a bare server ID, e.g. "mcp.example.com" turns
-   * server ID "stripe-abc123k9" into "https://stripe-abc123k9.mcp.example.com".
-   * Mirrors MCP_HOSTING_DOMAIN in packages/backend/src/hosting/hosting.service.ts.
+   * Origin of the MCP Everything backend, whose gateway fronts every hosted
+   * server: server ID "stripe-abc123k9" becomes
+   * "<platformUrl>/api/hosting/servers/stripe-abc123k9". Mirrors
+   * MCP_GATEWAY_PUBLIC_URL in packages/backend/src/hosting/hosting.service.ts.
+   */
+  platformUrl?: string;
+  /**
+   * @deprecated Legacy wildcard-domain suffix from when each server had its own
+   * subdomain. Still read (and interpreted as a platform origin) so existing
+   * config files keep working; prefer `platformUrl`.
    */
   domain?: string;
   apiKeys?: Record<string, string>;
