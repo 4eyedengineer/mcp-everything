@@ -131,45 +131,45 @@ describe('LandingComponent', () => {
     });
 
     it('does not claim OpenAPI or GraphQL specification input', () => {
-      // No OpenAPI or GraphQL parser exists anywhere in the backend, so the
-      // words may appear only as an explicit denial - which must stay on the
-      // page, because the in-product help text still wrongly offers it.
-      expect(text).toContain('OpenAPI or GraphQL specs');
-      expect(text).toContain('We don’t read them');
-
-      // ...and never as one of the advertised inputs or capabilities. Checked
-      // structurally rather than by phrase-matching, so the denial itself -
-      // which necessarily names OpenAPI - doesn't trip the guard.
-      const promoted = Array.from(
-        (fixture.nativeElement as HTMLElement).querySelectorAll(
-          '.hero, .band, .agent-grid, .ledger-col-ready',
-        ),
-      )
-        .map(el => el.textContent ?? '')
-        .join(' ');
-
-      expect(promoted).not.toContain('OpenAPI');
-      expect(promoted).not.toContain('GraphQL');
-      expect(promoted).not.toContain('Swagger');
+      // No OpenAPI or GraphQL parser exists anywhere in the backend.
+      //
+      // The page used to carry an explicit denial ("no specification parser
+      // exists") purely because the chat empty-state offered a "Work with API
+      // specs - OpenAPI, Swagger, GraphQL" card. That card was corrected on
+      // 2026-08-04, so the denial is gone too: with nothing promising it
+      // anywhere, answering a question nobody asked just seeded the idea.
+      // The denial survives in llms.txt and the FAQ structured data, where a
+      // searcher would actually look for it.
+      expect(text).not.toContain('OpenAPI');
+      expect(text).not.toContain('GraphQL');
+      expect(text).not.toContain('Swagger');
     });
 
-    it('does not advertise cloud hosting as available', () => {
+    it('describes hosting accurately - offered, and capped at one', () => {
+      // This assertion is INVERTED from what it was before 2026-08-04, when
+      // it forbade any present-tense hosting claim. That was correct while the
+      // Kubernetes path was unexercised; it stopped being correct once
+      // tier-config.ts shipped hostedServerLimit: 1 on the free tier, chat
+      // grew a "Host on Cloud" button wired to deployToCloud, and hosted
+      // servers began running in production. The page denied its own best
+      // feature for a day because this guard demanded it.
       const lower = text.toLowerCase();
-      // These phrases would be present-tense claims about the unexercised
-      // Kubernetes path.
-      expect(lower).not.toContain('we host');
-      expect(lower).not.toContain('deploy to the cloud');
-      expect(lower).not.toContain('one-click deploy');
+      expect(lower).toContain('hosted here');
+      expect(lower).not.toContain('run your server for you yet');
+
+      // Still overclaiming if any of these appear: the cap is one server, and
+      // nothing autoscales.
+      expect(lower).not.toContain('unlimited');
       expect(lower).not.toContain('scale automatically');
+      expect(lower).not.toContain('scales to zero');
     });
 
     it('keeps an explicit "not available yet" disclosure on the page', () => {
       expect(text).toContain('Not available yet');
       expect(text.toLowerCase()).toContain('nothing is for sale');
-      // Hosting must still be disclosed as unavailable - just without naming
-      // the cluster it does not yet run for users on.
-      expect(text).toContain('Hosting');
-      expect(text.toLowerCase()).toContain('run your server for you');
+      // The one-server cap is a real limit and has to be stated, now that
+      // hosting is sold on the page rather than denied.
+      expect(text).toContain('More than one hosted server');
     });
 
     /**
@@ -181,7 +181,7 @@ describe('LandingComponent', () => {
      */
     it('keeps implementation vocabulary out of the marketing copy', () => {
       const el = fixture.nativeElement as HTMLElement;
-      const pitch = Array.from(el.querySelectorAll('.hero, .band, .status, .closing'))
+      const pitch = Array.from(el.querySelectorAll('.hero, .ideas, .status, .closing'))
         .map(node => node.textContent ?? '')
         .join(' ')
         .toLowerCase();
@@ -189,6 +189,35 @@ describe('LandingComponent', () => {
       ['docker', 'json-rpc', 'kubernetes', 'stdio', 'sandbox', 'pipeline', 'repair round'].forEach(
         term => expect(pitch).not.toContain(term),
       );
+    });
+
+    /**
+     * Stripping the plumbing words is not enough on its own - the first pass
+     * did that and still shipped pipeline.service.ts's step names (Research /
+     * Design / Build / Test / Deliver) as an animated numbered rail in the
+     * hero. The hero must show the OUTPUT, not the procedure.
+     */
+    it('shows what the reader gets rather than the steps we run', () => {
+      const el = fixture.nativeElement as HTMLElement;
+      const hero = el.querySelector('.hero')?.textContent ?? '';
+
+      // Example tool names - the thing the reader's assistant actually gains.
+      expect(hero).toContain('refund_charge');
+      expect(el.querySelectorAll('.tools-item').length).toBeGreaterThan(0);
+
+      // ...and no step-by-step narration of our own pipeline.
+      expect(el.querySelector('.rail')).toBeNull();
+    });
+
+    /**
+     * A landing page has to provoke "I could use this for ___". Nothing on
+     * this page did that job until the ideas strip replaced a stat band whose
+     * numbers counted our own surface area.
+     */
+    it('gives the reader concrete ideas and a route to real examples', () => {
+      const el = fixture.nativeElement as HTMLElement;
+      expect(el.querySelectorAll('.idea-list li').length).toBeGreaterThanOrEqual(3);
+      expect(el.querySelector('.ideas-link')).toBeTruthy();
     });
 
     it('does not offer GitHub repository push as an available destination', () => {

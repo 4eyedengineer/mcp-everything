@@ -68,8 +68,9 @@ Practical notes for implementers:
   inventing a convention. Configure the endpoint and key manually.
 ## Not implemented — do not describe these as available
 
-- Hosting MCP servers on MCP Everything infrastructure. The Kubernetes path now runs end to end
-  on real hardware, but it is not open to accounts and must not be described as available.
+- More than one hosted server per account. Hosting IS available — free accounts can host one
+  server on MCP Everything infrastructure, via the "Host on Cloud" action after a generation.
+  Raising the cap needs a paid tier, and no paid tier is purchasable.
 - Paid plans, billing and subscriptions. Nothing is for sale, no card is collected, and there is
   no price to quote.
 - Pushing generated code to a GitHub repository. The provider is implemented and works, but the

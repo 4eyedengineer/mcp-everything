@@ -20,13 +20,22 @@
               </div>
             </button>
 
+            <!--
+              This chip used to read "Work with API specs / OpenAPI, Swagger,
+              GraphQL" and prefilled a prompt asking for a server "based on
+              OpenAPI specification". No spec parser exists anywhere in the
+              backend - research.service.ts routes to GitHub, docs pages or a
+              plain description - so it promised a capability the product does
+              not have, and forced the landing page to carry an explicit
+              denial. It now offers what research actually does.
+            -->
             <button
               class="suggestion-card"
-              (click)="useSuggestion('Create an MCP server for a REST API based on OpenAPI specification')">
+              (click)="useSuggestion('Create an MCP server from the documentation for ')">
               <mat-icon>api</mat-icon>
               <div class="suggestion-text">
-                <div class="suggestion-title">Work with API specs</div>
-                <div class="suggestion-desc">OpenAPI, Swagger, GraphQL</div>
+                <div class="suggestion-title">Point at a docs site</div>
+                <div class="suggestion-desc">Any developer portal or API reference</div>
               </div>
             </button>
 

@@ -71,13 +71,13 @@
         <p class="hero-eyebrow">Model Context Protocol &middot; open source</p>
 
         <h1 class="hero-title">
-          Describe an API.<br />
-          <span class="hero-title-sweep">Get a server that runs.</span>
+          Your assistant can describe your API.<br />
+          <span class="hero-title-sweep">Now let it use it.</span>
         </h1>
 
         <p class="hero-subtitle">
-          Not a scaffold, and not a guess. Every server is built, tested and fixed until it works
-          &mdash; before it ever reaches you.
+          Name a service, paste a repo, or just say what you want. You get a real server &mdash;
+          running, and yours to keep.
         </p>
 
         <!--
@@ -98,7 +98,7 @@
                 <span class="rotator-item"
                   ><em>GitHub repository</em>github.com/stripe/stripe-node</span
                 >
-                <span class="rotator-item"><em>documentation site</em>docs.stripe.com/api</span>
+                <span class="rotator-item"><em>documentation site</em>docs.github.com/rest</span>
                 <span class="rotator-item"><em>service name</em>the Notion API</span>
                 <span class="rotator-item"
                   ><em>description</em>search my Postgres and return matching rows</span
@@ -110,13 +110,44 @@
             </span>
           </div>
 
-          <ol class="rail">
-            <li>Research</li>
-            <li>Design</li>
-            <li>Build</li>
-            <li>Test</li>
-            <li>Deliver</li>
-          </ol>
+          <!--
+            What came OUT, rotating in lockstep with the input above (same
+            keyframes, same duration, so row N of each always lines up).
+
+            This replaced a numbered Research/Design/Build/Test/Deliver rail -
+            i.e. pipeline.service.ts's own step names, animated, in the hero.
+            Nobody wants an MCP server; they want their assistant to be able
+            to refund a charge. Showing the tools makes the reader think
+            "I could point that at OUR API", which the rail never did.
+
+            The tool names are illustrative, exactly as the input examples
+            above them are. If you want them to be evidence rather than
+            illustration, seed them from the real catalogue via the
+            marketplace API.
+          -->
+          <div class="machine-output" aria-label="Example tools produced">
+            <span class="rotator rotator-tools">
+              <span class="rotator-track">
+                <span class="tools-item">
+                  <code>create_payment_intent</code><code>refund_charge</code
+                  ><code>list_invoices</code>
+                </span>
+                <span class="tools-item">
+                  <code>create_pull_request</code><code>list_issues</code><code>add_comment</code>
+                </span>
+                <span class="tools-item">
+                  <code>search_pages</code><code>create_page</code><code>update_database</code>
+                </span>
+                <span class="tools-item">
+                  <code>run_query</code><code>describe_schema</code><code>list_tables</code>
+                </span>
+                <span class="tools-item" aria-hidden="true">
+                  <code>create_payment_intent</code><code>refund_charge</code
+                  ><code>list_invoices</code>
+                </span>
+              </span>
+            </span>
+          </div>
         </div>
 
         <div class="hero-actions">
@@ -125,18 +156,38 @@
         </div>
 
         <p class="hero-note">
-          Five generations a month, free. No card &mdash; there is nothing to buy yet.
+          Five servers a month. One hosted here. No card &mdash; there is nothing to buy.
         </p>
       </div>
     </section>
 
-    <!-- Numbers band ------------------------------------------------------ -->
-    <section class="band" aria-label="At a glance">
-      <div class="landing-shell band-inner">
-        <div class="band-item"><b>4</b><span>ways to start</span></div>
-        <div class="band-item"><b>5</b><span>a month, free</span></div>
-        <div class="band-item"><b>6</b><span>tools for agents</span></div>
-        <div class="band-item"><b>0</b><span>lock-in</span></div>
+    <!--
+      Ideas strip. This replaced a stat band of 4/5/6/0 - three of whose four
+      numbers counted our own surface area rather than anything the reader
+      gets. A landing page has to make someone think "I could use this for
+      ___", and nothing else on the page was doing that job.
+    -->
+    <section class="ideas" aria-labelledby="ideas-heading">
+      <div class="landing-shell">
+        <h2 class="ideas-heading" id="ideas-heading">Things your assistant can&rsquo;t do yet</h2>
+        <ul class="idea-list">
+          <li>
+            <span class="idea-ask">&ldquo;Which customers churned this week?&rdquo;</span>
+            <span class="idea-arrow" aria-hidden="true">&rarr;</span>
+            <span class="idea-target">your Postgres, read-only</span>
+          </li>
+          <li>
+            <span class="idea-ask">&ldquo;Open a PR bumping the failing dependency.&rdquo;</span>
+            <span class="idea-arrow" aria-hidden="true">&rarr;</span>
+            <span class="idea-target">your repo</span>
+          </li>
+          <li>
+            <span class="idea-ask">&ldquo;Refund the order and post it in #support.&rdquo;</span>
+            <span class="idea-arrow" aria-hidden="true">&rarr;</span>
+            <span class="idea-target">Stripe, then Slack</span>
+          </li>
+        </ul>
+        <a routerLink="/explore" class="ideas-link">See what people have built &rarr;</a>
       </div>
     </section>
 
@@ -193,11 +244,12 @@
             <pre><code>{{ curlExample }}</code></pre>
           </div>
 
-          <p class="fineprint">
-            A generation takes minutes, so start one and poll
-            <code>get_generation_status</code> rather than blocking on the call. Server-side agents
-            only &mdash; browser clients are refused by the CORS policy.
-          </p>
+          <!--
+            The polling/CORS fineprint that used to close this column moved to
+            /llms.txt, which is where an implementer looks and where it was
+            already documented. A landing page should not end on a caveat
+            about client timeouts.
+          -->
         </div>
       </div>
     </section>
@@ -206,29 +258,30 @@
     <section class="landing-section status" id="status" aria-labelledby="status-heading">
       <div class="landing-shell">
         <h2 class="section-heading" id="status-heading">Straight talk</h2>
-        <p class="section-intro">
-          Active development. You should hear it from us rather than find out.
-        </p>
+        <p class="section-intro">Active development, so here is exactly where it stands.</p>
 
         <div class="ledger">
           <div class="ledger-col ledger-col-ready">
             <h3>Works today</h3>
             <ul>
-              <li>Start from a repo, a docs URL, a service name or a sentence</li>
-              <li>Every server tested before you get it, and fixed if it fails</li>
-              <li>Drops straight into Claude Desktop, or runs behind HTTP wherever you put it</li>
-              <li>Code to a public Gist on your own GitHub account, or downloaded</li>
-              <li>The MCP endpoint and its six tools</li>
+              <li>One server hosted here, free &mdash; or take the code and run it anywhere</li>
+              <li>Tested before you get it, and fixed if something fails</li>
+              <li>Drops into Claude Desktop, or runs behind HTTP wherever you put it</li>
+              <li>Code published to a Gist on your own GitHub account, or downloaded</li>
+              <li>A public catalogue you can browse without an account</li>
             </ul>
           </div>
 
+          <!--
+            Hosting used to sit in THIS column, reading "we don't run your
+            server for you yet". That was false: tier-config.ts gives the free
+            tier hostedServerLimit: 1, chat has a "Host on Cloud" button wired
+            to deployToCloud, and hosted servers are running in production. It
+            was the strongest thing on the page, filed under apologies.
+          -->
           <div class="ledger-col ledger-col-pending">
             <h3>Not available yet</h3>
             <ul>
-              <li>
-                <strong>Hosting.</strong> We don&rsquo;t run your server for you yet. You take the
-                code and run it wherever you like.
-              </li>
               <li>
                 <strong>Paid plans.</strong> Nothing is for sale, so no price is quoted anywhere.
               </li>
@@ -237,8 +290,8 @@
                 is no paid tier to buy. Free accounts publish a Gist.
               </li>
               <li>
-                <strong>OpenAPI or GraphQL specs.</strong> We don&rsquo;t read them. Point at the
-                repo or the docs instead.
+                <strong>More than one hosted server.</strong> Free accounts get one. Raising that
+                needs a paid tier, and there isn&rsquo;t one.
               </li>
             </ul>
           </div>
@@ -250,7 +303,7 @@
     <section class="closing">
       <div class="grid-field grid-field-bottom" aria-hidden="true"></div>
       <div class="landing-shell">
-        <h2 class="closing-title">Bring whatever you have.</h2>
+        <h2 class="closing-title">Give your assistant something to do.</h2>
         <div class="hero-actions">
           <a routerLink="/auth/register" class="mcp-btn-primary">Start free</a>
           <a routerLink="/explore" class="mcp-btn-secondary">Browse the catalogue</a>

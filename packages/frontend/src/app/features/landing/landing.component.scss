@@ -251,13 +251,17 @@
   letter-spacing: 0.2px;
 }
 
+// Sized for a THREE-line headline. The previous 76px/15ch was tuned for
+// "Describe an API. / Get a server that runs." - four words a line. The
+// current headline is half as long again, and at that size it pushed the
+// machine card, both CTAs and the note below the fold.
 .hero-title {
-  font-size: clamp(40px, 7.4vw, 76px);
-  line-height: 1.02;
+  font-size: clamp(34px, 5.2vw, 56px);
+  line-height: 1.06;
   font-weight: 700;
-  letter-spacing: -3px;
-  margin: 0 auto var(--spacing-lg);
-  max-width: 15ch;
+  letter-spacing: -2.2px;
+  margin: 0 auto var(--spacing-md);
+  max-width: 20ch;
 }
 
 /*
@@ -365,7 +369,7 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 22px 20px;
+  padding: 20px;
   min-width: 0;
   font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
   font-size: 14.5px;
@@ -389,7 +393,22 @@
   overflow: hidden;
 }
 
+/*
+ * One row height, one set of keyframes.
+ *
+ * The roll steps by `--rotator-row` rather than by a hard-coded 1.7em, so the
+ * taller stacked rows on mobile only need to override that variable. The
+ * previous approach - a second `rotate-inputs-stacked` keyframes selected by
+ * name inside a media query - silently did nothing: Angular's emulated
+ * encapsulation renames @keyframes to `_ngcontent-xxx_rotate-inputs-stacked`
+ * and rewrites references in top-level rules, but NOT references inside an
+ * @media block, so the mobile rule pointed at a name that did not exist in the
+ * compiled stylesheet and the input rotator sat frozen on row one at every
+ * mobile width. A custom property sidesteps that rewriting entirely.
+ */
 .rotator-track {
+  --rotator-row: 1.7em;
+
   display: flex;
   flex-direction: column;
   animation: rotate-inputs 16s cubic-bezier(0.76, 0, 0.24, 1) infinite;
@@ -419,6 +438,7 @@
   // rotator it parked against the far right edge of a flex:1 column, reading
   // as an unrelated artefact rather than as a cursor. As ::after it sits
   // immediately after each example's last character, where a cursor goes.
+  // Scoped to .rotator-item so the output rows below don't grow one too.
   &::after {
     content: '';
     flex-shrink: 0;
@@ -438,18 +458,18 @@
   }
   25%,
   43% {
-    transform: translateY(-1.7em);
+    transform: translateY(calc(-1 * var(--rotator-row)));
   }
   50%,
   68% {
-    transform: translateY(-3.4em);
+    transform: translateY(calc(-2 * var(--rotator-row)));
   }
   75%,
   93% {
-    transform: translateY(-5.1em);
+    transform: translateY(calc(-3 * var(--rotator-row)));
   }
   100% {
-    transform: translateY(-6.8em);
+    transform: translateY(calc(-4 * var(--rotator-row)));
   }
 }
 
@@ -460,105 +480,116 @@
 }
 
 /*
- * The pipeline, as a rail with a light travelling along it. Each stage is
- * highlighted for a beat in turn on a shared 6s cycle, staggered 1.2s apart -
- * so the run reads left to right without any script.
+ * The tools that came out, rolling in lockstep with the input above.
+ *
+ * Both rotators share the SAME keyframes and duration, and this row's height
+ * is the same 1.7em, so row N of the output is always on screen with row N of
+ * the input. If you change one, change the other or they desynchronise.
  */
-.rail {
-  position: relative;
+.machine-output {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  list-style: none;
-  margin: 0;
-  padding: 16px 20px 20px;
+  align-items: center;
+  padding: 14px 20px 16px;
+  // The hairline is what makes the card read as in -> out rather than as two
+  // unrelated rows.
   border-top: 1px solid var(--border-light);
-  counter-reset: stage;
+  // Matches .machine-input, so the shared 1.7em step resolves identically.
+  font-size: 14.5px;
+}
 
-  li {
-    position: relative;
-    counter-increment: stage;
-    padding: 6px 12px 6px 26px;
+.rotator-tools {
+  flex: 1;
+}
+
+.tools-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 1.7em;
+  overflow: hidden;
+
+  code {
+    padding: 3px 8px;
     border: 1px solid var(--border-medium);
-    border-radius: 999px;
-    font-size: 12.5px;
-    font-weight: 500;
-    color: var(--text-tertiary);
+    border-radius: var(--border-radius-sm);
+    background-color: var(--background-alt);
+    color: var(--text-secondary);
+    font-size: 11.5px;
+    line-height: 1.35;
     white-space: nowrap;
-    animation: stage-step 6s linear infinite;
-
-    &::before {
-      content: counter(stage);
-      position: absolute;
-      left: 10px;
-      font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
-      font-size: 10px;
-      opacity: 0.6;
-    }
-
-    &:nth-child(2) {
-      animation-delay: 1.2s;
-    }
-    &:nth-child(3) {
-      animation-delay: 2.4s;
-    }
-    &:nth-child(4) {
-      animation-delay: 3.6s;
-    }
-    &:nth-child(5) {
-      animation-delay: 4.8s;
-    }
+    // Long names lose their tail rather than pushing siblings off the row.
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 }
 
-@keyframes stage-step {
-  0%,
-  16% {
-    color: var(--text-inverse);
-    background-color: var(--primary-color);
-    border-color: var(--primary-color);
-  }
-  26%,
-  100% {
-    color: var(--text-tertiary);
-    background-color: transparent;
-    border-color: var(--border-medium);
-  }
-}
-
-/* Numbers band ------------------------------------------------------------ */
+/* Ideas strip -------------------------------------------------------------- */
 
 // No bottom border: the next .landing-section supplies one, and two hairlines
 // a pixel apart read as a rendering fault rather than a divider.
-.band {
+.ideas {
   border-top: 1px solid var(--border-light);
   background-color: var(--background-alt);
-  padding: var(--spacing-xl) 0;
+  padding: 72px 0;
 }
 
-.band-inner {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: var(--spacing-lg);
-  text-align: center;
+.ideas-heading {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.9px;
+  color: var(--text-tertiary);
+  margin: 0 0 var(--spacing-lg);
 }
 
-.band-item {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+.idea-list {
+  list-style: none;
+  margin: 0 0 var(--spacing-lg);
+  padding: 0;
 
-  b {
-    font-size: clamp(30px, 4.6vw, 46px);
-    font-weight: 700;
-    letter-spacing: -2px;
-    line-height: 1;
+  li {
+    display: grid;
+    // The arrow column is fixed so every arrow lines up vertically; that
+    // alignment is doing the design work here in place of any border or card.
+    grid-template-columns: minmax(0, 1fr) 32px minmax(0, 0.7fr);
+    align-items: baseline;
+    gap: var(--spacing-sm);
+    padding: 14px 0;
+    border-bottom: 1px solid var(--border-medium);
+
+    &:first-child {
+      border-top: 1px solid var(--border-medium);
+    }
   }
+}
 
-  span {
-    font-size: 12.5px;
-    letter-spacing: 0.4px;
-    color: var(--text-tertiary);
+.idea-ask {
+  font-size: clamp(15px, 2vw, 19px);
+  line-height: 1.35;
+  color: var(--text-primary);
+  letter-spacing: -0.2px;
+}
+
+.idea-arrow {
+  text-align: center;
+  color: var(--text-tertiary);
+}
+
+.idea-target {
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  font-size: 12.5px;
+  color: var(--text-tertiary);
+}
+
+.ideas-link {
+  display: inline-block;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-primary);
+  text-decoration: none;
+
+  &:hover {
+    text-decoration: underline;
   }
 }
 
@@ -835,9 +866,15 @@ code {
     gap: var(--spacing-lg);
   }
 
-  .band-inner {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: var(--spacing-lg) var(--spacing-md);
+  // Stacked, the arrow column earns nothing and the target reads better
+  // directly under the question it answers.
+  .idea-list li {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+  }
+
+  .idea-arrow {
+    display: none;
   }
 }
 
@@ -888,12 +925,24 @@ code {
   // The taller rows need their own keyframes: a same-named @keyframes inside
   // a media query does override the outer one, but only in browsers that
   // implement it that way - a distinct name is unambiguous everywhere.
-  .rotator {
+  //
+  // MUST be scoped to .machine-input. Unscoped, these also hit the tools
+  // rotator below, which has 1.7em rows - a 2.9em window then showed two tool
+  // rows at once and the -2.9em steps desynced it from the input entirely.
+  .machine-input .rotator {
     height: 2.9em;
   }
 
-  .rotator-track {
-    animation-name: rotate-inputs-stacked;
+  // Only the step height changes - same keyframes, so no @media-scoped
+  // keyframes reference for Angular to leave unrewritten. See .rotator-track.
+  .machine-input .rotator-track {
+    --rotator-row: 2.9em;
+  }
+
+  // Three tool names do not fit at this width; the third truncates to
+  // "create_payment_..." which reads as broken rather than as an example.
+  .tools-item code:nth-child(3) {
+    display: none;
   }
 
   .rotator-item {
@@ -910,27 +959,6 @@ code {
   }
 }
 
-@keyframes rotate-inputs-stacked {
-  0%,
-  18% {
-    transform: translateY(0);
-  }
-  25%,
-  43% {
-    transform: translateY(-2.9em);
-  }
-  50%,
-  68% {
-    transform: translateY(-5.8em);
-  }
-  75%,
-  93% {
-    transform: translateY(-8.7em);
-  }
-  100% {
-    transform: translateY(-11.6em);
-  }
-}
 
 /*
  * Windows High Contrast strips background images, which would erase the
