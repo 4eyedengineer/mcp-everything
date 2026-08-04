@@ -23,11 +23,11 @@
       <div class="secret-reveal" *ngIf="justCreated() as created">
         <div class="secret-reveal-header">
           <mat-icon>warning</mat-icon>
-          <h3>API key created &mdash; this is the only time you'll see it</h3>
+          <h3>API key created. This is the only time you'll see it.</h3>
         </div>
         <p class="secret-reveal-warning">
           Copy this key now and store it securely. For your security, MCP Everything cannot show
-          you this key again &mdash; if you lose it, you'll need to revoke it and create a new one.
+          you this key again. If you lose it, you'll need to revoke it and create a new one.
         </p>
 
         <label class="field-label" for="secret-key-input">Your new API key</label>
@@ -49,7 +49,7 @@
         <div class="config-copy">
           <div class="config-copy-text">
             <strong>Ready-to-use Claude Desktop config</strong>
-            <span>Includes the key above &mdash; paste it directly into <code>claude_desktop_config.json</code>.</span>
+            <span>Includes the key above. Paste it directly into <code>claude_desktop_config.json</code>.</span>
           </div>
           <button class="mcp-btn-secondary" (click)="copyConfigWithKey()">
             <mat-icon>{{ copiedConfig() ? 'check' : 'integration_instructions' }}</mat-icon>

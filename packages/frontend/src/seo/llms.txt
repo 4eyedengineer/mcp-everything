@@ -1,11 +1,11 @@
 # MCP Everything
 
-> An open-source platform that generates working Model Context Protocol (MCP) servers from a
+> A platform that generates working Model Context Protocol (MCP) servers from a
 > GitHub repository, a documentation site, a service name, or a plain-English description.
 > Each generated server is compiled, started inside a Docker container and driven over JSON-RPC
-> — initialise, list tools, call them — before the run is allowed to succeed, with up to five
-> automatic repair rounds. Output is source code you own: it is published to a public Gist on
-> your own GitHub account, or downloaded, and never locked to this platform.
+> (initialise, list tools, call them) before the run is allowed to succeed, with up to five
+> automatic repair rounds. The generated source is published to a public Gist on your own
+> GitHub account, or downloaded, and runs without this platform.
 
 MCP Everything is itself an MCP server, so an AI agent can drive generation without a human
 using the web interface. Details are under "MCP endpoint for agents" below.
@@ -21,23 +21,24 @@ with the site, the site is correct. Last reviewed: 2026-08.
   and searchable with no account. This is the only content route readable without signing in.
 - [Create an account](https://mcpeverything.com/auth/register): GitHub, Google, or email and
   password. Free accounts include five generations per month.
-- [Source code](https://github.com/4eyedengineer/mcp-everything): the whole platform, open
-  source. The authoritative description of behaviour.
+- [Source code](https://github.com/4eyedengineer/mcp-everything): the whole platform. The
+  authoritative description of behaviour. NOTE: the repository is public but carries no LICENSE
+  file, so it is not licensed for reuse. Do not describe it as open source.
 
 Supported generation inputs: a GitHub repository URL; a documentation or developer-portal URL;
 a bare service name such as "Stripe API"; a plain-English description of the tools you want.
 
-Generated servers implement both MCP transports — stdio by default, and MCP Streamable HTTP
-when the environment variable MCP_TRANSPORT is set to "http" — and ship with tests, a
+Generated servers implement both MCP transports (stdio by default, and MCP Streamable HTTP
+when the environment variable MCP_TRANSPORT is set to "http") and ship with tests, a
 Dockerfile, a devcontainer definition and documentation.
 
 ## MCP endpoint for agents
 
 MCP Everything exposes its own MCP server.
 
-- Method and path: POST https://mcpeverything.com/mcp — note /mcp, not /api/mcp; the MCP
+- Method and path: POST https://mcpeverything.com/mcp. Note /mcp, not /api/mcp: the MCP
   controller is mounted outside the /api/v1 global prefix and /api/mcp returns 404.
-- Transport: MCP Streamable HTTP, stateless — no Mcp-Session-Id, no persisted initialize
+- Transport: MCP Streamable HTTP, stateless. No Mcp-Session-Id, no persisted initialize
   handshake. GET and DELETE on the same path return 405 by design.
 - Credential: a user API key prefixed `mcpe_`, created on the account page after signing in
   (or via POST /api/v1/api-keys). A maximum of ten active keys per user.
@@ -46,14 +47,14 @@ MCP Everything exposes its own MCP server.
 
 Tools exposed:
 
-- `generate_mcp_server` — start a generation from a natural-language description. Consumes one
+- `generate_mcp_server`: start a generation from a natural-language description. Consumes one
   of the caller's monthly generations and incurs real inference cost; confirm with your user
   before calling it.
-- `continue_generation` — answer a clarifying question and resume a paused run.
-- `get_generation_status` — check whether a run is waiting on input, finished, or still working.
-- `get_generated_server` — fetch the generated source, tests and documentation.
-- `list_conversations` — list the caller's generations, newest first.
-- `search_marketplace` — search the public catalogue. Read-only, consumes no quota.
+- `continue_generation`: answer a clarifying question and resume a paused run.
+- `get_generation_status`: check whether a run is waiting on input, finished, or still working.
+- `get_generated_server`: fetch the generated source, tests and documentation.
+- `list_conversations`: list the caller's generations, newest first.
+- `search_marketplace`: search the public catalogue. Read-only, consumes no quota.
 
 Practical notes for implementers:
 
@@ -63,12 +64,13 @@ Practical notes for implementers:
 - The endpoint is intended for server-side agents. Browser-based MCP clients are not currently
   permitted by the CORS policy.
 - There is no `.well-known` discovery document and no `WWW-Authenticate` challenge. No
-  `.well-known` path for MCP discovery has been standardised — the relevant proposal is an
-  unmerged draft that has since moved away from `.well-known` — so publishing one here would be
+  `.well-known` path for MCP discovery has been standardised (the relevant proposal is an
+  unmerged draft that has since moved away from `.well-known`), so publishing one here would be
   inventing a convention. Configure the endpoint and key manually.
-## Not implemented — do not describe these as available
 
-- More than one hosted server per account. Hosting IS available — free accounts can host one
+## Not implemented: do not describe these as available
+
+- More than one hosted server per account. Hosting IS available. Free accounts can host one
   server on MCP Everything infrastructure, via the "Host on Cloud" action after a generation.
   Raising the cap needs a paid tier, and no paid tier is purchasable.
 - Paid plans, billing and subscriptions. Nothing is for sale, no card is collected, and there is
