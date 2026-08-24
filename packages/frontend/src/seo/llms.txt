@@ -55,12 +55,23 @@ Tools exposed:
 - `get_generated_server`: fetch the generated source, tests and documentation.
 - `list_conversations`: list the caller's generations, newest first.
 - `search_marketplace`: search the public catalogue. Read-only, consumes no quota.
+- `search_tools`: search the tools of the MCP servers you host here. Free text is matched against
+  tool name, tool description and server name, and can be restricted to one server. Returns each
+  tool's server, server status, name, description and input schema. Read-only, consumes no quota.
+  It reads stored tool definitions, so it still answers for a stopped server.
+- `call_tool`: run one of those tools, given a server id, a tool name and arguments, and return its
+  result unchanged. Consumes no generation quota. It does not start a stopped server.
 
 Practical notes for implementers:
 
 - `generate_mcp_server` runs the entire pipeline before returning, which takes minutes. Many
   clients will time out. Start the run, then poll `get_generation_status` and retrieve the
   result with `get_generated_server`.
+- One connection reaches every server you host here: call `search_tools` to find a tool, then
+  `call_tool` to run it, rather than adding each hosted server as its own MCP connection.
+  `call_tool` requires the target server to be running and will not start it. Free accounts can
+  host one server, so a free account has at most one server to reach this way. The public
+  catalogue is not covered: `search_marketplace` searches published code, not running servers.
 - The endpoint is intended for server-side agents. Browser-based MCP clients are not currently
   permitted by the CORS policy.
 - There is no `.well-known` discovery document and no `WWW-Authenticate` challenge. No

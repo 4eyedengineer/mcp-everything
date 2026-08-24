@@ -641,6 +641,115 @@ describe('DeploymentOrchestratorService', () => {
     });
   });
 
+  describe('tool inputSchema propagation', () => {
+    const LIST_POSTS_SCHEMA = {
+      type: 'object',
+      properties: { userId: { type: 'string' } },
+      required: ['userId'],
+    };
+
+    /** The `tools` payload persisted by persistDeploymentServerMetadata. */
+    const persistedTools = () => {
+      const call = mockDeploymentRepository.update.mock.calls.find(
+        (args: any[]) => args[1] && 'tools' in args[1],
+      );
+      return call?.[1]?.tools;
+    };
+
+    it('persists the schema carried on conversation.state.tools', async () => {
+      mockConversationRepository.findOneBy.mockResolvedValue({
+        id: 'conv-123',
+        state: {
+          serverName: 'test-mcp-server',
+          tools: [
+            { name: 'list_posts', description: 'List posts', inputSchema: LIST_POSTS_SCHEMA },
+          ],
+        },
+      });
+
+      await service.deployToGist('conv-123', {});
+
+      expect(persistedTools()).toEqual([
+        { name: 'list_posts', description: 'List posts', inputSchema: LIST_POSTS_SCHEMA },
+      ]);
+    });
+
+    it('falls back to generatedCode.metadata.tools for conversations whose state.tools predates the fix', async () => {
+      mockConversationRepository.findOneBy.mockResolvedValue({
+        id: 'conv-123',
+        state: {
+          serverName: 'test-mcp-server',
+          // Exactly the shape the old projection wrote: no inputSchema at all.
+          tools: [{ name: 'list_posts', description: 'List posts' }],
+          generatedCode: {
+            metadata: {
+              tools: [{ name: 'list_posts', inputSchema: LIST_POSTS_SCHEMA }],
+            },
+          },
+        },
+      });
+
+      await service.deployToGist('conv-123', {});
+
+      expect(persistedTools()).toEqual([
+        { name: 'list_posts', description: 'List posts', inputSchema: LIST_POSTS_SCHEMA },
+      ]);
+    });
+
+    it('writes null - not a fabricated schema - when no schema exists anywhere', async () => {
+      mockConversationRepository.findOneBy.mockResolvedValue({
+        id: 'conv-123',
+        state: {
+          serverName: 'test-mcp-server',
+          tools: [{ name: 'list_posts', description: 'List posts' }],
+          generatedCode: { metadata: { tools: [{ name: 'a_different_tool', inputSchema: {} }] } },
+        },
+      });
+
+      await service.deployToGist('conv-123', {});
+
+      expect(persistedTools()).toEqual([
+        { name: 'list_posts', description: 'List posts', inputSchema: null },
+      ]);
+    });
+
+    it('tolerates a malformed generatedCode.metadata.tools (jsonb, so nothing guarantees the shape)', async () => {
+      mockConversationRepository.findOneBy.mockResolvedValue({
+        id: 'conv-123',
+        state: {
+          serverName: 'test-mcp-server',
+          tools: [{ name: 'list_posts', description: 'List posts' }],
+          generatedCode: { metadata: { tools: { not: 'an array' } } },
+        },
+      });
+
+      await service.deployToGist('conv-123', {});
+
+      expect(persistedTools()).toEqual([
+        { name: 'list_posts', description: 'List posts', inputSchema: null },
+      ]);
+    });
+
+    it('hands the schema to the Gist provider too, so the published server documents its arguments', async () => {
+      mockConversationRepository.findOneBy.mockResolvedValue({
+        id: 'conv-123',
+        state: {
+          serverName: 'test-mcp-server',
+          tools: [
+            { name: 'list_posts', description: 'List posts', inputSchema: LIST_POSTS_SCHEMA },
+          ],
+        },
+      });
+
+      await service.deployToGist('conv-123', {});
+
+      const tools = mockGistProvider.deploySingleFile.mock.calls[0][3];
+      expect(tools).toEqual([
+        { name: 'list_posts', description: 'List posts', inputSchema: LIST_POSTS_SCHEMA },
+      ]);
+    });
+  });
+
   describe('deployToEnterprise', () => {
     it('should throw NotImplementedException', async () => {
       await expect(service.deployToEnterprise('conv-123', {})).rejects.toThrow(

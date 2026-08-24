@@ -85,8 +85,10 @@ describe('LandingComponent', () => {
       expect(text).not.toContain('mcpeverything.com/api/mcp');
     });
 
-    it('lists exactly the six tools the MCP server registers', () => {
-      // Mirrors backend mcp-tools.service.ts registerTools().
+    it('lists exactly the eight tools the MCP server registers', () => {
+      // Mirrors backend mcp-tools.service.ts registerTools(). The last two
+      // reach the caller's own hosted servers, so one connection covers them
+      // all; they are not marketplace search.
       [
         'generate_mcp_server',
         'continue_generation',
@@ -94,6 +96,8 @@ describe('LandingComponent', () => {
         'get_generated_server',
         'list_conversations',
         'search_marketplace',
+        'search_tools',
+        'call_tool',
       ].forEach(tool => expect(text).toContain(tool));
     });
 

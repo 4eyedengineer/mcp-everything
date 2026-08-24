@@ -1553,6 +1553,14 @@ What would you like to create?`;
       tools: tools.map((t: any) => ({
         name: t.name,
         description: t.description || `Tool: ${t.name}`,
+        // Carry the tool's JSON Schema through. This projection used to keep
+        // only name+description, so every downstream consumer of
+        // conversation.state.tools (DeploymentOrchestratorService ->
+        // deployments.tools -> hosted_servers.tools) recorded
+        // `inputSchema: null` and no caller could know a tool's arguments.
+        // The key is omitted rather than set to undefined when the refinement
+        // loop produced no schema, so we never persist an explicit null here.
+        ...(t.inputSchema ? { inputSchema: t.inputSchema } : {}),
       })),
       metadata: {
         ...(conversation.state?.metadata || {}),

@@ -15,6 +15,7 @@ import { McpGatewayController } from './mcp-gateway.controller';
 import { HostedServerSourceController } from './hosted-server-source.controller';
 import { McpProxyService } from './services/mcp-proxy.service';
 import { McpUpstreamResolver } from './services/mcp-upstream-resolver.service';
+import { HostedMcpClientService } from './services/hosted-mcp-client.service';
 import { HostedServerGatewayGuard } from './guards/hosted-server-gateway.guard';
 import { HostedServerSourceGuard } from './guards/hosted-server-source.guard';
 import { HostedServer } from '../database/entities/hosted-server.entity';
@@ -65,6 +66,7 @@ import { UserModule } from '../user/user.module';
     SourceArchiveService,
     McpProxyService,
     McpUpstreamResolver,
+    HostedMcpClientService,
     HostedServerGatewayGuard,
     HostedServerSourceGuard,
   ],
@@ -80,6 +82,7 @@ import { UserModule } from '../user/user.module';
     HostedServerSourceService,
     McpProxyService,
     McpUpstreamResolver,
+    HostedMcpClientService,
   ],
 })
 export class HostingModule implements OnModuleInit {

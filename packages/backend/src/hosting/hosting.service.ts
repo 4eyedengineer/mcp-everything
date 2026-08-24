@@ -46,6 +46,7 @@ import { K8sControlPlaneService } from './services/k8s-control-plane.service';
 import { LocalDockerHostingService } from './services/local-docker-hosting.service';
 import { TokenEncryptionService } from '../common/token-encryption/token-encryption.service';
 import { HostedServerSourceTokenService } from './hosted-server-source-token.service';
+import { HostedMcpClientService } from './services/hosted-mcp-client.service';
 import { ConfigService } from '@nestjs/config';
 import { UserService } from '../user/user.service';
 import { TIER_CONFIG, TIER_DISPLAY_NAMES, UserTier } from '../subscription/tier-config';
@@ -159,6 +160,7 @@ export class HostingService implements OnModuleDestroy {
     private configService: ConfigService,
     private userService: UserService,
     private sourceTokenService: HostedServerSourceTokenService,
+    private hostedMcpClientService: HostedMcpClientService,
   ) {
     this.domain = this.configService.get('MCP_HOSTING_DOMAIN', 'mcp.example.com');
     this.namespace = this.configService.get('K8S_NAMESPACE', 'mcp-servers');
@@ -456,7 +458,9 @@ export class HostingService implements OnModuleDestroy {
         'Applied to cluster; waiting for pods to become ready',
       );
 
-      this.logger.log(`Applied MCP server ${serverId} to ${this.namespace} (endpoint ${endpointUrl})`);
+      this.logger.log(
+        `Applied MCP server ${serverId} to ${this.namespace} (endpoint ${endpointUrl})`,
+      );
 
       return {
         success: true,
@@ -577,6 +581,10 @@ export class HostingService implements OnModuleDestroy {
 
     server.desiredState = 'stopped';
 
+    // Drop any in-process MCP session first: it is a live socket to a pod that
+    // is about to stop existing, and a cached one would outlive its server.
+    await this.hostedMcpClientService.invalidate(serverId);
+
     if (this.isDockerRunServer(server)) {
       await this.localDockerHostingService.stopContainer(serverId);
       await this.updateStatus(server, 'stopped', 'Container stopped');
@@ -609,6 +617,10 @@ export class HostingService implements OnModuleDestroy {
     }
 
     server.desiredState = 'running';
+
+    // A start produces a *new* process (docker-run removes the old container
+    // outright), so anything cached from the previous incarnation is stale.
+    await this.hostedMcpClientService.invalidate(serverId);
 
     if (this.isDockerRunServer(server)) {
       const config = server.config as Record<string, unknown>;
@@ -672,6 +684,8 @@ export class HostingService implements OnModuleDestroy {
     const server = await this.getServerByIdOrFail(serverId, userId);
 
     server.desiredState = 'deleted';
+
+    await this.hostedMcpClientService.invalidate(serverId);
 
     if (this.isDockerRunServer(server)) {
       await this.localDockerHostingService.stopContainer(serverId);
@@ -887,7 +901,8 @@ export class HostingService implements OnModuleDestroy {
   private async assertHostedServerQuota(userId: string): Promise<void> {
     const user = await this.userService.findById(userId);
     const tier = (user?.tier as UserTier) || UserTier.FREE;
-    const limit = TIER_CONFIG[tier]?.hostedServerLimit ?? TIER_CONFIG[UserTier.FREE].hostedServerLimit;
+    const limit =
+      TIER_CONFIG[tier]?.hostedServerLimit ?? TIER_CONFIG[UserTier.FREE].hostedServerLimit;
 
     if (limit === Infinity) {
       return;
@@ -919,20 +934,20 @@ export class HostingService implements OnModuleDestroy {
   // --- Helper Methods ---
 
   private generateServerId(serverName: string): string {
-    const prefix = serverName
-      .toLowerCase()
-      .replace(/[^a-z0-9]/g, '-')
-      .replace(/-+/g, '-')
-      .replace(/^-+|-+$/g, '') // never start/end the component with '-'
-      .slice(0, 20)
-      .replace(/-+$/g, '') // slice() may re-expose a trailing '-'
-      || 'mcp-server'; // serverName with no alphanumeric chars at all
+    const prefix =
+      serverName
+        .toLowerCase()
+        .replace(/[^a-z0-9]/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-+|-+$/g, '') // never start/end the component with '-'
+        .slice(0, 20)
+        .replace(/-+$/g, '') || // slice() may re-expose a trailing '-'
+      'mcp-server'; // serverName with no alphanumeric chars at all
 
     const suffix = generateSuffix();
     return `${prefix}-${suffix}`;
   }
 
-  
   /**
    * Record the env vars a docker-run container was actually started with, so
    * a later `startServer` can reproduce it exactly.

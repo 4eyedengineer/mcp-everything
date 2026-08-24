@@ -63,7 +63,14 @@ export class Conversation {
     // FIX #128: Add fields for generated code state sync
     generatedCode?: any;
     serverName?: string;
-    tools?: Array<{ name: string; description: string }>;
+    /**
+     * Projection of `generatedCode.metadata.tools` written by
+     * GenerationPipeline.syncGeneratedCodeToConversation. `inputSchema` is the
+     * tool's JSON Schema; it is optional because rows written before that
+     * projection forwarded it - and tools generated without a schema - have no
+     * such key.
+     */
+    tools?: Array<{ name: string; description: string; inputSchema?: any }>;
     [key: string]: any; // Allow additional dynamic properties
   };
 

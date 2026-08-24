@@ -1,16 +1,21 @@
 /// <reference types="jest" />
+import { NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { McpToolsService } from './mcp-tools.service';
 import { Conversation } from '../database/entities';
 import { GenerationPipeline } from '../orchestration/pipeline.service';
 import { MarketplaceService } from '../marketplace/marketplace.service';
+import { HostingService } from '../hosting/hosting.service';
+import { HostedMcpClientService } from '../hosting/services/hosted-mcp-client.service';
 
 describe('McpToolsService', () => {
   let service: McpToolsService;
   let conversationRepo: any;
   let pipeline: jest.Mocked<Pick<GenerationPipeline, 'execute'>>;
   let marketplaceService: jest.Mocked<Pick<MarketplaceService, 'search'>>;
+  let hostingService: jest.Mocked<Pick<HostingService, 'getServers' | 'getServer'>>;
+  let hostedMcpClientService: jest.Mocked<Pick<HostedMcpClientService, 'callTool'>>;
 
   const userId = 'user-123';
   const otherUserId = 'user-456';
@@ -43,12 +48,23 @@ describe('McpToolsService', () => {
       }),
     };
 
+    hostingService = {
+      getServers: jest.fn().mockResolvedValue([]),
+      getServer: jest.fn(),
+    };
+
+    hostedMcpClientService = {
+      callTool: jest.fn(),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         McpToolsService,
         { provide: getRepositoryToken(Conversation), useValue: conversationRepo },
         { provide: GenerationPipeline, useValue: pipeline },
         { provide: MarketplaceService, useValue: marketplaceService },
+        { provide: HostingService, useValue: hostingService },
+        { provide: HostedMcpClientService, useValue: hostedMcpClientService },
       ],
     }).compile();
 
@@ -286,6 +302,226 @@ describe('McpToolsService', () => {
 
       expect(result.isError).toBe(true);
       expect((result.content[0] as any).text).toContain('db down');
+    });
+  });
+
+  describe('searchTools', () => {
+    /** Parses the JSON payload out of the prose+JSON text result. */
+    function parsePayload(result: any) {
+      const text = (result.content[0] as any).text as string;
+      return JSON.parse(text.slice(text.indexOf('{')));
+    }
+
+    const runningServer = {
+      serverId: 'srv-running',
+      serverName: 'Weather API',
+      status: 'running',
+      deletedAt: null,
+      tools: [
+        {
+          name: 'get_forecast',
+          description: 'Returns a weather forecast',
+          inputSchema: { type: 'object', properties: { city: { type: 'string' } } },
+        },
+        { name: 'list_stations', description: 'Lists stations', inputSchema: {} },
+      ],
+    };
+
+    const stoppedServer = {
+      serverId: 'srv-stopped',
+      serverName: 'Billing Tools',
+      status: 'stopped',
+      deletedAt: null,
+      tools: [
+        { name: 'create_invoice', description: 'Creates an invoice', inputSchema: {} },
+      ],
+    };
+
+    it('flattens tools across all of the user`s hosted servers', async () => {
+      hostingService.getServers.mockResolvedValue([runningServer, stoppedServer] as any);
+
+      const result = await service.searchTools(userId, {});
+
+      expect(hostingService.getServers).toHaveBeenCalledWith(userId);
+      const payload = parsePayload(result);
+      expect(payload.count).toBe(3);
+      expect(payload.truncated).toBe(false);
+      expect(payload.tools.map((t: any) => t.name)).toEqual([
+        'get_forecast',
+        'list_stations',
+        'create_invoice',
+      ]);
+      // Each flattened entry carries its owning server's identity + status.
+      expect(payload.tools[0]).toMatchObject({
+        serverId: 'srv-running',
+        serverName: 'Weather API',
+        serverStatus: 'running',
+        name: 'get_forecast',
+      });
+      const text = (result.content[0] as any).text as string;
+      expect(text).toContain('3 tools across 2 hosted servers.');
+    });
+
+    it('surfaces a stopped server`s tools with its status', async () => {
+      hostingService.getServers.mockResolvedValue([stoppedServer] as any);
+
+      const payload = parsePayload(await service.searchTools(userId, {}));
+
+      expect(payload.count).toBe(1);
+      expect(payload.tools[0]).toMatchObject({
+        serverStatus: 'stopped',
+        name: 'create_invoice',
+      });
+    });
+
+    it('filters by tool name', async () => {
+      hostingService.getServers.mockResolvedValue([runningServer, stoppedServer] as any);
+
+      const payload = parsePayload(await service.searchTools(userId, { query: 'forecast' }));
+
+      expect(payload.count).toBe(1);
+      expect(payload.tools[0].name).toBe('get_forecast');
+    });
+
+    it('filters by tool description', async () => {
+      hostingService.getServers.mockResolvedValue([runningServer, stoppedServer] as any);
+
+      const payload = parsePayload(await service.searchTools(userId, { query: 'invoice' }));
+
+      expect(payload.count).toBe(1);
+      expect(payload.tools[0].name).toBe('create_invoice');
+    });
+
+    it('filters by server name', async () => {
+      hostingService.getServers.mockResolvedValue([runningServer, stoppedServer] as any);
+
+      const payload = parsePayload(await service.searchTools(userId, { query: 'weather' }));
+
+      expect(payload.count).toBe(2);
+      expect(payload.tools.every((t: any) => t.serverName === 'Weather API')).toBe(true);
+    });
+
+    it('restricts to a single server by serverId', async () => {
+      hostingService.getServers.mockResolvedValue([runningServer, stoppedServer] as any);
+
+      const payload = parsePayload(
+        await service.searchTools(userId, { serverId: 'srv-stopped' }),
+      );
+
+      expect(payload.count).toBe(1);
+      expect(payload.tools[0].serverId).toBe('srv-stopped');
+    });
+
+    it('returns an empty result when serverId is not in the user`s list', async () => {
+      hostingService.getServers.mockResolvedValue([runningServer] as any);
+
+      const result = await service.searchTools(userId, { serverId: 'srv-not-owned' });
+
+      expect(result.isError).toBeFalsy();
+      const payload = parsePayload(result);
+      expect(payload.count).toBe(0);
+      expect(payload.tools).toEqual([]);
+    });
+
+    it('caps results at limit and marks the payload truncated', async () => {
+      hostingService.getServers.mockResolvedValue([runningServer, stoppedServer] as any);
+
+      const payload = parsePayload(await service.searchTools(userId, { limit: 2 }));
+
+      expect(payload.count).toBe(2);
+      expect(payload.truncated).toBe(true);
+    });
+
+    it('returns an empty result when the user hosts no servers', async () => {
+      hostingService.getServers.mockResolvedValue([]);
+
+      const result = await service.searchTools(userId, {});
+
+      expect(hostingService.getServers).toHaveBeenCalledWith(userId);
+      const payload = parsePayload(result);
+      expect(payload.count).toBe(0);
+      expect(payload.truncated).toBe(false);
+    });
+
+    it('excludes deleted servers even if getServers returned them', async () => {
+      hostingService.getServers.mockResolvedValue([
+        { ...runningServer, status: 'deleted', deletedAt: new Date() },
+      ] as any);
+
+      const payload = parsePayload(await service.searchTools(userId, {}));
+
+      expect(payload.count).toBe(0);
+    });
+  });
+
+  describe('callTool', () => {
+    const hostedServer = { serverId: 'srv-1', serverName: 'S1', status: 'running' };
+
+    it('forwards to the hosted client and returns its result verbatim', async () => {
+      hostingService.getServer.mockResolvedValue(hostedServer as any);
+      const upstream = { content: [{ type: 'text', text: 'hello from tool' }] };
+      hostedMcpClientService.callTool.mockResolvedValue(upstream as any);
+
+      const result = await service.callTool(userId, 'srv-1', 'do_thing', { a: 1 });
+
+      expect(hostingService.getServer).toHaveBeenCalledWith('srv-1', userId);
+      expect(hostedMcpClientService.callTool).toHaveBeenCalledWith(
+        hostedServer,
+        'do_thing',
+        { a: 1 },
+        undefined,
+      );
+      expect(result).toBe(upstream);
+    });
+
+    it('passes a hosted isError:true result through unchanged (no double wrap)', async () => {
+      hostingService.getServer.mockResolvedValue(hostedServer as any);
+      const upstream = {
+        isError: true,
+        content: [{ type: 'text', text: 'tool said no' }],
+      };
+      hostedMcpClientService.callTool.mockResolvedValue(upstream as any);
+
+      const result = await service.callTool(userId, 'srv-1', 'do_thing', undefined);
+
+      expect(result).toBe(upstream);
+      expect(result.isError).toBe(true);
+      expect((result.content[0] as any).text).toBe('tool said no');
+    });
+
+    it('turns a NotFound (not owned/missing) into a clean tool error', async () => {
+      hostingService.getServer.mockRejectedValue(
+        new NotFoundException('Server not found: srv-x'),
+      );
+
+      const result = await service.callTool(userId, 'srv-x', 'do_thing', undefined);
+
+      expect(result.isError).toBe(true);
+      expect((result.content[0] as any).text).toContain('Server not found');
+      expect(hostedMcpClientService.callTool).not.toHaveBeenCalled();
+    });
+
+    it('turns a ServiceUnavailable (not running) into a clean tool error', async () => {
+      hostingService.getServer.mockResolvedValue(hostedServer as any);
+      hostedMcpClientService.callTool.mockRejectedValue(
+        new ServiceUnavailableException(
+          "Hosted server 'srv-1' is not running (status: stopped). Start it first.",
+        ),
+      );
+
+      const result = await service.callTool(userId, 'srv-1', 'do_thing', undefined);
+
+      expect(result.isError).toBe(true);
+      expect((result.content[0] as any).text).toContain('not running');
+    });
+
+    it('always scopes getServer to the authenticated user', async () => {
+      hostingService.getServer.mockResolvedValue(hostedServer as any);
+      hostedMcpClientService.callTool.mockResolvedValue({ content: [] } as any);
+
+      await service.callTool(userId, 'srv-1', 'do_thing', undefined);
+
+      expect(hostingService.getServer).toHaveBeenCalledWith('srv-1', userId);
     });
   });
 });

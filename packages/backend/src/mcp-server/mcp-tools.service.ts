@@ -9,6 +9,8 @@ import { Conversation } from '../database/entities';
 import { GenerationPipeline, PipelineUpdate } from '../orchestration/pipeline.service';
 import { MarketplaceService } from '../marketplace/marketplace.service';
 import { SortField, SortOrder } from '../marketplace/dto/search-servers.dto';
+import { HostingService } from '../hosting/hosting.service';
+import { HostedMcpClientService } from '../hosting/services/hosted-mcp-client.service';
 
 /**
  * Delegates every MCP tool call to the exact same services the chat UI uses:
@@ -31,10 +33,12 @@ export class McpToolsService {
     private readonly conversationRepo: Repository<Conversation>,
     private readonly pipeline: GenerationPipeline,
     private readonly marketplaceService: MarketplaceService,
+    private readonly hostingService: HostingService,
+    private readonly hostedMcpClientService: HostedMcpClientService,
   ) {}
 
   /**
-   * Registers all six MCP Everything tools on a per-request `McpServer`
+   * Registers all MCP Everything tools on a per-request `McpServer`
    * instance, bound to the already-authenticated `userId`.
    *
    * Called once per HTTP request (see `McpServerController`) since the
@@ -143,6 +147,62 @@ export class McpToolsService {
         },
       },
       async ({ query }) => this.searchMarketplace(query),
+    );
+
+    server.registerTool(
+      'search_tools',
+      {
+        title: 'Search Hosted Server Tools',
+        description:
+          'Searches the tools of your own hosted servers, so a single connection can reach all ' +
+          "of them. It reads each server's stored tool definitions, which means it still works " +
+          'when a server is stopped. Read-only and free of charge, with no quota or AI cost. Use ' +
+          'it to find a tool, then run one of the results with call_tool. Note that the free ' +
+          'tier hosts a single server.',
+        inputSchema: {
+          query: z
+            .string()
+            .max(200)
+            .optional()
+            .describe(
+              'Free-text term matched against tool name, tool description, and server name. ' +
+                'Omit to list every tool.',
+            ),
+          serverId: z
+            .string()
+            .optional()
+            .describe('Restrict the search to a single hosted server by its serverId.'),
+          limit: z
+            .number()
+            .int()
+            .min(1)
+            .max(100)
+            .optional()
+            .default(25)
+            .describe('Maximum number of tools to return (1-100). Defaults to 25.'),
+        },
+      },
+      async ({ query, serverId, limit }) => this.searchTools(userId, { query, serverId, limit }),
+    );
+
+    server.registerTool(
+      'call_tool',
+      {
+        title: 'Call Hosted Server Tool',
+        description:
+          "Forwards a call to a tool on one of your own hosted servers and returns that tool's " +
+          'result. The target server must be running; this does not start it for you. No ' +
+          'generation quota or AI cost is involved.',
+        inputSchema: {
+          serverId: z.string().describe('The serverId of the hosted server to call.'),
+          tool: z.string().describe('The name of the tool to run on that server.'),
+          arguments: z
+            .record(z.string(), z.unknown())
+            .optional()
+            .describe('Arguments object passed through to the tool. Omit if it takes none.'),
+        },
+      },
+      async ({ serverId, tool, arguments: args }) => this.callTool(userId, serverId, tool, args),
     );
   }
 
@@ -339,6 +399,113 @@ export class McpToolsService {
       return this.textResult(JSON.stringify(results, null, 2));
     } catch (error) {
       return this.toolError('search_marketplace', error);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // search_tools
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Aggregates the tools of the caller's own hosted servers into one list so a
+   * single connection to the platform can discover everything the user hosts.
+   *
+   * Reads each server's persisted `tools` (the stored tool definitions) rather
+   * than querying the live servers, so it is cheap and still returns results
+   * for servers that are currently stopped. `getServers(userId)` scopes to the
+   * owner, so a `serverId` the caller does not own simply is not in the list
+   * and yields an empty result rather than an error.
+   */
+  async searchTools(
+    userId: string,
+    options: { query?: string; serverId?: string; limit?: number },
+  ): Promise<CallToolResult> {
+    const limit = options.limit ?? 25;
+
+    try {
+      const servers = await this.hostingService.getServers(userId);
+
+      const scoped = servers.filter(
+        (server) =>
+          server.status !== 'deleted' &&
+          !server.deletedAt &&
+          (options.serverId ? server.serverId === options.serverId : true),
+      );
+
+      const needle = options.query?.trim().toLowerCase();
+
+      const matches: Array<{
+        serverId: string;
+        serverName: string;
+        serverStatus: string;
+        name: string;
+        description?: string;
+        inputSchema: unknown;
+      }> = [];
+
+      for (const server of scoped) {
+        const tools = Array.isArray(server.tools) ? server.tools : [];
+        for (const tool of tools) {
+          if (needle) {
+            const haystack = [tool?.name, tool?.description, server.serverName]
+              .filter((part): part is string => typeof part === 'string')
+              .join('\n')
+              .toLowerCase();
+            if (!haystack.includes(needle)) {
+              continue;
+            }
+          }
+
+          matches.push({
+            serverId: server.serverId,
+            serverName: server.serverName,
+            serverStatus: server.status,
+            name: tool?.name,
+            description: tool?.description,
+            inputSchema: tool?.inputSchema ?? {},
+          });
+        }
+      }
+
+      const truncated = matches.length > limit;
+      const capped = matches.slice(0, limit);
+      const serverCount = new Set(capped.map((tool) => tool.serverId)).size;
+
+      const payload = { count: capped.length, tools: capped, truncated };
+      const sentence =
+        `${capped.length} tool${capped.length === 1 ? '' : 's'} across ` +
+        `${serverCount} hosted server${serverCount === 1 ? '' : 's'}.`;
+
+      return this.textResult(`${sentence}\n${JSON.stringify(payload, null, 2)}`);
+    } catch (error) {
+      return this.toolError('search_tools', error);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // call_tool
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Forwards a `tools/call` to one of the caller's own hosted servers and
+   * returns the hosted server's `CallToolResult` unchanged - including a
+   * tool-level `isError: true`, which is a legitimate result and must not be
+   * re-wrapped. Ownership/not-found (from `getServer`) and "not running" (a
+   * ServiceUnavailableException from the upstream resolver) are routed through
+   * `toolError`, so the caller sees a clean tool error rather than a protocol
+   * error. This never starts a stopped server.
+   */
+  async callTool(
+    userId: string,
+    serverId: string,
+    tool: string,
+    args: Record<string, unknown> | undefined,
+  ): Promise<CallToolResult> {
+    try {
+      const server = await this.hostingService.getServer(serverId, userId);
+      return await this.hostedMcpClientService.callTool(server, tool, args, undefined);
+    } catch (error) {
+      return this.toolError('call_tool', error);
     }
   }
 

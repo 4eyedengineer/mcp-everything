@@ -103,7 +103,20 @@ const generatedCode = () => ({
   tsConfig: '{"compilerOptions":{}}',
   supportingFiles: { Dockerfile: 'FROM node:20-alpine\n' },
   metadata: {
-    tools: [{ name: 'list_posts', description: 'List posts' }],
+    tools: [
+      {
+        name: 'list_posts',
+        // The refinement loop emits a real JSON Schema per tool - it is the
+        // only place one is ever produced, so anything downstream that wants a
+        // tool's arguments depends on this surviving the trip to the database.
+        inputSchema: {
+          type: 'object',
+          properties: { userId: { type: 'string', description: 'Filter by author' } },
+          required: [],
+        },
+        description: 'List posts',
+      },
+    ],
     iteration: 1,
     serverName: 'jsonplaceholder-mcp',
   },
@@ -332,8 +345,15 @@ describe('GenerationPipeline', () => {
         'assistant',
       ]);
       expect(conversationRepo.row.state.serverName).toBe('jsonplaceholder-mcp');
+      // inputSchema included: state.tools used to be name+description only,
+      // which is what left every deployments/hosted_servers row with a null
+      // schema.
       expect(conversationRepo.row.state.tools).toEqual([
-        { name: 'list_posts', description: 'List posts' },
+        {
+          name: 'list_posts',
+          description: 'List posts',
+          inputSchema: generatedCode().metadata.tools[0].inputSchema,
+        },
       ]);
       // A completed run leaves no resumable state behind
       expect(conversationRepo.row.state.pipeline).toBeUndefined();
@@ -344,6 +364,32 @@ describe('GenerationPipeline', () => {
       expect(existsSync(join(dir, 'tsconfig.json'))).toBe(true);
       expect(existsSync(join(dir, 'Dockerfile'))).toBe(true);
       expect(readFileSync(join(dir, 'README.md'), 'utf-8')).toContain('list_posts');
+    });
+
+    it('omits inputSchema on state.tools when the generator produced none', async () => {
+      refinementService.refineUntilWorking.mockResolvedValue({
+        success: true,
+        generatedCode: {
+          ...generatedCode(),
+          metadata: {
+            ...generatedCode().metadata,
+            tools: [{ name: 'search_posts' }],
+          },
+        },
+        testResults: createMockTestResults(true, 1),
+        iterations: 1,
+        shouldContinue: false,
+      });
+
+      await collect(
+        await service.execute(SESSION_ID, 'MCP server for JSONPlaceholder', CONVERSATION_ID, USER_ID),
+      );
+
+      const [tool] = conversationRepo.row.state.tools;
+      expect(tool).toEqual({ name: 'search_posts', description: 'Tool: search_posts' });
+      // Absent, not `undefined`: this object is serialized into jsonb, and an
+      // explicit null schema is indistinguishable from the bug being fixed.
+      expect('inputSchema' in tool).toBe(false);
     });
 
     it('persists generatedCode + a real validation summary on the assistant message so it survives a reload', async () => {

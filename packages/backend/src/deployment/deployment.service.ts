@@ -887,20 +887,47 @@ export class DeploymentOrchestratorService {
 
   /**
    * Extract tool information from conversation state
+   *
+   * `inputSchema` is included when known: it is what lets a caller (e.g. the
+   * platform aggregator) know a hosted tool's arguments without starting the
+   * server. It is read back from `state.generatedCode.metadata.tools` when the
+   * `state.tools` projection lacks it, because that projection dropped the
+   * schema until GenerationPipeline.syncGeneratedCodeToConversation was fixed -
+   * so for older conversations the metadata copy is the only surviving source.
    */
   private getToolsFromConversation(conversation: Conversation): McpToolInfo[] {
+    type StateTool = { name: string; description: string; inputSchema?: Record<string, unknown> };
     const state = conversation.state as {
-      tools?: Array<{ name: string; description: string }>;
-      generatedTools?: Array<{ name: string; description: string }>;
+      tools?: StateTool[];
+      generatedTools?: StateTool[];
+      generatedCode?: { metadata?: { tools?: StateTool[] } };
     } | null;
 
     // Try to get tools from conversation state
     const tools = state?.tools || state?.generatedTools || [];
 
-    return tools.map((tool) => ({
-      name: tool.name,
-      description: tool.description || `Tool: ${tool.name}`,
-    }));
+    // jsonb, so nothing guarantees the shape - guard before iterating.
+    const generatedTools = state?.generatedCode?.metadata?.tools;
+    const schemasByName = new Map<string, Record<string, unknown>>();
+    if (Array.isArray(generatedTools)) {
+      for (const tool of generatedTools) {
+        if (tool?.name && tool.inputSchema) {
+          schemasByName.set(tool.name, tool.inputSchema);
+        }
+      }
+    }
+
+    return tools.map((tool) => {
+      const inputSchema = tool.inputSchema || schemasByName.get(tool.name);
+
+      return {
+        name: tool.name,
+        description: tool.description || `Tool: ${tool.name}`,
+        // Omitted rather than set to undefined when unknown, so callers that
+        // spread this into a payload do not gain a meaningless key.
+        ...(inputSchema ? { inputSchema } : {}),
+      };
+    });
   }
 
   /**
@@ -919,10 +946,17 @@ export class DeploymentOrchestratorService {
     serverName: string,
     options: DeploymentOptions,
   ): Promise<void> {
-    const tools = this.getToolsFromConversation(conversation).map((tool) => ({
+    // Annotated with the column's own type: TypeORM's DeepPartial rejects a
+    // Record<string, unknown> where the entity declares `inputSchema: any`.
+    const tools: Deployment['tools'] = this.getToolsFromConversation(conversation).map((tool) => ({
       name: tool.name,
       description: tool.description,
-      inputSchema: undefined,
+      // Was hardcoded `undefined`, which is why deployments.tools - and
+      // hosted_servers.tools, which HostingService copies from it verbatim -
+      // held `inputSchema: null` for every tool ever deployed. `null` is still
+      // written when genuinely unknown, matching the column's existing shape;
+      // migration 1754600000000 backfills the rows written before this fix.
+      inputSchema: tool.inputSchema ?? null,
     }));
 
     const envVars = options.envVars?.map((envVar) => ({

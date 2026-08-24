@@ -6,6 +6,7 @@ import { HostingService } from './hosting.service';
 import { UserService } from '../user/user.service';
 import { TokenEncryptionService } from '../common/token-encryption/token-encryption.service';
 import { HostedServerSourceTokenService } from './hosted-server-source-token.service';
+import { HostedMcpClientService } from './services/hosted-mcp-client.service';
 import { UserTier } from '../subscription/tier-config';
 import { HostedServer } from '../database/entities/hosted-server.entity';
 import { Deployment } from '../database/entities/deployment.entity';
@@ -169,6 +170,10 @@ describe('HostingService', () => {
         { provide: UserService, useValue: userService },
         { provide: TokenEncryptionService, useValue: tokenEncryptionService },
         { provide: HostedServerSourceTokenService, useValue: sourceTokenService },
+        {
+          provide: HostedMcpClientService,
+          useValue: { invalidate: jest.fn().mockResolvedValue(undefined) },
+        },
       ],
     }).compile();
 

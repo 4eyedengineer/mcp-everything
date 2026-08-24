@@ -6,6 +6,13 @@ import { GistResult, DeploymentFile } from '../types/deployment.types';
 export interface McpToolInfo {
   name: string;
   description: string;
+  /**
+   * The tool's JSON Schema, when the generated server declared one. Optional
+   * because it is absent for tools generated before the schema was carried
+   * through conversation.state (see DeploymentOrchestratorService
+   * .getToolsFromConversation and the BackfillToolInputSchemas migration).
+   */
+  inputSchema?: Record<string, unknown>;
 }
 
 export interface SingleFileGistOptions {

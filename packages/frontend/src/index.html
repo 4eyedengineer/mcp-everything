@@ -92,6 +92,7 @@
           "Generated servers drop into Claude Desktop, or run behind HTTP wherever you host them",
           "Publish generated code to a public Gist on your own GitHub account, or download it",
           "Exposes its own MCP server so AI agents can drive generation programmatically",
+          "One connection reaches the tools of every MCP server you host here",
           "Public, account-free catalogue of published MCP servers"
         ],
         "softwareHelp": "https://github.com/4eyedengineer/mcp-everything"
@@ -138,7 +139,7 @@
             "name": "Can an AI agent use MCP Everything without a human?",
             "acceptedAnswer": {
               "@type": "Answer",
-              "text": "Yes. MCP Everything exposes its own MCP server over Streamable HTTP with six tools: generate_mcp_server, continue_generation, get_generation_status, get_generated_server, list_conversations and search_marketplace. It is authenticated with an API key prefixed mcpe_, sent as an X-API-Key header or an Authorization bearer token."
+              "text": "Yes. MCP Everything exposes its own MCP server over Streamable HTTP with eight tools: generate_mcp_server, continue_generation, get_generation_status, get_generated_server, list_conversations, search_marketplace, search_tools and call_tool. search_tools and call_tool find and run the tools of the MCP servers you host here, so one connection reaches all of them. It is authenticated with an API key prefixed mcpe_, sent as an X-API-Key header or an Authorization bearer token."
             }
           },
           {
@@ -194,10 +195,12 @@
           <code>POST https://mcpeverything.com/mcp</code>. MCP Streamable HTTP, stateless,
           authenticated with an API key prefixed <code>mcpe_</code> sent either as an
           <code>X-API-Key</code> header or as <code>Authorization: Bearer</code>. Keys are created
-          on the account page. It exposes six tools: <code>generate_mcp_server</code>,
+          on the account page. It exposes eight tools: <code>generate_mcp_server</code>,
           <code>continue_generation</code>, <code>get_generation_status</code>,
-          <code>get_generated_server</code>, <code>list_conversations</code> and
-          <code>search_marketplace</code>. A machine-readable summary of this site is published at
+          <code>get_generated_server</code>, <code>list_conversations</code>,
+          <code>search_marketplace</code>, <code>search_tools</code> and
+          <code>call_tool</code>. The last two find and run the tools of the MCP servers you host
+          here, so one connection reaches all of them. A machine-readable summary of this site is published at
           <a href="/llms.txt">/llms.txt</a>.
         </p>
 

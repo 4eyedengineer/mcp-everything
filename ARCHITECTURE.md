@@ -589,6 +589,26 @@ type StreamUpdate =
   | { type: 'error'; error: string };
 ```
 
+### Platform MCP Endpoint (`POST /mcp`)
+
+The platform is itself an MCP server, so agents can drive it without the web UI. The controller is
+mounted outside the `/api/v1` global prefix, speaks MCP Streamable HTTP statelessly, and
+authenticates with a user API key (`mcpe_` prefix) sent as `X-API-Key` or `Authorization: Bearer`.
+
+Tools are registered in `packages/backend/src/mcp-server/mcp-tools.service.ts`:
+
+- **Generation**: `generate_mcp_server`, `continue_generation`, `get_generation_status`,
+  `get_generated_server`, `list_conversations`.
+- **Catalogue**: `search_marketplace`, read-only over public marketplace listings.
+- **Aggregator**: `search_tools` and `call_tool`, which discover and invoke the tools of the
+  caller's own hosted servers, so one connection reaches every server a user hosts here.
+  `search_tools` reads persisted tool definitions from the database and therefore also answers for
+  a stopped server; `call_tool` forwards the call through `HostedMcpClientService`
+  (`packages/backend/src/hosting/services/hosted-mcp-client.service.ts`), returns the hosted tool's
+  result unchanged, and fails with a clear message when the server is not running or the caller
+  does not own it. Neither consumes generation quota. Marketplace entries are code rather than
+  running servers, so they are not reachable this way.
+
 ## Security Architecture
 
 ### Authentication and Ownership
