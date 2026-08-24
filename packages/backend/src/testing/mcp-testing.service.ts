@@ -1,5 +1,6 @@
-import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
+import { Injectable, Logger, Optional, OnModuleDestroy } from '@nestjs/common';
 import { spawn, exec } from 'child_process';
+import { K8sTestSandboxService, TestSandboxHandle } from './k8s-test-sandbox.service';
 import { promisify } from 'util';
 import { mkdirSync, writeFileSync, rmSync, existsSync } from 'fs';
 import { join, dirname } from 'path';
@@ -307,6 +308,27 @@ export class McpHttpTransportClient {
 const ALLOW_UNSANDBOXED_ENV_VAR = 'MCP_TESTING_ALLOW_UNSANDBOXED';
 
 /**
+ * Which sandbox backend runs untrusted, LLM-generated MCP servers during the
+ * generate-test-refine loop. Chosen via MCP_TESTING_SANDBOX (see
+ * `resolveSandboxMode`):
+ *
+ *  - 'docker': only ever use the local Docker daemon; if it is unavailable,
+ *    fail closed (unchanged legacy behaviour).
+ *  - 'k8s':    only ever use the Kubernetes test-pod sandbox; if no cluster is
+ *    reachable, fail closed. Intended for in-cluster deployments where the
+ *    backend pod has no Docker daemon.
+ *  - 'auto' (default): prefer Docker when its daemon is reachable (fast local
+ *    path); otherwise, if a Kubernetes sandbox is configured, use it; otherwise
+ *    fall through to the existing Docker-required / fail-closed behaviour. This
+ *    means the k8s path only ever engages when a cluster is genuinely reachable
+ *    and Docker is not — never as a silent default in local dev or CI.
+ */
+export type SandboxMode = 'docker' | 'k8s' | 'auto';
+
+/** Env var selecting the sandbox backend. */
+const SANDBOX_MODE_ENV_VAR = 'MCP_TESTING_SANDBOX';
+
+/**
  * MCP server testing service.
  *
  * SECURITY MODEL: LLM-generated code is untrusted. Every step that executes
@@ -393,7 +415,13 @@ export class McpTestingService implements OnModuleDestroy {
    */
   private readonly activeContainerNames: Set<string> = new Set();
 
-  constructor() {
+  /**
+   * Optional Kubernetes test-pod sandbox. Present only when TestingModule
+   * provides it (it depends only on ConfigService, so no HostingModule import
+   * and no DI cycle). `@Optional()` keeps `new McpTestingService()` working for
+   * the existing unit tests and for any consumer that never touches k8s.
+   */
+  constructor(@Optional() private readonly k8sSandbox?: K8sTestSandboxService) {
     // Ensure temp directory exists
     if (!existsSync(this.tempBaseDir)) {
       mkdirSync(this.tempBaseDir, { recursive: true });
@@ -483,6 +511,231 @@ export class McpTestingService implements OnModuleDestroy {
   }
 
   /**
+   * Resolve the configured sandbox backend from MCP_TESTING_SANDBOX. Read from
+   * process.env directly for consistency with the rest of this service, which
+   * reads its flags the same way. Unknown values fall back to 'auto'.
+   */
+  private resolveSandboxMode(): SandboxMode {
+    const raw = (process.env[SANDBOX_MODE_ENV_VAR] || 'auto').toLowerCase();
+    if (raw === 'docker' || raw === 'k8s' || raw === 'auto') {
+      return raw;
+    }
+    this.logger.warn(
+      `Unrecognised ${SANDBOX_MODE_ENV_VAR}='${raw}'; defaulting to 'auto' (Docker if reachable, else Kubernetes if configured, else fail closed).`,
+    );
+    return 'auto';
+  }
+
+  /**
+   * Non-throwing Docker availability probe, used only for the k8s-vs-docker
+   * decision. Shares `this.dockerAvailable` with `ensureDockerAvailable()` so
+   * the daemon is probed at most once; when it succeeds here the subsequent
+   * `ensureDockerAvailable()` call takes its cached branch and does not
+   * re-probe or re-log.
+   */
+  private async isDockerReachable(): Promise<boolean> {
+    if (this.dockerAvailable !== null) {
+      return this.dockerAvailable;
+    }
+    try {
+      await execAsync('docker version --format "{{.Server.Version}}"', { timeout: 10000 });
+      this.dockerAvailable = true;
+      this.logger.log(
+        'Docker sandbox verified (docker daemon reachable). MCP server testing will run in isolated containers.',
+      );
+    } catch {
+      this.dockerAvailable = false;
+    }
+    return this.dockerAvailable;
+  }
+
+  private k8sSandboxUnavailableMessage(): string {
+    return (
+      `${SANDBOX_MODE_ENV_VAR}=k8s was requested but no Kubernetes test sandbox is reachable ` +
+      '(no usable kubeconfig / in-cluster config). Refusing to run untrusted, LLM-generated code ' +
+      'without an isolated sandbox. Point the backend at a cluster, or use ' +
+      `${SANDBOX_MODE_ENV_VAR}=auto with a Docker daemon available.`
+    );
+  }
+
+  /**
+   * Flatten a GeneratedCode into the same on-disk layout `createTempServerDir`
+   * produces (mainFile -> src/index.ts, package.json/tsconfig.json at the root,
+   * supportingFiles at their own paths), as a plain path -> content map that
+   * ships into the k8s test pod via a Secret.
+   */
+  private layoutFiles(generatedCode: GeneratedCode): Record<string, string> {
+    return {
+      'src/index.ts': generatedCode.mainFile,
+      'package.json': generatedCode.packageJson,
+      'tsconfig.json': generatedCode.tsConfig,
+      ...generatedCode.supportingFiles,
+    };
+  }
+
+  /**
+   * Kubernetes test-pod path. Runs the untrusted server in an isolated pod
+   * (Secret + Deployment + ClusterIP Service, all hardened; see
+   * K8sTestSandboxService), waits for it to serve, then drives the exact same
+   * MCP handshake + per-tool loop the Docker/HTTP path uses — reusing
+   * `McpHttpTransportClient` via a synthetic `runningProcesses` entry so the
+   * handshake code is shared, not duplicated. The sandbox is always torn down,
+   * even on failure/timeout. Returns the identical `McpServerTestResult` shape
+   * the Docker path returns.
+   */
+  private async testMcpServerOnK8s(
+    generatedCode: GeneratedCode,
+    config: McpTestConfig,
+    testId: string,
+    startTime: number,
+  ): Promise<McpServerTestResult> {
+    const sandbox = this.k8sSandbox!;
+    const tools = generatedCode.metadata.tools;
+    const toolTimeout = config.toolTimeout || 10;
+    const totalTimeoutMs = (config.timeout || 120) * 1000;
+    const imageTag = sandbox.testImage;
+
+    let handle: TestSandboxHandle | null = null;
+    let buildSuccess = false;
+    let buildError: string | undefined;
+    let buildDuration = 0;
+    const results: ToolTestResult[] = [];
+    let cleanupErrors: string[] = [];
+
+    try {
+      const buildStart = Date.now();
+
+      this.streamProgress(testId, {
+        type: 'building',
+        message: 'Provisioning isolated Kubernetes test pod...',
+        timestamp: new Date(),
+      });
+
+      handle = await sandbox.createSandbox({
+        testId,
+        files: this.layoutFiles(generatedCode),
+        resources: { cpuLimit: config.cpuLimit, memoryLimit: config.memoryLimit },
+      });
+
+      const readiness = await sandbox.waitForSandboxReady(handle, totalTimeoutMs);
+      buildDuration = Date.now() - buildStart;
+      buildSuccess = readiness.buildSucceeded;
+
+      if (!readiness.ready) {
+        buildError = readiness.error;
+        this.streamProgress(testId, {
+          type: 'error',
+          message: `Test pod never became ready: ${readiness.error}`,
+          timestamp: new Date(),
+        });
+        this.logger.warn(`[${testId}] k8s test pod not ready: ${readiness.error}`);
+      } else {
+        // Drive the handshake over the Service using the shared HTTP client.
+        // A synthetic runningProcesses entry lets initializeMcpServer /
+        // getToolsList / testMcpToolDirect run unchanged — the HTTP branch of
+        // each only ever touches processInfo.httpClient and stderrBuffer.
+        const baseUrl = sandbox.serviceBaseUrl(handle);
+        this.runningProcesses.set(testId, {
+          transport: 'http',
+          httpClient: new McpHttpTransportClient(baseUrl),
+          pendingResponses: new Map(),
+          buffer: '',
+          stderrBuffer: '',
+          ready: false,
+        });
+
+        this.streamProgress(testId, {
+          type: 'testing',
+          message: `Testing ${tools.length} tools against the test pod...`,
+          timestamp: new Date(),
+        });
+
+        const initResult = await this.initializeMcpServer(testId, toolTimeout);
+        if (!initResult.success) {
+          this.logger.warn(`[${testId}] initialize failed on k8s test pod: ${initResult.error}`);
+        }
+
+        const toolsListResult = await this.getToolsList(testId, toolTimeout);
+        const serverTools = toolsListResult.tools || [];
+        this.logger.log(`[${testId}] k8s test pod reports ${serverTools.length} tools`);
+
+        for (let i = 0; i < tools.length; i++) {
+          const tool = tools[i];
+          this.streamProgress(testId, {
+            type: 'testing_tool',
+            message: `Testing tool: ${tool.name}`,
+            toolName: tool.name,
+            toolIndex: i + 1,
+            totalTools: tools.length,
+            timestamp: new Date(),
+          });
+          try {
+            results.push(await this.testMcpToolDirect(testId, tool, serverTools, toolTimeout));
+          } catch (toolError) {
+            results.push({
+              toolName: tool.name,
+              success: false,
+              executionTime: 0,
+              error: toolError instanceof Error ? toolError.message : String(toolError),
+              mcpCompliant: false,
+              timestamp: new Date(),
+            });
+          }
+        }
+      }
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      this.logger.error(`[${testId}] k8s test-pod run failed: ${errMsg}`);
+      // If we never got as far as testing tools, surface this as the build
+      // error so the result is still a well-formed failure, not a throw.
+      if (results.length === 0 && !buildError) {
+        buildError = errMsg;
+      }
+    } finally {
+      // Always drop the synthetic handshake entry and tear the sandbox down.
+      this.runningProcesses.delete(testId);
+      if (handle && config.cleanup !== false) {
+        cleanupErrors = await sandbox.destroySandbox(handle);
+      } else if (handle) {
+        this.logger.warn(
+          `[${testId}] cleanup disabled (config.cleanup=false); leaving test sandbox '${handle.name}' in place`,
+        );
+      }
+      this.unregisterProgressCallback(testId);
+    }
+
+    const toolsPassedCount = results.filter((r) => r.success).length;
+    const overallSuccess =
+      buildSuccess &&
+      results.length === tools.length &&
+      tools.length > 0 &&
+      toolsPassedCount === tools.length;
+
+    this.streamProgress(testId, {
+      type: 'complete',
+      message: `Test completed: ${toolsPassedCount}/${tools.length} tools passed`,
+      timestamp: new Date(),
+    });
+
+    return {
+      containerId: handle?.name || testId,
+      imageTag,
+      buildSuccess,
+      buildError,
+      buildDuration,
+      toolsFound: tools.length,
+      toolsTested: results.length,
+      toolsPassedCount,
+      results,
+      overallSuccess,
+      totalDuration: Date.now() - startTime,
+      cleanupSuccess: cleanupErrors.length === 0,
+      cleanupErrors,
+      timestamp: new Date(),
+    };
+  }
+
+  /**
    * Register progress callback for real-time streaming
    */
   registerProgressCallback(testId: string, callback: (update: TestProgressUpdate) => void): void {
@@ -521,6 +774,30 @@ export class McpTestingService implements OnModuleDestroy {
     let tempDir: string | null = null;
     let buildSuccess = false;
     const cleanupErrors: string[] = [];
+
+    // --- sandbox backend selection ---------------------------------------
+    // A third option in front of the Docker path: run the untrusted server in
+    // an isolated Kubernetes test pod. This is for the cluster, where the
+    // backend pod has no Docker daemon and must NEVER run generated code in its
+    // own process. The Docker path and the fail-closed default below are
+    // unchanged; this only ADDS the k8s path, gated on a reachable cluster.
+    const sandboxMode = this.resolveSandboxMode();
+    if (sandboxMode !== 'docker' && this.k8sSandbox?.isEnabled()) {
+      // Docker still wins in 'auto' mode when its daemon is reachable (fast
+      // local path); 'k8s' mode forces the cluster path.
+      const dockerWins = sandboxMode === 'auto' && (await this.isDockerReachable());
+      if (!dockerWins) {
+        this.logger.log(
+          `[${testId}] Sandbox backend: Kubernetes test pod (MCP_TESTING_SANDBOX=${sandboxMode})`,
+        );
+        return this.testMcpServerOnK8s(generatedCode, mergedConfig, testId, startTime);
+      }
+    } else if (sandboxMode === 'k8s') {
+      // The operator explicitly asked for the cluster sandbox but none is
+      // reachable. Fail closed rather than silently dropping to Docker or the
+      // host — the whole point of 'k8s' mode is "only ever a real sandbox".
+      throw new Error(this.k8sSandboxUnavailableMessage());
+    }
 
     // Fail fast (and loudly) if Docker isn't available, rather than silently
     // dropping down to unsandboxed host execution of untrusted, LLM-generated

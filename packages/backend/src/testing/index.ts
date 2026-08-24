@@ -10,7 +10,15 @@ export type {
   McpServerTestResult,
   TestProgressUpdate,
   McpTestConfig,
+  SandboxMode,
 } from './mcp-testing.service';
+
+export { K8sTestSandboxService } from './k8s-test-sandbox.service';
+export type {
+  TestSandboxHandle,
+  CreateSandboxInput,
+  SandboxReadiness,
+} from './k8s-test-sandbox.service';
 
 export { TestingModule } from './testing.module';
 export { TestingController } from './testing.controller';

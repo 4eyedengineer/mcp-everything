@@ -11,6 +11,16 @@
 # (`mcp-everything`, see k8s/base/backend/serviceaccount.yaml) - a RoleBinding
 # in namespace A may name a subject from namespace B; it grants that subject
 # the Role's permissions only within namespace A.
+#
+# These same verbs also cover the generate-test-refine loop's Kubernetes test
+# sandbox (packages/backend/src/testing/k8s-test-sandbox.service.ts), which
+# runs untrusted generated code in a throwaway pod when the backend has no
+# Docker daemon. It ships source in a Secret, runs it as a short-lived
+# replicas:1 Deployment behind a ClusterIP Service, polls readiness via pods,
+# and reads pods/log on failure - all within the create/get/list/watch/patch/
+# delete on secrets/deployments/services and get/list/watch on pods (+ get on
+# pods/log) granted below. No ConfigMaps, Jobs, or pods/exec are used or needed,
+# so nothing here changes for it.
 ---
 # Permissions the backend needs inside mcp-servers.
 apiVersion: rbac.authorization.k8s.io/v1
