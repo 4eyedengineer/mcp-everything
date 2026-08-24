@@ -29,10 +29,10 @@ resources:
 images:
   - name: mcp-everything/backend
     newName: harbor.192.168.1.240.nip.io/mcp-everything/backend
-    newTag: 30293df3bb9275abc8d7bda6be4ea4e89a126c50
+    newTag: ea28ce75b9be03959876687efc33fa8a7d6b859c
   - name: mcp-everything/frontend
     newName: harbor.192.168.1.240.nip.io/mcp-everything/frontend
-    newTag: 30293df3bb9275abc8d7bda6be4ea4e89a126c50
+    newTag: ea28ce75b9be03959876687efc33fa8a7d6b859c
 
 # Non-secret backend env. Kustomize hashes this ConfigMap's name and rewrites
 # the envFrom.configMapRef in base/backend/deployment.yaml to match, so a
