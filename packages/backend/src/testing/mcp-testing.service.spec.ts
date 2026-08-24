@@ -209,3 +209,40 @@ describe('McpHttpTransportClient', () => {
     await expect(client.notify('notifications/initialized')).resolves.toBeUndefined();
   });
 });
+
+// Security property: the unsandboxed escape hatch must never arm in
+// production, no matter what the environment variable says. These are pure
+// construction-time checks (no Docker, no npm install), so they run instantly.
+describe('McpTestingService — unsandboxed escape hatch is production-gated', () => {
+  const originalNodeEnv = process.env.NODE_ENV;
+  const originalFlag = process.env.MCP_TESTING_ALLOW_UNSANDBOXED;
+
+  afterEach(() => {
+    // Restore so the flag stays 'true' for the integration suite above/below.
+    if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = originalNodeEnv;
+    if (originalFlag === undefined) delete process.env.MCP_TESTING_ALLOW_UNSANDBOXED;
+    else process.env.MCP_TESTING_ALLOW_UNSANDBOXED = originalFlag;
+  });
+
+  it('refuses the escape hatch under NODE_ENV=production even when the flag is set', () => {
+    process.env.MCP_TESTING_ALLOW_UNSANDBOXED = 'true';
+    process.env.NODE_ENV = 'production';
+    const service = new McpTestingService();
+    expect((service as unknown as { allowUnsandboxed: boolean }).allowUnsandboxed).toBe(false);
+  });
+
+  it('honours the escape hatch outside production when the flag is set', () => {
+    process.env.MCP_TESTING_ALLOW_UNSANDBOXED = 'true';
+    process.env.NODE_ENV = 'test';
+    const service = new McpTestingService();
+    expect((service as unknown as { allowUnsandboxed: boolean }).allowUnsandboxed).toBe(true);
+  });
+
+  it('leaves the escape hatch off when the flag is unset', () => {
+    delete process.env.MCP_TESTING_ALLOW_UNSANDBOXED;
+    process.env.NODE_ENV = 'test';
+    const service = new McpTestingService();
+    expect((service as unknown as { allowUnsandboxed: boolean }).allowUnsandboxed).toBe(false);
+  });
+});

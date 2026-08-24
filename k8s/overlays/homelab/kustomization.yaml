@@ -72,7 +72,14 @@ configMapGenerator:
       # be multi-arch: this cluster is 4x arm64 + 3x amd64 and generated
       # Deployments carry no nodeSelector. See packages/mcp-runner/README.md.
       - MCP_RUNNER_IMAGE=harbor.192.168.1.240.nip.io/mcp-everything/mcp-runner:latest
-      - MCP_TESTING_ALLOW_UNSANDBOXED=true
+      # NOTE: MCP_TESTING_ALLOW_UNSANDBOXED is deliberately NOT set here. The
+      # backend pod has no Docker daemon, so with this flag on the generate-
+      # test-refine loop would execute untrusted, LLM-generated code directly
+      # in this pod, with this pod's secrets in its environment. The backend
+      # also refuses the flag outright when NODE_ENV=production (see
+      # McpTestingService). Testing therefore fails closed here until the test
+      # step runs in a real sandbox (a throwaway mcp-runner pod); tracked
+      # separately. Do NOT re-add this line to make generation "work".
       - GENERATED_SERVERS_DIR=/data/generated-servers
       - PIPELINE_INTENT_CONFIDENCE_MIN=0.75
       # GitHubStrategy/GoogleStrategy (src/auth/strategies/*.ts) are

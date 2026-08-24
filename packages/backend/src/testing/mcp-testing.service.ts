@@ -342,7 +342,9 @@ const ALLOW_UNSANDBOXED_ENV_VAR = 'MCP_TESTING_ALLOW_UNSANDBOXED';
  * `MCP_TESTING_ALLOW_UNSANDBOXED=true` to explicitly opt back into the old
  * unsandboxed host-execution path (logs a prominent warning every time it is
  * used) — intended only for CI environments that genuinely cannot run
- * Docker-in-Docker.
+ * Docker-in-Docker. That flag is hard-disabled under NODE_ENV=production: in
+ * production the service always fails closed rather than run untrusted code on
+ * the host, no matter what the environment says.
  */
 @Injectable()
 export class McpTestingService implements OnModuleDestroy {
@@ -361,8 +363,19 @@ export class McpTestingService implements OnModuleDestroy {
   /** Base image used to run untrusted install/compile/execute steps. */
   private readonly dockerImage = process.env.MCP_TESTING_DOCKER_IMAGE || 'node:20-alpine';
 
-  /** Escape hatch for Docker-less CI environments. See module doc comment. */
-  private readonly allowUnsandboxed = process.env[ALLOW_UNSANDBOXED_ENV_VAR] === 'true';
+  /**
+   * Escape hatch for Docker-less CI environments. See module doc comment.
+   *
+   * Hard-disabled under NODE_ENV=production regardless of the env var: running
+   * untrusted, LLM-generated code on the host would expose this process's
+   * secrets (ANTHROPIC_API_KEY, GITHUB_TOKEN, database credentials, JWT_SECRET)
+   * and is only ever acceptable in an ephemeral CI runner. Defence in depth so
+   * a stray `MCP_TESTING_ALLOW_UNSANDBOXED=true` in a production overlay cannot
+   * silently re-arm host execution; the config line is the first line of
+   * defence, this is the second.
+   */
+  private readonly allowUnsandboxed =
+    process.env[ALLOW_UNSANDBOXED_ENV_VAR] === 'true' && process.env.NODE_ENV !== 'production';
 
   /** Cached result of the one-time Docker availability probe. */
   private dockerAvailable: boolean | null = null;
@@ -384,6 +397,21 @@ export class McpTestingService implements OnModuleDestroy {
     // Ensure temp directory exists
     if (!existsSync(this.tempBaseDir)) {
       mkdirSync(this.tempBaseDir, { recursive: true });
+    }
+
+    // Surface the ignored escape hatch loudly: without this, an operator who
+    // set the flag in a production overlay would see generation fail with a
+    // generic "Docker required" error and no hint that their flag was the
+    // thing being refused.
+    if (
+      process.env[ALLOW_UNSANDBOXED_ENV_VAR] === 'true' &&
+      process.env.NODE_ENV === 'production'
+    ) {
+      this.logger.warn(
+        `${ALLOW_UNSANDBOXED_ENV_VAR}=true is set but IGNORED because NODE_ENV=production. ` +
+          'Unsandboxed host execution of LLM-generated code is never permitted in production. ' +
+          'Provide a real Docker sandbox instead; testing will fail closed until one is available.',
+      );
     }
   }
 
