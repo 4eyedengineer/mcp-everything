@@ -6,6 +6,7 @@ import { UserService } from './user.service';
 import { User } from '../database/entities/user.entity';
 import { UsageRecord } from '../database/entities/usage.entity';
 import { HostedServer } from '../database/entities/hosted-server.entity';
+import { UserTier, TIER_CONFIG } from '../subscription/tier-config';
 
 describe('UserService - GitHub token storage', () => {
   let service: UserService;
@@ -152,6 +153,87 @@ describe('UserService - GitHub token storage', () => {
       expect(calledPayload.githubAccessTokenEncrypted).not.toBeUndefined();
       expect(calledPayload.githubTokenScope).not.toBeUndefined();
       expect(calledPayload.githubTokenUpdatedAt).not.toBeUndefined();
+    });
+  });
+});
+
+describe('UserService - tier -> quota', () => {
+  let service: UserService;
+  let mockUserRepository: any;
+  let mockUsageRepository: any;
+  let mockHostedServerRepository: any;
+
+  beforeEach(async () => {
+    mockUserRepository = {
+      findOne: jest.fn(),
+      save: jest.fn((u) => Promise.resolve(u)),
+    };
+    mockUsageRepository = {
+      findOne: jest.fn(),
+      create: jest.fn((v) => v),
+      save: jest.fn((u) => Promise.resolve(u)),
+    };
+    mockHostedServerRepository = {};
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        UserService,
+        { provide: getRepositoryToken(User), useValue: mockUserRepository },
+        { provide: getRepositoryToken(UsageRecord), useValue: mockUsageRepository },
+        { provide: getRepositoryToken(HostedServer), useValue: mockHostedServerRepository },
+      ],
+    }).compile();
+
+    service = module.get(UserService);
+  });
+
+  describe('updateTier', () => {
+    it('flips the tier and lifts the monthly quota to unlimited for pro', async () => {
+      const user = { id: 'user-1', email: 'a@b.c', tier: 'free' };
+      // future period so getCurrentUsage reuses it rather than creating a new one
+      const future = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+      const usage = { userId: 'user-1', monthlyLimit: 5, periodEnd: future };
+      mockUserRepository.findOne.mockResolvedValue(user);
+      mockUsageRepository.findOne.mockResolvedValue(usage);
+
+      const result = await service.updateTier('user-1', UserTier.PRO);
+
+      expect(result.tier).toBe(UserTier.PRO);
+      // Infinity is stored as the 999999 sentinel
+      expect(usage.monthlyLimit).toBe(999999);
+      expect(mockUsageRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({ monthlyLimit: 999999 }),
+      );
+    });
+
+    it('sets the concrete free-tier limit when downgrading to free', async () => {
+      const user = { id: 'user-1', email: 'a@b.c', tier: 'pro' };
+      const future = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+      const usage = { userId: 'user-1', monthlyLimit: 999999, periodEnd: future };
+      mockUserRepository.findOne.mockResolvedValue(user);
+      mockUsageRepository.findOne.mockResolvedValue(usage);
+
+      await service.updateTier('user-1', UserTier.FREE);
+
+      expect(usage.monthlyLimit).toBe(TIER_CONFIG[UserTier.FREE].monthlyServerLimit);
+    });
+
+    it('throws when the user does not exist', async () => {
+      mockUserRepository.findOne.mockResolvedValue(null);
+      await expect(service.updateTier('missing', UserTier.PRO)).rejects.toThrow('User not found');
+    });
+  });
+
+  describe('resetMonthlyUsage', () => {
+    it('creates a fresh usage record for the current period', async () => {
+      mockUserRepository.findOne.mockResolvedValue({ id: 'user-1', tier: 'free' });
+
+      await service.resetMonthlyUsage('user-1');
+
+      expect(mockUsageRepository.create).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: 'user-1', serversDeployedThisMonth: 0 }),
+      );
+      expect(mockUsageRepository.save).toHaveBeenCalled();
     });
   });
 });

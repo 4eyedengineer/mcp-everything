@@ -42,10 +42,10 @@ export class Subscription {
   status: 'active' | 'canceled' | 'past_due' | 'incomplete' | 'trialing';
 
   @Column({ type: 'timestamp', nullable: true })
-  currentPeriodStart?: Date;
+  currentPeriodStart?: Date | null;
 
   @Column({ type: 'timestamp', nullable: true })
-  currentPeriodEnd?: Date;
+  currentPeriodEnd?: Date | null;
 
   @Column({ type: 'boolean', default: false })
   cancelAtPeriodEnd: boolean;

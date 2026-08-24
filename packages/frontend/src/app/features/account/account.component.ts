@@ -16,6 +16,7 @@ import { UsageStatsSectionComponent } from './sections/usage-stats-section/usage
 import { GithubConnectionSectionComponent } from './sections/github-connection-section/github-connection-section.component';
 import { ThemeToggleComponent } from '../../shared/components/theme-toggle/theme-toggle.component';
 import { ConfirmDialogComponent, ConfirmDialogData } from '../../shared/components/confirm-dialog/confirm-dialog.component';
+import { billingErrorMessage } from '../../shared/utils/billing-error.util';
 
 interface Settings {
   emailNotifications: boolean;
@@ -294,8 +295,10 @@ export class AccountComponent implements OnInit, OnDestroy {
         window.location.href = result.url;
       }
     } catch (error) {
-      // The global error interceptor already shows a toast for the failed
-      // request - avoid showing a second, redundant one here.
+      // Surface a specific, honest message: "not available yet" when billing
+      // is unconfigured (400), otherwise the parsed backend/network error.
+      const message = billingErrorMessage(error, "We couldn't start checkout. Please try again.");
+      this.snackBar.open(message, 'Dismiss', { duration: 6000 });
       console.error('Checkout failed:', error);
     } finally {
       this.isUpgrading = false;
@@ -313,8 +316,9 @@ export class AccountComponent implements OnInit, OnDestroy {
         window.location.href = result.url;
       }
     } catch (error) {
+      const message = billingErrorMessage(error, "We couldn't open the billing portal. Please try again.");
+      this.snackBar.open(message, 'Dismiss', { duration: 6000 });
       console.error('Portal session failed:', error);
-      // TODO: Show error notification
     }
   }
 

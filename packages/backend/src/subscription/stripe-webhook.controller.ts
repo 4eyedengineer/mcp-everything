@@ -51,6 +51,16 @@ export class StripeWebhookController {
 
     this.logger.log(`Processing webhook event: ${event.type} (${event.id})`);
 
+    // Idempotency gate: Stripe delivers at-least-once, so record the event id
+    // before dispatching. A duplicate delivery is acked with 200 and skipped so
+    // money-adjacent handlers (e.g. usage reset on invoice.payment_succeeded)
+    // never run twice for the same event. Covers ALL event types below.
+    const isNew = await this.subscriptionService.recordWebhookEvent(event.id, event.type);
+    if (!isNew) {
+      this.logger.log(`Duplicate webhook event ${event.id} (${event.type}) - skipping`);
+      return { received: true };
+    }
+
     try {
       switch (event.type) {
         case 'customer.subscription.created':
@@ -75,7 +85,9 @@ export class StripeWebhookController {
 
         case 'checkout.session.completed':
           this.logger.log(`Checkout session completed: ${event.data.object.id}`);
-          // Subscription handling is done via subscription.created webhook
+          // Reconcile in case customer.subscription.created was dropped/delayed:
+          // fetch the live subscription and sync tier from the same path.
+          await this.subscriptionService.handleCheckoutSessionCompleted(event.data.object);
           break;
 
         default:

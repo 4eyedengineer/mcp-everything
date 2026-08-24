@@ -19,8 +19,8 @@ export class SubscriptionController {
     return {
       tier: (user.tier as 'free' | 'pro' | 'enterprise') || 'free',
       status: subscription?.status || 'active',
-      currentPeriodStart: subscription?.currentPeriodStart,
-      currentPeriodEnd: subscription?.currentPeriodEnd,
+      currentPeriodStart: subscription?.currentPeriodStart ?? undefined,
+      currentPeriodEnd: subscription?.currentPeriodEnd ?? undefined,
       cancelAtPeriodEnd: subscription?.cancelAtPeriodEnd || false,
     };
   }

@@ -1,30 +1,45 @@
 import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { QueryFailedError, Repository } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
 import { Subscription } from '../database/entities/subscription.entity';
+import { StripeEvent } from '../database/entities/stripe-event.entity';
 import { UserService } from '../user/user.service';
 import { StripeService } from './stripe.service';
 import { UserTier, getTierFromPriceId, getPriceIdForTier } from './tier-config';
 
-// Stripe webhook event types - using any for flexibility with Stripe API changes
+// Postgres unique-violation SQLSTATE - raised when a duplicate webhook delivery
+// races to insert the same event id into the idempotency ledger.
+const PG_UNIQUE_VIOLATION = '23505';
+
+// Stripe webhook event types - using narrow shapes for the fields we read.
+// NB: under the pinned API version the billing period lives on the subscription
+// *item*, not the Subscription object, so it is read from `items.data[]`.
+interface StripeSubscriptionItemData {
+  price: { id: string };
+  current_period_start?: number;
+  current_period_end?: number;
+}
+
 interface StripeSubscriptionData {
   id: string;
   customer: string;
-  current_period_start: number;
-  current_period_end: number;
   cancel_at_period_end: boolean;
   status: string;
   items: {
-    data: Array<{
-      price: { id: string };
-    }>;
+    data: StripeSubscriptionItemData[];
   };
 }
 
 interface StripeInvoiceData {
   id: string;
   subscription: string | null;
+}
+
+interface StripeCheckoutSessionData {
+  id: string;
+  subscription: string | null;
+  customer: string | null;
 }
 
 @Injectable()
@@ -34,10 +49,61 @@ export class SubscriptionService {
   constructor(
     @InjectRepository(Subscription)
     private readonly subscriptionRepository: Repository<Subscription>,
+    @InjectRepository(StripeEvent)
+    private readonly stripeEventRepository: Repository<StripeEvent>,
     private readonly userService: UserService,
     private readonly stripeService: StripeService,
     private readonly configService: ConfigService,
   ) {}
+
+  /**
+   * Record a webhook event in the idempotency ledger.
+   *
+   * Returns `true` when this is the first time we have seen the event id (the
+   * caller should process it) and `false` when it has already been recorded (a
+   * duplicate at-least-once delivery, which the caller must ack-and-skip).
+   *
+   * Concurrency-safe: the ledger's primary key is the event id, so of two
+   * racing deliveries exactly one INSERT succeeds; the loser raises a
+   * unique-violation which we translate into "already processed".
+   */
+  async recordWebhookEvent(eventId: string, type: string): Promise<boolean> {
+    try {
+      await this.stripeEventRepository.insert({ eventId, type });
+      return true;
+    } catch (error) {
+      if (
+        error instanceof QueryFailedError &&
+        (error as { code?: string }).code === PG_UNIQUE_VIOLATION
+      ) {
+        return false;
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Extract the current billing period from a Stripe subscription.
+   *
+   * Under the pinned API version these fields live on the first subscription
+   * item, not the Subscription object. Anything missing/non-numeric yields
+   * `null` so we never persist an Invalid Date.
+   */
+  private extractCurrentPeriod(stripeSubscription: StripeSubscriptionData): {
+    start: Date | null;
+    end: Date | null;
+  } {
+    const item = stripeSubscription.items?.data?.[0];
+    const start =
+      typeof item?.current_period_start === 'number'
+        ? new Date(item.current_period_start * 1000)
+        : null;
+    const end =
+      typeof item?.current_period_end === 'number'
+        ? new Date(item.current_period_end * 1000)
+        : null;
+    return { start, end };
+  }
 
   async getActiveSubscription(userId: string): Promise<Subscription | null> {
     return this.subscriptionRepository.findOne({
@@ -144,16 +210,41 @@ export class SubscriptionService {
     // Update subscription
     subscription.stripeSubscriptionId = stripeSubscription.id;
     subscription.stripePriceId = priceId;
+    const period = this.extractCurrentPeriod(stripeSubscription);
     subscription.tier = tier;
     subscription.status = 'active';
-    subscription.currentPeriodStart = new Date(stripeSubscription.current_period_start * 1000);
-    subscription.currentPeriodEnd = new Date(stripeSubscription.current_period_end * 1000);
+    subscription.currentPeriodStart = period.start;
+    subscription.currentPeriodEnd = period.end;
     subscription.cancelAtPeriodEnd = stripeSubscription.cancel_at_period_end;
     await this.subscriptionRepository.save(subscription);
 
     // Update user tier
     await this.userService.updateTier(subscription.userId, tier);
     this.logger.log(`Subscription created: user=${subscription.userId}, tier=${tier}`);
+  }
+
+  /**
+   * Reconcile from `checkout.session.completed`.
+   *
+   * `customer.subscription.created` is what normally flips the tier, but Stripe
+   * can drop or delay it. `checkout.session.completed` fires on the same
+   * successful checkout and carries the new subscription id, so we fetch the
+   * live subscription and run it through the same create path - a backfill for
+   * the missed-webhook case. No-op when Stripe is unconfigured or the session
+   * carries no subscription (e.g. one-off payments).
+   */
+  async handleCheckoutSessionCompleted(session: StripeCheckoutSessionData): Promise<void> {
+    if (!this.stripeService.isConfigured()) return;
+    if (!session.subscription) {
+      this.logger.log(`Checkout session ${session.id} has no subscription - nothing to reconcile`);
+      return;
+    }
+
+    const stripeSubscription = await this.stripeService.getSubscription(session.subscription);
+    await this.handleSubscriptionCreated(stripeSubscription as unknown as StripeSubscriptionData);
+    this.logger.log(
+      `Reconciled subscription ${session.subscription} from checkout session ${session.id}`,
+    );
   }
 
   async handleSubscriptionUpdated(stripeSubscription: StripeSubscriptionData): Promise<void> {
@@ -168,10 +259,11 @@ export class SubscriptionService {
     const priceId = stripeSubscription.items.data[0]?.price.id;
     const tier = getTierFromPriceId(priceId);
 
+    const period = this.extractCurrentPeriod(stripeSubscription);
     subscription.tier = tier;
     subscription.status = this.mapStripeStatus(stripeSubscription.status);
-    subscription.currentPeriodStart = new Date(stripeSubscription.current_period_start * 1000);
-    subscription.currentPeriodEnd = new Date(stripeSubscription.current_period_end * 1000);
+    subscription.currentPeriodStart = period.start;
+    subscription.currentPeriodEnd = period.end;
     subscription.cancelAtPeriodEnd = stripeSubscription.cancel_at_period_end;
     await this.subscriptionRepository.save(subscription);
 

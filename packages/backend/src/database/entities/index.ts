@@ -10,3 +10,4 @@ export { HostedServerSourceToken } from './hosted-server-source-token.entity';
 export { ErrorLog } from './error-log.entity';
 export { McpServer } from './mcp-server.entity';
 export { ApiKey } from './api-key.entity';
+export { StripeEvent } from './stripe-event.entity';
