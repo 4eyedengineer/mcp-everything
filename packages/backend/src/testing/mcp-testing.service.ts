@@ -607,6 +607,18 @@ export class McpTestingService implements OnModuleDestroy {
     const tools = generatedCode.metadata.tools;
     const toolTimeout = config.toolTimeout || 10;
     const totalTimeoutMs = (config.timeout || 120) * 1000;
+    // The refinement loop passes a short (~30s) timeout tuned for the Docker
+    // path, where layers are cached. A fresh Kubernetes test pod must pull the
+    // node image, `npm install` and `tsc` from scratch on every run - measured
+    // at ~50-60s - so a 30s readiness deadline kills a build that is still
+    // succeeding. Give the pod a generous, env-tunable floor. Real failures
+    // (non-zero init exit, ImagePullBackOff, main crash) are detected and
+    // returned immediately by waitForSandboxReady regardless, so this only
+    // affects the genuinely-still-building case.
+    const readyTimeoutMs = Math.max(
+      totalTimeoutMs,
+      Number(process.env.MCP_TESTING_SANDBOX_READY_TIMEOUT_MS) || 240000,
+    );
     const imageTag = sandbox.testImage;
 
     let handle: TestSandboxHandle | null = null;
@@ -637,7 +649,7 @@ export class McpTestingService implements OnModuleDestroy {
         resources: { cpuLimit: config.cpuLimit, memoryLimit: config.memoryLimit },
       });
 
-      const readiness = await sandbox.waitForSandboxReady(handle, totalTimeoutMs);
+      const readiness = await sandbox.waitForSandboxReady(handle, readyTimeoutMs);
       buildDuration = Date.now() - buildStart;
       buildSuccess = readiness.buildSucceeded;
 
