@@ -1,4 +1,13 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, Index } from 'typeorm';
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  CreateDateColumn,
+  Index,
+  ManyToOne,
+  JoinColumn,
+} from 'typeorm';
+import { HostedServer } from './hosted-server.entity';
 
 /**
  * A credential that lets ONE hosted server's pod fetch ITS OWN source code
@@ -26,19 +35,33 @@ import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, Index } from 
  * Only the SHA-256 hash of the token is stored; the plaintext exists solely in
  * the return value of `mintToken()` and is not recoverable afterwards.
  *
- * Deliberately has no ManyToOne relation back to HostedServer - the link is the
- * plain `hosted_server_id` column plus a FK constraint in the migration, which
- * matches HostedServerApiKey.
+ * Has a `ManyToOne` relation back to `HostedServer` purely so the FK
+ * constraint name (`hosted_server_source_tokens_hosted_server_id_fkey`, set by
+ * 1754500000000-CreateHostedServerSourceTokensTable.ts) and `ON DELETE CASCADE`
+ * are declared to TypeORM and `migration:generate` does not propose dropping
+ * and recreating it under a hashed name - matches HostedServerApiKey. The
+ * plain `hostedServerId` column below remains the normal way to read/write
+ * the id; the relation is not eagerly loaded anywhere.
  */
 @Entity('hosted_server_source_tokens')
+@Index('idx_hosted_server_source_tokens_active', ['hostedServerId'], {
+  where: 'revoked_at IS NULL',
+})
 export class HostedServerSourceToken {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
   /** FK to hosted_servers.id (the UUID primary key, not the URL-safe serverId). */
-  @Index()
+  @Index('idx_hosted_server_source_tokens_hosted_server_id')
   @Column({ name: 'hosted_server_id', type: 'uuid' })
   hostedServerId: string;
+
+  @ManyToOne(() => HostedServer, { onDelete: 'CASCADE' })
+  @JoinColumn({
+    name: 'hosted_server_id',
+    foreignKeyConstraintName: 'hosted_server_source_tokens_hosted_server_id_fkey',
+  })
+  hostedServer: HostedServer;
 
   /**
    * Lowercase hex SHA-256 of the full plaintext token.
@@ -49,7 +72,7 @@ export class HostedServerSourceToken {
    * adds per-request latency on a verification path without making an
    * infeasible search any more infeasible.
    */
-  @Index()
+  @Index('idx_hosted_server_source_tokens_token_hash', { unique: true })
   @Column({ name: 'token_hash', type: 'char', length: 64 })
   tokenHash: string;
 

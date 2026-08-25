@@ -212,7 +212,16 @@ export class HostedServer {
   // observedStatus) on every pass, so the existing UI keeps rendering the exact
   // same union of values it always did while the honest signal lives here.
 
-  /** What the user asked for. Only ever written by HostingService. */
+  /**
+   * What the user asked for. Only ever written by HostingService.
+   *
+   * `idx_hosted_servers_desired_state` (like `idx_hosted_servers_conversation_id`
+   * above) was created directly by raw SQL in
+   * 1754200000000-AddHostedServerDesiredObservedState.ts - marked
+   * synchronize:false to document it without migration:generate proposing to
+   * drop it.
+   */
+  @Index('idx_hosted_servers_desired_state', { synchronize: false })
   @Column({ name: 'desired_state', length: 20, default: 'running' })
   desiredState: HostedServerDesiredState;
 

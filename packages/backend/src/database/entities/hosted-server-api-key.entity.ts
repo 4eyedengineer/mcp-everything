@@ -4,7 +4,10 @@ import {
   Column,
   CreateDateColumn,
   Index,
+  ManyToOne,
+  JoinColumn,
 } from 'typeorm';
+import { HostedServer } from './hosted-server.entity';
 
 /**
  * An API key credential belonging to a single hosted MCP server.
@@ -23,18 +26,33 @@ import {
  * Only the SHA-256 hash of the key is stored. The plaintext is returned exactly
  * once, at creation time, and is not recoverable afterwards.
  *
- * Deliberately has no ManyToOne relation back to HostedServer — the link is the
- * plain `hosted_server_id` column plus a FK constraint in the migration.
+ * Has a `ManyToOne` relation back to `HostedServer` purely so the FK
+ * constraint name (`hosted_server_api_keys_hosted_server_id_fkey`, set by
+ * 1754300000000-CreateHostedServerApiKeysTable.ts) and `ON DELETE CASCADE`
+ * are declared to TypeORM and `migration:generate` does not propose dropping
+ * and recreating it under a hashed name. The plain `hostedServerId` column
+ * below remains the normal way to read/write the id; the relation is not
+ * eagerly loaded anywhere.
  */
 @Entity('hosted_server_api_keys')
+@Index('idx_hosted_server_api_keys_active', ['hostedServerId'], {
+  where: 'revoked_at IS NULL',
+})
 export class HostedServerApiKey {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
   /** FK to hosted_servers.id (the UUID primary key, not the URL-safe serverId). */
-  @Index()
+  @Index('idx_hosted_server_api_keys_hosted_server_id')
   @Column({ name: 'hosted_server_id', type: 'uuid' })
   hostedServerId: string;
+
+  @ManyToOne(() => HostedServer, { onDelete: 'CASCADE' })
+  @JoinColumn({
+    name: 'hosted_server_id',
+    foreignKeyConstraintName: 'hosted_server_api_keys_hosted_server_id_fkey',
+  })
+  hostedServer: HostedServer;
 
   /**
    * Lowercase hex SHA-256 of the full plaintext key.
@@ -47,7 +65,7 @@ export class HostedServerApiKey {
    * This also matches how password-reset tokens are hashed in AuthService and
    * how user-level platform keys are hashed in ApiKeyService.
    */
-  @Index()
+  @Index('idx_hosted_server_api_keys_key_hash', { unique: true })
   @Column({ name: 'key_hash', type: 'char', length: 64 })
   keyHash: string;
 
