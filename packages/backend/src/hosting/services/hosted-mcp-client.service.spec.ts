@@ -50,6 +50,12 @@ describe('HostedMcpClientService', () => {
   let methodCounts: Record<string, number> = {};
   /** Status the test server uses for a session id it does not recognise. */
   let unknownSessionStatus = 404;
+  // When true, every session is invalidated the instant it is created, so a
+  // reconnect's initialize succeeds but its follow-up request cannot find the
+  // session. Deterministic stand-in for "the pod keeps forgetting sessions" -
+  // replaces a racy real-timer interval that could let a reconnect slip
+  // through under load (flaked in CI).
+  let dropSessionsImmediately = false;
 
   let service: HostedMcpClientService;
   let resolver: { resolve: jest.Mock };
@@ -144,6 +150,11 @@ describe('HostedMcpClientService', () => {
             sessionIdGenerator: () => randomUUID(),
             onsessioninitialized: (newSessionId) => {
               transports.set(newSessionId, transport);
+              if (dropSessionsImmediately) {
+                // Session id is still returned to the client, but it resolves
+                // to nothing on the next request - as if the pod restarted.
+                transports.delete(newSessionId);
+              }
             },
           });
           transport.onclose = () => {
@@ -241,6 +252,7 @@ describe('HostedMcpClientService', () => {
     requestCount = 0;
     methodCounts = {};
     unknownSessionStatus = 404;
+    dropSessionsImmediately = false;
     createdTransports = [];
     service = await createService();
   });
@@ -438,12 +450,12 @@ describe('HostedMcpClientService', () => {
       expect(initializeCount).toBe(1);
 
       // Every subsequent session is dropped the moment it is created, so the
-      // retry cannot succeed either.
-      const drop = setInterval(() => transports.clear(), 1);
-      drop.unref?.();
+      // retry cannot succeed either. Deterministic (see dropSessionsImmediately)
+      // rather than racing a real timer against the reconnect.
+      transports.clear();
+      dropSessionsImmediately = true;
 
       await expect(service.listTools(runningServer())).rejects.toThrow();
-      clearInterval(drop);
 
       // One original + exactly one reconnect.
       expect(initializeCount).toBe(2);
