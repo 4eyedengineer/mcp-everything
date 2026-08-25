@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import * as z from 'zod/v4';
 import { GitHubAnalysisService } from '../github-analysis.service';
 import axios from 'axios';
+import { safeGet, UnsafeUrlError } from './url-safety';
 import {
   PipelineState,
   WebSearchFindings,
@@ -896,9 +897,11 @@ ${contentParts.join('\n\n').slice(0, 10000)}
     this.logger.log(`Scraping API docs from: ${url}`);
 
     try {
-      // Fetch the documentation page
-      const response = await axios.get(url, {
-        timeout: 15000,
+      // This URL is user-influenced (either typed directly by the user, or
+      // sourced from a web search result), and the backend runs in-cluster -
+      // guard against SSRF before fetching. safeGet re-validates on every
+      // redirect hop too.
+      const response = await safeGet(url, {
         headers: {
           'User-Agent': 'Mozilla/5.0 (compatible; MCPEverything/1.0; +https://mcp-everything.dev)',
           Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
@@ -965,7 +968,11 @@ ${text}
         baseUrl: parsed.baseUrl || undefined,
       };
     } catch (error) {
-      this.logger.warn(`API doc scraping failed for ${url}: ${error.message}`);
+      if (error instanceof UnsafeUrlError) {
+        this.logger.warn(`Blocked potential SSRF: refused to scrape ${url}: ${error.message}`);
+      } else {
+        this.logger.warn(`API doc scraping failed for ${url}: ${error.message}`);
+      }
       return undefined;
     }
   }

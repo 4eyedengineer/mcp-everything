@@ -59,6 +59,25 @@ const mockLlmInvoke = jest.fn().mockResolvedValue({
 });
 const mockAnthropicService = createMockAnthropicService(mockLlmInvoke);
 
+// Mock dns.lookup so the SSRF guard in url-safety.ts (which every
+// scrapeApiDocumentation/researchFromWebsite call now goes through) resolves
+// deterministically without depending on live network access in tests.
+// Any hostname containing "invalid" fails to resolve (mirrors real DNS
+// behavior for the "invalid.url" fixture used below); everything else
+// resolves to a public IP.
+jest.mock('dns', () => ({
+  promises: {
+    lookup: jest.fn((hostname: string) => {
+      if (typeof hostname === 'string' && hostname.includes('invalid')) {
+        const err: any = new Error(`getaddrinfo ENOTFOUND ${hostname}`);
+        err.code = 'ENOTFOUND';
+        return Promise.reject(err);
+      }
+      return Promise.resolve([{ address: '1.1.1.1', family: 4 }]);
+    }),
+  },
+}));
+
 // Mock @octokit/rest
 jest.mock('@octokit/rest', () => ({
   Octokit: jest.fn().mockImplementation(() => ({
