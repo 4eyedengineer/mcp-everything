@@ -138,8 +138,13 @@ export default defineConfig({
     {
       command: 'npm run start',
       port: 4200,
-      timeout: 120000,
-      reuseExistingServer: !process.env.CI,
+      // Always reuse an already-running server. The e2e workflow starts the
+      // frontend (and backend) itself and waits for :4200 before invoking
+      // Playwright, so Playwright must reuse that server rather than try to
+      // start a second one on the same port (which fails with "port 4200 is
+      // already used"). `!process.env.CI` made this false in CI, which was the
+      // bug.
+      reuseExistingServer: true,
       stdout: 'ignore',
       stderr: 'pipe',
     },
