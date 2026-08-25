@@ -82,6 +82,18 @@ configMapGenerator:
       # separately. Do NOT re-add this line to make generation "work".
       - GENERATED_SERVERS_DIR=/data/generated-servers
       - PIPELINE_INTENT_CONFIDENCE_MIN=0.75
+      # AI provider routing (see src/ai/anthropic.service.ts). The small tier
+      # (cheap, high-volume classification/extraction) is routed to OpenRouter's
+      # DeepSeek V4 Flash - ~$0.04/$0.08 per M tokens vs Haiku 4.5's $1/$5, at
+      # negligible quality risk since these tasks are simple and the pipeline
+      # validates + retries structured output. The default/codegen tier is left
+      # on Anthropic (Sonnet 5) on purpose: it is the quality-critical path, and
+      # a from-scratch swap there could cost MORE by needing extra
+      # generate-test-refine iterations. To A/B the codegen tier on OpenRouter
+      # Qwen3 Coder, add: AI_DEFAULT_PROVIDER=openrouter. OPENROUTER_API_KEY is
+      # supplied via the sealed Secret (envFrom), like the other credentials.
+      - AI_SMALL_PROVIDER=openrouter
+      - AI_SMALL_MODEL_OPENROUTER=deepseek/deepseek-v4-flash
       # GitHubStrategy/GoogleStrategy (src/auth/strategies/*.ts) are
       # unconditionally instantiated by AuthModule and call
       # Real OAuth apps for the public domain. Client IDs are public by
