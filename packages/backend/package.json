@@ -56,6 +56,7 @@
     "js-yaml": "^4.1.0",
     "libsodium-wrappers": "^0.7.15",
     "nanoid": "^5.1.6",
+    "openai": "6.49.0",
     "passport": "^0.7.0",
     "passport-github2": "^0.1.12",
     "passport-google-oauth20": "^2.0.0",

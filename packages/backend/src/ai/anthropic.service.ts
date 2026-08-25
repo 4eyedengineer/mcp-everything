@@ -1,6 +1,7 @@
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import Anthropic from '@anthropic-ai/sdk';
+import OpenAI from 'openai';
 // NOTE: schemas passed to `completeStructured` MUST be built with `zod/v4`
 // (`import * as z from 'zod/v4'`). The JSON-Schema conversion below is the v4
 // API; a classic `import { z } from 'zod'` schema will not convert.
@@ -14,10 +15,50 @@ import {
 
 /**
  * Which configured model to use.
- * - `default` -> ANTHROPIC_MODEL (Sonnet 5): reasoning, synthesis, code generation
- * - `small`   -> ANTHROPIC_SMALL_MODEL (Haiku 4.5): cheap classification / extraction
+ * - `default` -> reasoning, synthesis, code generation (the quality-critical path)
+ * - `small`   -> cheap classification / extraction (high volume, low risk)
+ *
+ * Each tier resolves to a (provider, model) target via `resolveTarget`. The
+ * concrete model behind a tier depends on that tier's configured provider:
+ * Anthropic (`ANTHROPIC_MODEL` / `ANTHROPIC_SMALL_MODEL`) or OpenRouter
+ * (`AI_DEFAULT_MODEL_OPENROUTER` / `AI_SMALL_MODEL_OPENROUTER`). See
+ * `LlmProvider` and the constructor.
  */
 export type AnthropicModelTier = 'default' | 'small';
+
+/**
+ * Which upstream a tier is routed to. `anthropic` calls the Anthropic Messages
+ * API directly; `openrouter` calls OpenRouter's OpenAI-compatible endpoint
+ * (`https://openrouter.ai/api/v1`), which fronts hundreds of models (DeepSeek,
+ * Qwen, Gemini, and Anthropic's own, among others) behind one key.
+ *
+ * Both tiers default to `anthropic`, so adding OpenRouter support changes no
+ * behavior until a tier's provider is explicitly set. Routing is a config
+ * decision (cost vs. quality), never inferred here.
+ */
+export type LlmProvider = 'anthropic' | 'openrouter';
+
+/** A tier resolved to the concrete upstream it will call. */
+interface ResolvedTarget {
+  provider: LlmProvider;
+  model: string;
+}
+
+/**
+ * Provider-neutral result of one wire call, before it is turned into a
+ * `CallResult` (or a typed error). `stopReason` is normalized across the two
+ * providers' different vocabularies (`stop_reason` vs `finish_reason`) so the
+ * truncation/refusal handling in `call()` stays provider-agnostic.
+ */
+interface RawCompletion {
+  text: string;
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+  stopReason: 'end' | 'max_tokens' | 'refusal';
+  stopDetail?: string;
+}
 
 export interface CompleteTextOptions {
   /** The user-turn prompt. */
@@ -59,16 +100,31 @@ const MODEL_PRICING: Array<{ prefix: string; input: number; output: number }> = 
   { prefix: 'claude-sonnet-5', input: 3, output: 15 },
   { prefix: 'claude-sonnet-4', input: 3, output: 15 },
   { prefix: 'claude-haiku-4', input: 1, output: 5 },
+  // OpenRouter fallbacks (per-million USD, as of 2026-08). Only used when a
+  // response does not carry OpenRouter's own `usage.cost` - which it does
+  // whenever we ask for it (see callOpenRouterRaw), so these are a safety net,
+  // not the primary source of truth. Matched on the full `provider/model` slug.
+  { prefix: 'deepseek/deepseek-v4-flash', input: 0.083, output: 0.165 },
+  { prefix: 'qwen/qwen3-coder', input: 0.3, output: 1.0 },
 ];
 
 const DEFAULTS = {
   model: 'claude-sonnet-5',
   smallModel: 'claude-haiku-4-5',
+  // OpenRouter model ids used only when a tier's provider is set to
+  // `openrouter` and no explicit override is configured. Chosen for a strong
+  // price/quality ratio: DeepSeek V4 Flash for cheap high-volume small-tier
+  // work, Qwen3 Coder for code generation.
+  openRouterModel: 'qwen/qwen3-coder',
+  openRouterSmallModel: 'deepseek/deepseek-v4-flash',
   maxConcurrency: 4,
   timeoutMs: 120_000,
   maxRetries: 3,
   maxTokens: 8_192,
 };
+
+/** OpenRouter's OpenAI-compatible base URL. */
+const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
 
 /**
  * The single seam between this backend and the Anthropic API.
@@ -89,10 +145,17 @@ const DEFAULTS = {
 @Injectable()
 export class AnthropicService {
   private readonly logger = new Logger(AnthropicService.name);
-  private readonly client: Anthropic;
+  /** Built only when some tier routes to Anthropic (the default). */
+  private readonly client?: Anthropic;
+  /** Built only when OPENROUTER_API_KEY is configured. */
+  private readonly openRouterClient?: OpenAI;
 
   private readonly defaultModel: string;
   private readonly smallModel: string;
+  private readonly defaultProvider: LlmProvider;
+  private readonly smallProvider: LlmProvider;
+  private readonly openRouterModel: string;
+  private readonly openRouterSmallModel: string;
   private readonly defaultMaxTokens: number;
   private readonly maxConcurrency: number;
   private readonly timeoutMs: number;
@@ -106,38 +169,113 @@ export class AnthropicService {
     private readonly configService: ConfigService,
     @Optional() private readonly metricsService?: MetricsService,
   ) {
-    const apiKey = this.configService.get<string>('ANTHROPIC_API_KEY');
-    if (!apiKey) {
-      throw new Error('ANTHROPIC_API_KEY not configured');
-    }
-
-    this.defaultModel = this.configService.get<string>('ANTHROPIC_MODEL') || DEFAULTS.model;
-    this.smallModel =
-      this.configService.get<string>('ANTHROPIC_SMALL_MODEL') || DEFAULTS.smallModel;
     this.defaultMaxTokens = this.readNumber('ANTHROPIC_MAX_TOKENS', DEFAULTS.maxTokens);
     this.maxConcurrency = this.readNumber('ANTHROPIC_MAX_CONCURRENCY', DEFAULTS.maxConcurrency);
     this.timeoutMs = this.readNumber('ANTHROPIC_TIMEOUT_MS', DEFAULTS.timeoutMs);
     this.maxRetries = this.readNumber('ANTHROPIC_MAX_RETRIES', DEFAULTS.maxRetries);
 
-    this.client = new Anthropic({
-      apiKey,
-      // SDK-native retries with exponential backoff (429 / 408 / 409 / 5xx /
-      // connection errors).
-      maxRetries: this.maxRetries,
-      timeout: this.timeoutMs,
-    });
+    // Per-tier routing. Both default to Anthropic, so this whole block is a
+    // no-op for an unconfigured deployment.
+    this.defaultProvider = this.readProvider('AI_DEFAULT_PROVIDER');
+    this.smallProvider = this.readProvider('AI_SMALL_PROVIDER');
 
+    this.defaultModel = this.configService.get<string>('ANTHROPIC_MODEL') || DEFAULTS.model;
+    this.smallModel =
+      this.configService.get<string>('ANTHROPIC_SMALL_MODEL') || DEFAULTS.smallModel;
+    this.openRouterModel =
+      this.configService.get<string>('AI_DEFAULT_MODEL_OPENROUTER') || DEFAULTS.openRouterModel;
+    this.openRouterSmallModel =
+      this.configService.get<string>('AI_SMALL_MODEL_OPENROUTER') || DEFAULTS.openRouterSmallModel;
+
+    // Build the Anthropic client only if some tier actually needs it. This lets
+    // a deployment run OpenRouter-only without a (now-unused) ANTHROPIC_API_KEY.
+    const needAnthropic =
+      this.defaultProvider === 'anthropic' || this.smallProvider === 'anthropic';
+    const anthropicKey = this.configService.get<string>('ANTHROPIC_API_KEY');
+    if (needAnthropic && !anthropicKey) {
+      throw new Error(
+        'ANTHROPIC_API_KEY not configured (required because a model tier is routed to Anthropic; ' +
+          'set AI_DEFAULT_PROVIDER and AI_SMALL_PROVIDER to openrouter to run without it)',
+      );
+    }
+    if (anthropicKey) {
+      this.client = new Anthropic({
+        apiKey: anthropicKey,
+        // SDK-native retries with exponential backoff (429 / 408 / 409 / 5xx /
+        // connection errors).
+        maxRetries: this.maxRetries,
+        timeout: this.timeoutMs,
+      });
+    }
+
+    // Build the OpenRouter client whenever a key is present, and fail fast if a
+    // tier is routed to it without one - a silent fallback to Anthropic would
+    // bill the pricey path exactly when the operator expected the cheap one.
+    const openRouterKey = this.configService.get<string>('OPENROUTER_API_KEY');
+    const needOpenRouter =
+      this.defaultProvider === 'openrouter' || this.smallProvider === 'openrouter';
+    if (needOpenRouter && !openRouterKey) {
+      throw new Error(
+        'A model tier is routed to OpenRouter (AI_*_PROVIDER=openrouter) but OPENROUTER_API_KEY ' +
+          'is not configured',
+      );
+    }
+    if (openRouterKey) {
+      this.openRouterClient = new OpenAI({
+        apiKey: openRouterKey,
+        baseURL: OPENROUTER_BASE_URL,
+        maxRetries: this.maxRetries,
+        timeout: this.timeoutMs,
+        // OpenRouter attributes traffic and populates its dashboards/rankings
+        // from these; neither is required, both are safe to send.
+        defaultHeaders: {
+          'HTTP-Referer': this.configService.get<string>(
+            'OPENROUTER_SITE_URL',
+            'https://mcp-everything.dev',
+          ),
+          'X-Title': 'MCP Everything',
+        },
+      });
+    }
+
+    const describe = (provider: LlmProvider, tier: AnthropicModelTier) =>
+      `${provider}:${this.resolveTarget(tier).model}`;
     this.logger.log(
-      `AnthropicService ready (model=${this.defaultModel}, small=${this.smallModel}, ` +
+      `AnthropicService ready (default=${describe(this.defaultProvider, 'default')}, ` +
+        `small=${describe(this.smallProvider, 'small')}, ` +
         `maxTokens=${this.defaultMaxTokens}, concurrency=${this.maxConcurrency}, ` +
         `timeout=${this.timeoutMs}ms, retries=${this.maxRetries}, ` +
         `metrics=${this.metricsService ? 'on' : 'off'})`,
     );
   }
 
-  /** Resolve a tier to the configured model id. */
+  /** Resolve a tier to the concrete model id it will call (across providers). */
   resolveModel(tier: AnthropicModelTier = 'default'): string {
-    return tier === 'small' ? this.smallModel : this.defaultModel;
+    return this.resolveTarget(tier).model;
+  }
+
+  /** Resolve a tier to its (provider, model) target. */
+  resolveTarget(tier: AnthropicModelTier = 'default'): ResolvedTarget {
+    if (tier === 'small') {
+      return this.smallProvider === 'openrouter'
+        ? { provider: 'openrouter', model: this.openRouterSmallModel }
+        : { provider: 'anthropic', model: this.smallModel };
+    }
+    return this.defaultProvider === 'openrouter'
+      ? { provider: 'openrouter', model: this.openRouterModel }
+      : { provider: 'anthropic', model: this.defaultModel };
+  }
+
+  /** Read + validate an AI_*_PROVIDER config value, defaulting to anthropic. */
+  private readProvider(key: string): LlmProvider {
+    const raw = (this.configService.get<string>(key) || '').trim().toLowerCase();
+    if (raw === 'openrouter') {
+      return 'openrouter';
+    }
+    if (raw && raw !== 'anthropic') {
+      this.logger.warn(`Invalid ${key}="${raw}", falling back to "anthropic"`);
+    }
+    return 'anthropic';
   }
 
   /**
@@ -203,69 +341,52 @@ export class AnthropicService {
     opts: CompleteTextOptions,
     jsonSchema?: Record<string, unknown>,
   ): Promise<CallResult> {
-    const model = this.resolveModel(opts.model);
+    const { provider, model } = this.resolveTarget(opts.model);
     const maxTokens = opts.maxTokens ?? this.defaultMaxTokens;
     const caller = opts.caller || 'unknown';
     const startedAt = Date.now();
 
     const release = await this.acquire();
     try {
-      const stream = this.client.messages.stream(
-        {
-          model,
-          max_tokens: maxTokens,
-          ...(opts.system ? { system: opts.system } : {}),
-          ...(jsonSchema
-            ? {
-                output_config: {
-                  format: { type: 'json_schema' as const, schema: jsonSchema },
-                },
-              }
-            : {}),
-          messages: [{ role: 'user' as const, content: opts.prompt }],
-        },
-        { timeout: this.timeoutMs },
-      );
-
-      const message = await stream.finalMessage();
-
-      const text = message.content
-        .filter((block): block is Anthropic.TextBlock => block.type === 'text')
-        .map((block) => block.text)
-        .join('');
-
-      const inputTokens =
-        (message.usage?.input_tokens ?? 0) +
-        (message.usage?.cache_read_input_tokens ?? 0) +
-        (message.usage?.cache_creation_input_tokens ?? 0);
-      const outputTokens = message.usage?.output_tokens ?? 0;
-      const costUsd = this.estimateCost(model, inputTokens, outputTokens);
+      const raw =
+        provider === 'openrouter'
+          ? await this.callOpenRouterRaw(model, opts, maxTokens, jsonSchema)
+          : await this.callAnthropicRaw(model, opts, maxTokens, jsonSchema);
 
       this.recordTelemetry({
         caller,
-        model,
-        status: message.stop_reason === 'max_tokens' ? 'truncated' : 'success',
-        inputTokens,
-        outputTokens,
-        costUsd,
+        model: raw.model,
+        status: raw.stopReason === 'max_tokens' ? 'truncated' : 'success',
+        inputTokens: raw.inputTokens,
+        outputTokens: raw.outputTokens,
+        costUsd: raw.costUsd,
         latencyMs: Date.now() - startedAt,
-        extra: `stop_reason=${message.stop_reason}`,
+        extra: `provider=${provider} stop=${raw.stopReason}${
+          raw.stopDetail ? `:${raw.stopDetail}` : ''
+        }`,
       });
 
-      if (message.stop_reason === 'refusal') {
-        throw new AnthropicRefusalError({
-          model,
-          caller,
-          category: (message as any).stop_details?.category ?? undefined,
-        });
+      if (raw.stopReason === 'refusal') {
+        throw new AnthropicRefusalError({ model: raw.model, caller, category: raw.stopDetail });
       }
 
       // Never repair a truncated response - hand the decision back to the caller.
-      if (message.stop_reason === 'max_tokens') {
-        throw new TruncatedResponseError({ model, maxTokens, caller, partialText: text });
+      if (raw.stopReason === 'max_tokens') {
+        throw new TruncatedResponseError({
+          model: raw.model,
+          maxTokens,
+          caller,
+          partialText: raw.text,
+        });
       }
 
-      return { text, model, inputTokens, outputTokens, costUsd };
+      return {
+        text: raw.text,
+        model: raw.model,
+        inputTokens: raw.inputTokens,
+        outputTokens: raw.outputTokens,
+        costUsd: raw.costUsd,
+      };
     } catch (error) {
       if (!(error instanceof TruncatedResponseError) && !(error instanceof AnthropicRefusalError)) {
         this.recordTelemetry({
@@ -276,13 +397,176 @@ export class AnthropicService {
           outputTokens: 0,
           costUsd: 0,
           latencyMs: Date.now() - startedAt,
-          extra: `error=${error instanceof Error ? error.message : String(error)}`,
+          extra: `provider=${provider} error=${
+            error instanceof Error ? error.message : String(error)
+          }`,
         });
       }
       throw error;
     } finally {
       release();
     }
+  }
+
+  /**
+   * One completion against the Anthropic Messages API. Streamed (so large
+   * `maxTokens` cannot trip an HTTP timeout) and using the API's native
+   * `output_config.format` JSON-schema mechanism for structured output.
+   */
+  private async callAnthropicRaw(
+    model: string,
+    opts: CompleteTextOptions,
+    maxTokens: number,
+    jsonSchema?: Record<string, unknown>,
+  ): Promise<RawCompletion> {
+    if (!this.client) {
+      throw new Error('Anthropic provider selected but ANTHROPIC_API_KEY is not configured');
+    }
+
+    const stream = this.client.messages.stream(
+      {
+        model,
+        max_tokens: maxTokens,
+        ...(opts.system ? { system: opts.system } : {}),
+        ...(jsonSchema
+          ? {
+              output_config: {
+                format: { type: 'json_schema' as const, schema: jsonSchema },
+              },
+            }
+          : {}),
+        messages: [{ role: 'user' as const, content: opts.prompt }],
+      },
+      { timeout: this.timeoutMs },
+    );
+
+    const message = await stream.finalMessage();
+
+    const text = message.content
+      .filter((block): block is Anthropic.TextBlock => block.type === 'text')
+      .map((block) => block.text)
+      .join('');
+
+    const inputTokens =
+      (message.usage?.input_tokens ?? 0) +
+      (message.usage?.cache_read_input_tokens ?? 0) +
+      (message.usage?.cache_creation_input_tokens ?? 0);
+    const outputTokens = message.usage?.output_tokens ?? 0;
+
+    return {
+      text,
+      model,
+      inputTokens,
+      outputTokens,
+      costUsd: this.estimateCost(model, inputTokens, outputTokens),
+      stopReason:
+        message.stop_reason === 'max_tokens'
+          ? 'max_tokens'
+          : message.stop_reason === 'refusal'
+            ? 'refusal'
+            : 'end',
+      stopDetail:
+        message.stop_reason === 'refusal'
+          ? ((message as any).stop_details?.category ?? undefined)
+          : undefined,
+    };
+  }
+
+  /**
+   * One completion against OpenRouter's OpenAI-compatible endpoint. Streamed
+   * for the same timeout reason as the Anthropic path, with `include_usage` so
+   * the final chunk carries token counts and - because we pass OpenRouter's
+   * `usage: { include: true }` - the REAL dollar cost of the call, which is
+   * preferred over the local pricing table.
+   *
+   * Structured output uses OpenAI's `response_format: json_schema` (non-strict:
+   * not every OpenRouter-fronted model honors strict mode, and `completeStructured`
+   * already validates + retries, so a loose schema hint plus that safety net is
+   * more robust than demanding strict adherence the provider may reject).
+   */
+  private async callOpenRouterRaw(
+    model: string,
+    opts: CompleteTextOptions,
+    maxTokens: number,
+    jsonSchema?: Record<string, unknown>,
+  ): Promise<RawCompletion> {
+    if (!this.openRouterClient) {
+      throw new Error('OpenRouter provider selected but OPENROUTER_API_KEY is not configured');
+    }
+
+    const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [];
+    if (opts.system) {
+      messages.push({ role: 'system', content: opts.system });
+    }
+    messages.push({ role: 'user', content: opts.prompt });
+
+    // `usage` is an OpenRouter extension (not in the OpenAI SDK types), so the
+    // params object is widened to carry it alongside the standard fields.
+    const params = {
+      model,
+      max_tokens: maxTokens,
+      messages,
+      stream: true,
+      stream_options: { include_usage: true },
+      usage: { include: true },
+      ...(jsonSchema
+        ? {
+            response_format: {
+              type: 'json_schema' as const,
+              json_schema: { name: 'structured_output', strict: false, schema: jsonSchema },
+            },
+          }
+        : {}),
+    } as unknown as OpenAI.Chat.ChatCompletionCreateParamsStreaming;
+
+    const stream = await this.openRouterClient.chat.completions.create(params, {
+      timeout: this.timeoutMs,
+    });
+
+    let text = '';
+    let finishReason: string | null = null;
+    let usage: { prompt_tokens?: number; completion_tokens?: number; cost?: number } | null = null;
+    let resolvedModel = model;
+
+    for await (const chunk of stream) {
+      if (chunk.model) {
+        resolvedModel = chunk.model;
+      }
+      const choice = chunk.choices?.[0];
+      if (choice?.delta?.content) {
+        text += choice.delta.content;
+      }
+      if (choice?.finish_reason) {
+        finishReason = choice.finish_reason;
+      }
+      if (chunk.usage) {
+        usage = chunk.usage as typeof usage;
+      }
+    }
+
+    const inputTokens = usage?.prompt_tokens ?? 0;
+    const outputTokens = usage?.completion_tokens ?? 0;
+    // OpenRouter reports the exact charge in `usage.cost` (USD); fall back to
+    // the local table only if it is somehow absent.
+    const costUsd =
+      typeof usage?.cost === 'number'
+        ? usage.cost
+        : this.estimateCost(model, inputTokens, outputTokens);
+
+    return {
+      text,
+      model: resolvedModel,
+      inputTokens,
+      outputTokens,
+      costUsd,
+      stopReason:
+        finishReason === 'length'
+          ? 'max_tokens'
+          : finishReason === 'content_filter'
+            ? 'refusal'
+            : 'end',
+      stopDetail: finishReason ?? undefined,
+    };
   }
 
   /** Convert a zod/v4 schema to the JSON Schema the API expects. */
