@@ -197,6 +197,71 @@ describe('RefinementService', () => {
       expect(result.error).toContain('3/5 tools working');
     });
 
+    describe('test-infrastructure failures (vs. genuine test results)', () => {
+      it('aborts without failure analysis or code-fix refinement when testMcpServer throws', async () => {
+        mockMcpTestingService.testMcpServer.mockRejectedValue(
+          new Error('no Kubernetes test sandbox is reachable'),
+        );
+
+        const state = createPlannedState();
+        const result = await service.refineUntilWorking(state);
+
+        expect(result.success).toBe(false);
+        expect(result.shouldContinue).toBe(false);
+        expect(result.iterations).toBe(1);
+        expect(result.error).toContain('could not be validated');
+        expect(result.error).toContain('no Kubernetes test sandbox is reachable');
+        expect(result.failureAnalysis).toBeUndefined();
+        // Only the initial code-generation call - no failure-analysis or
+        // refine-code calls, which would show up as additional invocations.
+        expect(mockLlmInvoke).toHaveBeenCalledTimes(1);
+        // The generated code is still returned/persisted, matching the
+        // existing "partial success" persistence behavior.
+        expect(result.generatedCode).toBeDefined();
+      });
+
+      it('aborts without failure analysis or code-fix refinement when testMcpServer resolves with infrastructureFailure', async () => {
+        mockMcpTestingService.testMcpServer.mockResolvedValue({
+          ...createMockTestResults(false, 2),
+          buildSuccess: false,
+          toolsPassedCount: 0,
+          results: [],
+          buildError: 'HttpError (status 403): secrets is forbidden',
+          infrastructureFailure: true,
+        });
+
+        const state = createPlannedState();
+        const result = await service.refineUntilWorking(state);
+
+        expect(result.success).toBe(false);
+        expect(result.shouldContinue).toBe(false);
+        expect(result.iterations).toBe(1);
+        expect(result.error).toContain('could not be validated');
+        expect(result.error).toContain('secrets is forbidden');
+        expect(result.failureAnalysis).toBeUndefined();
+        expect(mockLlmInvoke).toHaveBeenCalledTimes(1);
+        expect(result.generatedCode).toBeDefined();
+        // The real (harness-produced) test result is preserved, not discarded.
+        expect(result.testResults.infrastructureFailure).toBe(true);
+      });
+
+      it('still drives the normal generate-fix-retest loop for a genuine test RESULT (no infrastructureFailure)', async () => {
+        mockMcpTestingService.testMcpServer.mockResolvedValue(createMockTestResults(false, 2));
+        mockLlmInvoke
+          .mockResolvedValueOnce({ content: mockCodeGenerationResponse() })
+          .mockResolvedValueOnce({ content: mockFailureAnalysisResponse() })
+          .mockResolvedValue({ content: mockCodeGenerationResponse() });
+
+        const state = createPlannedState();
+        const result = await service.refineUntilWorking(state);
+
+        // Unchanged happy path for genuine code failures: failure analysis
+        // runs and the loop is told to continue.
+        expect(result.shouldContinue).toBe(true);
+        expect(result.failureAnalysis).toBeDefined();
+      });
+    });
+
     it('should run protocol validation after tests pass', async () => {
       const state = createPlannedState();
 

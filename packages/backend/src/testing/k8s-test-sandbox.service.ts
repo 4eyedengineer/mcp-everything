@@ -143,6 +143,14 @@ export class K8sTestSandboxService {
   /** Public image used to run untrusted install/compile/serve steps in the pod. */
   readonly testImage: string;
 
+  /**
+   * Populated only by the one-time constructor probe (initClients()) to
+   * decide isEnabled()/availability. NEVER used to perform a real operation
+   * — see freshApis() for why: a client cached for the lifetime of the
+   * backend process is the root cause of a production bug where every real
+   * create (Secret/Deployment/Service) failed with a generic "HTTP request
+   * failed", while an identical create using a brand-new client succeeded.
+   */
   private appsApi: AppsV1Api | null = null;
   private coreApi: CoreV1Api | null = null;
   private initError: string | null = null;
@@ -158,6 +166,10 @@ export class K8sTestSandboxService {
    * K8sControlPlaneService): the backend must still boot on a dev machine with
    * no cluster. Availability surfaces via isEnabled(); loadFromDefault()
    * already covers the in-cluster ServiceAccount case as its final fallback.
+   *
+   * This is a PROBE only, run once at startup to populate isEnabled(). The
+   * clients it builds are never reused for a real operation; see
+   * freshApis().
    */
   private initClients(): void {
     try {
@@ -180,18 +192,53 @@ export class K8sTestSandboxService {
     }
   }
 
+  /**
+   * Build a brand-new KubeConfig + typed API clients. Called once from
+   * initClients() to probe availability, and again, freshly, by freshApis()
+   * on every real operation.
+   */
+  private buildClients(): { apps: AppsV1Api; core: CoreV1Api } {
+    const kubeConfig = new KubeConfig();
+    kubeConfig.loadFromDefault();
+    return {
+      apps: kubeConfig.makeApiClient(AppsV1Api),
+      core: kubeConfig.makeApiClient(CoreV1Api),
+    };
+  }
+
   /** True when a cluster is reachable and the k8s test-pod path can be used. */
   isEnabled(): boolean {
     return this.appsApi !== null && this.coreApi !== null;
   }
 
+  /**
+   * Build FRESH API clients for a single real operation (create/wait/
+   * destroy/log). Deliberately never reuses the clients cached by the
+   * constructor probe (this.appsApi/this.coreApi), which is the fix for a
+   * production bug: those long-lived clients failed EVERY real operation
+   * with a generic "HTTP request failed", while a brand-new
+   * `new KubeConfig(); loadFromDefault(); makeApiClient(...)` performing the
+   * exact same call succeeded (confirmed by manual reproduction inside the
+   * backend pod). Rather than chase the exact staleness mechanism (most
+   * likely an expired/rotated in-cluster token or exec-plugin credential the
+   * cached client never refreshes), every real operation now builds its own
+   * short-lived clients, matching the working reproduction exactly.
+   */
+  private freshApis(): { apps: AppsV1Api; core: CoreV1Api } {
+    return this.buildClients();
+  }
+
   private requireApis(): { apps: AppsV1Api; core: CoreV1Api } {
-    if (!this.appsApi || !this.coreApi) {
+    if (!this.isEnabled()) {
       throw new Error(
         `Kubernetes test sandbox is not available${this.initError ? `: ${this.initError}` : ''}.`,
       );
     }
-    return { apps: this.appsApi, core: this.coreApi };
+    try {
+      return this.freshApis();
+    } catch (error) {
+      throw new Error(`Kubernetes test sandbox is not available: ${this.errorMessage(error)}`);
+    }
   }
 
   /** Object name for a test run; DNS-1035 safe (starts with a letter). */
@@ -555,10 +602,18 @@ export class K8sTestSandboxService {
    * cleanupErrors.
    */
   async destroySandbox(handle: TestSandboxHandle): Promise<string[]> {
-    if (!this.appsApi || !this.coreApi) {
+    if (!this.isEnabled()) {
       return ['Kubernetes test sandbox is not available; nothing to clean up.'];
     }
-    const { apps, core } = { apps: this.appsApi, core: this.coreApi };
+    let apps: AppsV1Api;
+    let core: CoreV1Api;
+    try {
+      ({ apps, core } = this.freshApis());
+    } catch (error) {
+      return [
+        `Kubernetes test sandbox is not available (${this.errorMessage(error)}); nothing to clean up.`,
+      ];
+    }
     const name = handle.name;
     const errors: string[] = [];
 
@@ -679,8 +734,41 @@ export class K8sTestSandboxService {
     return candidate?.statusCode ?? candidate?.code ?? candidate?.response?.statusCode;
   }
 
+  /**
+   * Human-readable error message for logs.
+   *
+   * `@kubernetes/client-node`'s `HttpError` (thrown for every non-2xx API
+   * response) always carries the same useless `.message`: "HTTP request
+   * failed" (see the class's constructor - it hardcodes that string). The
+   * actual reason (a 401/403/404/409/422/... and the API server's message)
+   * lives on `.statusCode` and `.body`, which nothing here logged before this
+   * fix - production diagnosis of "HTTP request failed" therefore always
+   * dead-ended. For an HttpError, surface `statusCode` and a capped,
+   * JSON-stringified snippet of `body` instead of the generic message. Never
+   * logs Secret contents: `.body` is the K8s API SERVER's error response
+   * (typically a `Status` object - message/reason/code), not anything we
+   * sent, and is capped anyway as a defensive limit.
+   */
   private errorMessage(error: unknown): string {
+    if (error instanceof HttpError) {
+      const bodySnippet = this.stringifyBodySnippet(error.body);
+      const detail = bodySnippet ? `: ${bodySnippet}` : '';
+      return `HttpError (status ${error.statusCode ?? 'unknown'})${detail}`;
+    }
     return error instanceof Error ? error.message : String(error);
+  }
+
+  /** JSON-stringify and cap at ~500 chars, for safe inclusion in a log line. */
+  private stringifyBodySnippet(body: unknown): string {
+    if (body === undefined || body === null) return '';
+    let json: string;
+    try {
+      json = typeof body === 'string' ? body : JSON.stringify(body);
+    } catch {
+      return '';
+    }
+    const MAX_CHARS = 500;
+    return json.length > MAX_CHARS ? `${json.slice(0, MAX_CHARS)}…(truncated)` : json;
   }
 
   private delay(ms: number): Promise<void> {

@@ -54,6 +54,20 @@ export interface McpServerTestResult {
   cleanupSuccess: boolean;
   cleanupErrors: string[];
   timestamp: Date;
+  /**
+   * True when this result represents a test-INFRASTRUCTURE failure (the
+   * sandbox/test harness itself failed to provision or run the generated
+   * server — e.g. a Kubernetes test-pod Secret/Deployment/Service create
+   * failing, or a mid-flight readiness-poll error) rather than a genuine test
+   * RESULT (the server ran and some/all tools failed). buildError/results are
+   * still populated for logging/display, but callers driving a generate-fix-
+   * retest loop (see RefinementService.refineUntilWorking) MUST NOT treat
+   * this as evidence the generated code is broken: the code was never
+   * actually exercised. Omitted/false for every other outcome, including
+   * genuine build failures (e.g. a TypeScript compile error in the generated
+   * code), which remain real, actionable test RESULTS.
+   */
+  infrastructureFailure?: boolean;
 }
 
 /**
@@ -601,6 +615,12 @@ export class McpTestingService implements OnModuleDestroy {
     let buildDuration = 0;
     const results: ToolTestResult[] = [];
     let cleanupErrors: string[] = [];
+    // Set only by the outer catch below, i.e. only when the test HARNESS
+    // itself failed (e.g. the Secret/Deployment/Service create, or the
+    // readiness poll, threw) before any tool ever ran. A genuine code/build
+    // failure (readiness resolving with ready:false, e.g. a tsc error) is a
+    // real test RESULT and must NOT set this.
+    let infrastructureFailure = false;
 
     try {
       const buildStart = Date.now();
@@ -687,9 +707,13 @@ export class McpTestingService implements OnModuleDestroy {
       const errMsg = error instanceof Error ? error.message : String(error);
       this.logger.error(`[${testId}] k8s test-pod run failed: ${errMsg}`);
       // If we never got as far as testing tools, surface this as the build
-      // error so the result is still a well-formed failure, not a throw.
+      // error so the result is still a well-formed failure, not a throw. This
+      // is by construction a test-INFRASTRUCTURE failure (see
+      // McpServerTestResult.infrastructureFailure): the generated code never
+      // ran, so nothing here reflects on its quality.
       if (results.length === 0 && !buildError) {
         buildError = errMsg;
+        infrastructureFailure = true;
       }
     } finally {
       // Always drop the synthetic handshake entry and tear the sandbox down.
@@ -732,6 +756,7 @@ export class McpTestingService implements OnModuleDestroy {
       cleanupSuccess: cleanupErrors.length === 0,
       cleanupErrors,
       timestamp: new Date(),
+      infrastructureFailure,
     };
   }
 

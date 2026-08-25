@@ -1,4 +1,5 @@
 import { ConfigService } from '@nestjs/config';
+import { HttpError } from '@kubernetes/client-node';
 import {
   K8sTestSandboxService,
   TEST_SANDBOX_INIT_CONTAINER,
@@ -65,9 +66,18 @@ describe('K8sTestSandboxService', () => {
       readNamespacedPodLog: jest.fn().mockResolvedValue({ body: '' }),
     };
     service = new K8sTestSandboxService(config);
-    // Replace whatever initClients() produced with our mocks.
+    // Replace whatever initClients() produced with our mocks, so isEnabled()
+    // (which only ever reads these two fields, never used for real
+    // operations post-fix) reports true.
     (service as unknown as { appsApi: unknown }).appsApi = apps;
     (service as unknown as { coreApi: unknown }).coreApi = core;
+    // Every real operation now builds FRESH clients per call via
+    // freshApis() instead of reusing appsApi/coreApi (see Fix 2). Mock that
+    // seam directly rather than the KubeConfig/makeApiClient boundary it
+    // wraps, mirroring the existing appsApi/coreApi mocking style above.
+    jest
+      .spyOn(service as unknown as { freshApis: () => unknown }, 'freshApis')
+      .mockReturnValue({ apps, core });
   });
 
   describe('manifest hardening', () => {
@@ -283,6 +293,113 @@ describe('K8sTestSandboxService', () => {
       expect(result.ready).toBe(false);
       expect(result.buildSucceeded).toBe(false);
       expect(result.error).toMatch(/did not become ready/);
+    });
+  });
+
+  /**
+   * Regression coverage for the production bug: a client cached ONCE in the
+   * constructor (initClients()) failed every real operation with a generic
+   * "HTTP request failed", while a brand-new client performing the identical
+   * call succeeded. Every real operation must build its own fresh client via
+   * freshApis() instead of reusing appsApi/coreApi.
+   */
+  describe('fresh API clients per operation', () => {
+    it('builds a fresh client (via freshApis()) for each real operation, not the constructor-cached one', async () => {
+      const freshApisSpy = (service as unknown as { freshApis: jest.Mock }).freshApis;
+      const callsBefore = freshApisSpy.mock.calls.length;
+
+      await service.createSandbox(input);
+      await service.destroySandbox({ name: service.objectName(input.testId), testId: input.testId });
+
+      core.listNamespacedPod.mockResolvedValue({
+        body: {
+          items: [
+            {
+              metadata: { name: 'mcptest-pod' },
+              status: {
+                initContainerStatuses: [
+                  { name: TEST_SANDBOX_INIT_CONTAINER, state: { terminated: { exitCode: 0 } } },
+                ],
+                containerStatuses: [{ name: TEST_SANDBOX_MAIN_CONTAINER, ready: true }],
+              },
+            },
+          ],
+        },
+      });
+      await service.waitForSandboxReady(
+        { name: service.objectName(input.testId), testId: input.testId },
+        5000,
+      );
+
+      // One freshApis() call per operation (createSandbox, destroySandbox,
+      // waitForSandboxReady) - never zero, and never reusing a single call
+      // across all three.
+      expect(freshApisSpy.mock.calls.length - callsBefore).toBeGreaterThanOrEqual(3);
+    });
+
+    it('never uses the constructor-cached appsApi/coreApi to perform a real operation', async () => {
+      // Sabotage the constructor-cached fields: if any real operation used
+      // them directly (the bug), this would throw and fail the test.
+      const poisoned = {
+        createNamespacedDeployment: jest.fn(() => {
+          throw new Error('BUG: used the constructor-cached client, not a fresh one');
+        }),
+      };
+      (service as unknown as { appsApi: unknown }).appsApi = poisoned;
+      // freshApis() is still mocked (see beforeEach) to return the real
+      // working mocks, exactly like a fixed fresh-client build would.
+
+      const handle = await service.createSandbox(input);
+
+      expect(handle.name).toMatch(/^mcptest-/);
+      expect(poisoned.createNamespacedDeployment).not.toHaveBeenCalled();
+      expect(apps.createNamespacedDeployment).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  /**
+   * Regression coverage for the other half of the production bug: the
+   * generic "HTTP request failed" `HttpError.message` hid the real
+   * status/body, so the true cause (e.g. a 401/403/422) never made it to the
+   * logs.
+   */
+  describe('HttpError diagnostics', () => {
+    it('surfaces statusCode and a body snippet, not just the generic HttpError message', async () => {
+      const httpError = new HttpError(
+        { statusCode: 403 } as never,
+        { kind: 'Status', message: 'secrets is forbidden: User cannot create resource', reason: 'Forbidden' },
+        403,
+      );
+      expect(httpError.message).toBe('HTTP request failed'); // the useless generic message
+      core.createNamespacedSecret.mockRejectedValue(httpError);
+
+      await expect(service.createSandbox(input)).rejects.toThrow();
+
+      const message = (service as unknown as { errorMessage: (e: unknown) => string }).errorMessage(
+        httpError,
+      );
+      expect(message).not.toBe('HTTP request failed');
+      expect(message).toContain('403');
+      expect(message).toContain('Forbidden');
+      expect(message).toContain('cannot create resource');
+    });
+
+    it('caps the logged body snippet so a huge error body cannot flood the logs', () => {
+      const hugeBody = { message: 'x'.repeat(2000) };
+      const httpError = new HttpError({} as never, hugeBody, 422);
+
+      const message = (service as unknown as { errorMessage: (e: unknown) => string }).errorMessage(
+        httpError,
+      );
+
+      expect(message.length).toBeLessThan(600);
+    });
+
+    it('still returns a plain message for non-HttpError errors', () => {
+      const message = (service as unknown as { errorMessage: (e: unknown) => string }).errorMessage(
+        new Error('plain failure'),
+      );
+      expect(message).toBe('plain failure');
     });
   });
 });

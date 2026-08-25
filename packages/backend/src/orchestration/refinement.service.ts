@@ -554,6 +554,71 @@ export class RefinementService {
   }
 
   /**
+   * Build the refineUntilWorking() return value for a test-INFRASTRUCTURE
+   * failure (the sandbox/test harness itself never validated the generated
+   * code), as opposed to a genuine test RESULT where the code ran and some
+   * tools failed.
+   *
+   * Deliberately does NOT run failure analysis or refineCode(): there is
+   * nothing about the generated code to diagnose when it was never actually
+   * exercised, and doing so anyway burns LLM calls on "fixing" code that was
+   * already fine, iteration after iteration, while producing misleading
+   * "root cause" analysis. shouldContinue is always false here, so the outer
+   * refine loop (GenerationPipeline.refine) stops immediately instead of
+   * spending its remaining iterations retrying an unrelated infrastructure
+   * problem. The generated code is still returned/persisted, matching the
+   * existing "partial success" persistence behavior.
+   */
+  private abortForTestInfrastructureFailure(
+    generatedCode: GeneratedCode,
+    iteration: number,
+    testStartTime: number,
+    message: string,
+    testResults?: McpServerTestResult,
+  ): {
+    success: boolean;
+    generatedCode: GeneratedCode;
+    testResults: McpServerTestResult;
+    iterations: number;
+    shouldContinue: boolean;
+    error: string;
+  } {
+    this.logger.warn(
+      `Iteration ${iteration}: test infrastructure failed before the generated code could be ` +
+        `validated (${message}); skipping code-fix refinement and stopping.`,
+    );
+
+    const resolvedTestResults: McpServerTestResult =
+      testResults ??
+      ({
+        containerId: 'n/a',
+        imageTag: 'n/a',
+        buildSuccess: false,
+        buildError: message,
+        buildDuration: 0,
+        toolsFound: generatedCode.metadata.tools.length,
+        toolsTested: 0,
+        toolsPassedCount: 0,
+        results: [],
+        overallSuccess: false,
+        totalDuration: Date.now() - testStartTime,
+        cleanupSuccess: true,
+        cleanupErrors: [],
+        timestamp: new Date(),
+        infrastructureFailure: true,
+      } satisfies McpServerTestResult);
+
+    return {
+      success: false,
+      generatedCode,
+      testResults: resolvedTestResults,
+      iterations: iteration,
+      shouldContinue: false,
+      error: `server generated but could not be validated: ${message}`,
+    };
+  }
+
+  /**
    * Refine Until Working
    *
    * Main entry point for refinement loop.
@@ -587,16 +652,54 @@ export class RefinementService {
     // is fixed on the spot instead of failing the build identically five times.
     const addedDependencies = this.reconcileDependencies(generatedCode);
 
-    // Step 2: Test MCP server in Docker
+    // Step 2: Test MCP server in Docker (or the Kubernetes test-pod sandbox;
+    // see testMcpServer's backend selection). This can fail two structurally
+    // different ways, and only one of them is actionable by regenerating
+    // code:
+    //   - it can THROW: the test harness/sandbox itself never ran the
+    //     generated code at all (e.g. no sandbox backend reachable). There is
+    //     nothing about the generated code to "fix" here.
+    //   - it can RESOLVE with McpServerTestResult.infrastructureFailure set:
+    //     the harness attempted to provision a sandbox but a harness-level
+    //     operation failed (e.g. the Kubernetes test-pod Secret/Deployment/
+    //     Service create failed) before any tool ever ran. Same story: the
+    //     generated code was never exercised, so its buildError/results say
+    //     nothing about the code's quality.
+    // Both are test-INFRASTRUCTURE failures, not code failures, and must not
+    // drive the generate-fix-retest loop below (see abortForTestInfrastructureFailure).
     this.logger.log(`Testing MCP server: ${generatedCode.metadata.tools.length} tools`);
-    const testResults = await this.mcpTestingService.testMcpServer(generatedCode, {
-      cpuLimit: '0.5',
-      memoryLimit: '512m',
-      timeout: 30,
-      toolTimeout: 5,
-      networkMode: 'none',
-      cleanup: true,
-    });
+    const testStartTime = Date.now();
+    let testResults: McpServerTestResult;
+    try {
+      testResults = await this.mcpTestingService.testMcpServer(generatedCode, {
+        cpuLimit: '0.5',
+        memoryLimit: '512m',
+        timeout: 30,
+        toolTimeout: 5,
+        networkMode: 'none',
+        cleanup: true,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return this.abortForTestInfrastructureFailure(
+        generatedCode,
+        iteration,
+        testStartTime,
+        message,
+      );
+    }
+
+    if (testResults.infrastructureFailure) {
+      const message =
+        testResults.buildError || 'the test sandbox failed to run the generated server';
+      return this.abortForTestInfrastructureFailure(
+        generatedCode,
+        iteration,
+        testStartTime,
+        message,
+        testResults,
+      );
+    }
 
     // Step 3: Check if all tools work
     if (testResults.overallSuccess && testResults.toolsPassedCount === testResults.toolsFound) {
