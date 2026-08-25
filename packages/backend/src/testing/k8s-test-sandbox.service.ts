@@ -91,6 +91,29 @@ const SERVER_ID_LABEL = 'server-id';
 /** Hard ceiling on the serialised source, comfortably under the 1 MiB Secret limit. */
 const MAX_SOURCE_BYTES = 900 * 1024;
 
+/**
+ * Normalise a Docker-style memory quantity to a Kubernetes IEC quantity.
+ *
+ * `McpTestConfig` carries Docker memory strings ('512m', '1g' - powers of 1024
+ * to Docker). Kubernetes reads a bare lowercase 'm' suffix as MILLIbytes, so
+ * feeding Docker's '512m' to a k8s resource limit yields 0.512 bytes and the
+ * API rejects the Deployment (422, "must be less than or equal to memory
+ * limit"). Map k->Ki, m->Mi, g->Gi, t->Ti. Values already in k8s IEC form
+ * (anything ending in 'i') or plain bytes pass through unchanged. Returns
+ * undefined for undefined input so the caller's own default applies.
+ */
+export function toK8sMemory(value?: string): string | undefined {
+  if (!value) return undefined;
+  const trimmed = value.trim();
+  if (/i$/i.test(trimmed)) return trimmed; // already Mi/Gi/Ki/Ti
+  const match = /^(\d+(?:\.\d+)?)\s*([kKmMgGtT])?[bB]?$/.exec(trimmed);
+  if (!match) return trimmed; // unrecognised: let the API validate it explicitly
+  const [, num, unit] = match;
+  if (!unit) return trimmed; // plain bytes
+  const iec: Record<string, string> = { k: 'Ki', m: 'Mi', g: 'Gi', t: 'Ti' };
+  return `${num}${iec[unit.toLowerCase()]}`;
+}
+
 /** Opaque handle returned by createSandbox and threaded back into the other calls. */
 export interface TestSandboxHandle {
   /** Object name shared by the Deployment, Service and (as `<name>-src`) Secret. */
@@ -356,7 +379,11 @@ export class K8sTestSandboxService {
 
   buildDeployment(input: CreateSandboxInput): V1Deployment {
     const name = this.objectName(input.testId);
-    const memoryLimit = input.resources?.memoryLimit || '512Mi';
+    // McpTestConfig carries DOCKER-style memory strings (e.g. '512m' = 512
+    // megabytes to Docker). Kubernetes reads a bare 'm' suffix as MILLIbytes,
+    // so '512m' becomes 0.512 bytes - smaller than the 128Mi request - and the
+    // API rejects the Deployment with a 422. Normalise to k8s IEC units.
+    const memoryLimit = toK8sMemory(input.resources?.memoryLimit) || '512Mi';
     const cpuLimit = input.resources?.cpuLimit || '1000m';
 
     const commonSecurityContext = {

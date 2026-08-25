@@ -7,7 +7,40 @@ import {
   TEST_SANDBOX_PORT,
   CreateSandboxInput,
   TestSandboxHandle,
+  toK8sMemory,
 } from './k8s-test-sandbox.service';
+
+describe('toK8sMemory (Docker -> Kubernetes memory units)', () => {
+  it('converts Docker lowercase suffixes to IEC units', () => {
+    expect(toK8sMemory('512m')).toBe('512Mi');
+    expect(toK8sMemory('1g')).toBe('1Gi');
+    expect(toK8sMemory('256k')).toBe('256Ki');
+    expect(toK8sMemory('2G')).toBe('2Gi');
+    expect(toK8sMemory('1gb')).toBe('1Gi');
+  });
+  it('passes through values already in k8s IEC form', () => {
+    expect(toK8sMemory('512Mi')).toBe('512Mi');
+    expect(toK8sMemory('1Gi')).toBe('1Gi');
+  });
+  it('passes through plain byte counts and returns undefined for empty input', () => {
+    expect(toK8sMemory('536870912')).toBe('536870912');
+    expect(toK8sMemory(undefined)).toBeUndefined();
+    expect(toK8sMemory('')).toBeUndefined();
+  });
+});
+
+describe('buildDeployment normalises the memory limit', () => {
+  it('never emits a bare-m limit smaller than the request', () => {
+    const svc = new K8sTestSandboxService({ get: (_k: string, d?: unknown) => d } as never);
+    const dep = svc.buildDeployment({
+      testId: 'abc123',
+      files: { 'src/index.ts': 'x' },
+      resources: { memoryLimit: '512m', cpuLimit: '0.5' },
+    } as CreateSandboxInput);
+    const mem = dep.spec?.template?.spec?.containers?.[0]?.resources?.limits?.['memory'];
+    expect(mem).toBe('512Mi');
+  });
+});
 
 /**
  * Unit tests for the Kubernetes test-pod sandbox. There is no cluster in CI,
