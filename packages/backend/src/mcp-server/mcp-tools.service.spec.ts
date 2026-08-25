@@ -2,6 +2,9 @@
 import { NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { McpToolsService } from './mcp-tools.service';
 import { Conversation } from '../database/entities';
 import { GenerationPipeline } from '../orchestration/pipeline.service';
@@ -14,7 +17,9 @@ describe('McpToolsService', () => {
   let conversationRepo: any;
   let pipeline: jest.Mocked<Pick<GenerationPipeline, 'execute'>>;
   let marketplaceService: jest.Mocked<Pick<MarketplaceService, 'search'>>;
-  let hostingService: jest.Mocked<Pick<HostingService, 'getServers' | 'getServer'>>;
+  let hostingService: jest.Mocked<
+    Pick<HostingService, 'getServers' | 'getServer' | 'deployToCloud'>
+  >;
   let hostedMcpClientService: jest.Mocked<Pick<HostedMcpClientService, 'callTool'>>;
 
   const userId = 'user-123';
@@ -51,6 +56,7 @@ describe('McpToolsService', () => {
     hostingService = {
       getServers: jest.fn().mockResolvedValue([]),
       getServer: jest.fn(),
+      deployToCloud: jest.fn(),
     };
 
     hostedMcpClientService = {
@@ -522,6 +528,192 @@ describe('McpToolsService', () => {
       await service.callTool(userId, 'srv-1', 'do_thing', undefined);
 
       expect(hostingService.getServer).toHaveBeenCalledWith('srv-1', userId);
+    });
+  });
+
+  describe('hostServer', () => {
+    it('deploys via deployToCloud, scoped to the user, and reports the pending status', async () => {
+      hostingService.deployToCloud.mockResolvedValue({
+        success: true,
+        serverId: 'srv-new',
+        endpointUrl: 'http://gw/api/hosting/servers/srv-new/mcp',
+        status: 'pending',
+      } as any);
+
+      const result = await service.hostServer(userId, conversationId, { API_TOKEN: 'x' });
+
+      expect(hostingService.deployToCloud).toHaveBeenCalledWith(conversationId, userId, {
+        API_TOKEN: 'x',
+      });
+      expect(result.isError).toBeFalsy();
+      const text = (result.content[0] as any).text as string;
+      expect(text).toContain('serverId: srv-new');
+      expect(text).toContain('status: pending');
+      expect(text).toContain('get_hosted_server');
+    });
+
+    it('marks a resolved { success: false } deploy as a tool error', async () => {
+      hostingService.deployToCloud.mockResolvedValue({
+        success: false,
+        serverId: 'srv-bad',
+        endpointUrl: 'http://gw/api/hosting/servers/srv-bad/mcp',
+        status: 'failed',
+        error: 'No local source directory available',
+      } as any);
+
+      const result = await service.hostServer(userId, conversationId, undefined);
+
+      expect(result.isError).toBe(true);
+      const text = (result.content[0] as any).text as string;
+      expect(text).toContain('status: failed');
+      expect(text).toContain('No local source directory available');
+    });
+
+    it('turns a thrown quota/ownership error into a clean tool error', async () => {
+      hostingService.deployToCloud.mockRejectedValue(
+        new NotFoundException(`No conversation found for id ${conversationId}`),
+      );
+
+      const result = await service.hostServer(userId, conversationId, undefined);
+
+      expect(result.isError).toBe(true);
+      expect((result.content[0] as any).text).toContain('No conversation found');
+    });
+  });
+
+  describe('getHostedServer', () => {
+    /** Parses the JSON payload out of the prose+JSON text result. */
+    function parsePayload(result: any) {
+      const text = (result.content[0] as any).text as string;
+      return JSON.parse(text.slice(text.indexOf('{')));
+    }
+
+    it('reports ready when the cluster observes a ready replica', async () => {
+      hostingService.getServer.mockResolvedValue({
+        serverId: 'srv-1',
+        serverName: 'S1',
+        endpointUrl: 'http://gw/api/hosting/servers/srv-1/mcp',
+        desiredState: 'running',
+        observedStatus: 'running',
+        status: 'running',
+        observedReplicas: 1,
+        observedReadyReplicas: 1,
+        observedMessage: null,
+        statusMessage: '',
+        observedAt: new Date('2026-08-25T00:00:00Z'),
+        tools: [{ name: 't1' }, { name: 't2' }],
+      } as any);
+
+      const result = await service.getHostedServer(userId, 'srv-1');
+
+      expect(hostingService.getServer).toHaveBeenCalledWith('srv-1', userId);
+      expect(result.isError).toBeFalsy();
+      const payload = parsePayload(result);
+      expect(payload.ready).toBe(true);
+      expect(payload.readyReplicas).toBe(1);
+      expect(payload.toolCount).toBe(2);
+      expect((result.content[0] as any).text).toContain('running');
+    });
+
+    it('reports not-ready mid cold-start even when status says running', async () => {
+      hostingService.getServer.mockResolvedValue({
+        serverId: 'srv-1',
+        serverName: 'S1',
+        endpointUrl: 'http://gw/api/hosting/servers/srv-1/mcp',
+        desiredState: 'running',
+        observedStatus: 'deploying',
+        status: 'running',
+        observedReplicas: 1,
+        observedReadyReplicas: 0,
+        observedMessage: null,
+        statusMessage: 'Deploying',
+        observedAt: null,
+        tools: [],
+      } as any);
+
+      const payload = parsePayload(await service.getHostedServer(userId, 'srv-1'));
+
+      expect(payload.ready).toBe(false);
+      expect(payload.readyReplicas).toBe(0);
+    });
+
+    it('explains a stopped server instead of telling the agent to keep polling', async () => {
+      hostingService.getServer.mockResolvedValue({
+        serverId: 'srv-1',
+        serverName: 'S1',
+        endpointUrl: 'http://gw/api/hosting/servers/srv-1/mcp',
+        desiredState: 'stopped',
+        observedStatus: 'stopped',
+        status: 'stopped',
+        observedReplicas: 0,
+        observedReadyReplicas: 0,
+        observedMessage: null,
+        statusMessage: '',
+        observedAt: null,
+        tools: [],
+      } as any);
+
+      const result = await service.getHostedServer(userId, 'srv-1');
+      const text = (result.content[0] as any).text as string;
+
+      expect(parsePayload(result).ready).toBe(false);
+      expect(text).toContain('stopped');
+    });
+
+    it('turns a NotFound (not owned/missing) into a clean tool error', async () => {
+      hostingService.getServer.mockRejectedValue(
+        new NotFoundException('Server not found: srv-x'),
+      );
+
+      const result = await service.getHostedServer(userId, 'srv-x');
+
+      expect(result.isError).toBe(true);
+      expect((result.content[0] as any).text).toContain('Server not found');
+    });
+  });
+
+  describe('registerTools (real McpServer wiring)', () => {
+    // The per-handler tests above call the service methods directly, which
+    // never exercises `registerTools` or the zod inputSchemas it hands to the
+    // SDK. A malformed schema (or a duplicate tool name) throws only at
+    // registration time, so register the real tools on a real McpServer and
+    // list them over an in-memory transport to catch that here.
+    it('registers every tool on a real McpServer and lists them, including the hosting tools', async () => {
+      const server = new McpServer({ name: 'test', version: '0.0.0' });
+      service.registerTools(server, userId);
+
+      const client = new Client({ name: 'test-client', version: '0.0.0' });
+      const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+      await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+
+      try {
+        const { tools } = await client.listTools();
+        const names = tools.map((t) => t.name).sort();
+
+        expect(names).toEqual(
+          [
+            'call_tool',
+            'continue_generation',
+            'generate_mcp_server',
+            'get_generated_server',
+            'get_generation_status',
+            'get_hosted_server',
+            'host_server',
+            'list_conversations',
+            'search_marketplace',
+            'search_tools',
+          ].sort(),
+        );
+
+        // host_server's inputSchema must expose the two params an agent needs.
+        const hostServer = tools.find((t) => t.name === 'host_server')!;
+        expect(hostServer.inputSchema.properties).toHaveProperty('conversationId');
+        expect(hostServer.inputSchema.properties).toHaveProperty('envVars');
+        expect(hostServer.inputSchema.required).toEqual(['conversationId']);
+      } finally {
+        await client.close();
+        await server.close();
+      }
     });
   });
 });

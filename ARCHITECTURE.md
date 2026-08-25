@@ -608,6 +608,14 @@ Tools are registered in `packages/backend/src/mcp-server/mcp-tools.service.ts`:
   result unchanged, and fails with a clear message when the server is not running or the caller
   does not own it. Neither consumes generation quota. Marketplace entries are code rather than
   running servers, so they are not reachable this way.
+- **Hosting**: `host_server` and `get_hosted_server`, which close the loop so an agent can go from
+  a generated conversation to callable tools without leaving the connection. `host_server` deploys
+  the server generated in a conversation through the same `HostingService.deployToCloud` entry
+  point the "Host on Cloud" button uses, so ownership scoping, the per-tier concurrent-server cap,
+  and source-token minting all apply identically; it returns as soon as the deploy is accepted
+  (status `pending`/`deploying`). `get_hosted_server` reports the live, cluster-observed readiness
+  (`observedReadyReplicas`, not the derived `status` mirror), so an agent can poll after
+  `host_server` until the server is ready and then reach its tools with `search_tools` / `call_tool`.
 
 ## Security Architecture
 

@@ -204,6 +204,57 @@ export class McpToolsService {
       },
       async ({ serverId, tool, arguments: args }) => this.callTool(userId, serverId, tool, args),
     );
+
+    server.registerTool(
+      'host_server',
+      {
+        title: 'Host Generated Server',
+        description:
+          'Deploys a server you previously generated (identified by its conversationId) onto the ' +
+          "platform's cluster, so its tools become reachable through this same connection with " +
+          'search_tools / call_tool - no separate endpoint or client needed. The conversation ' +
+          'must already contain a completed generated server (run generate_mcp_server first). ' +
+          'COST NOTE: this provisions real infrastructure and consumes one slot against your ' +
+          "tier's concurrent hosted-server limit (the free tier hosts a single server). Confirm " +
+          'with your user before calling it. ' +
+          'ASYNC NOTE: it returns as soon as the deployment is accepted, with a status like ' +
+          '"pending" or "deploying"; a cold start (fetch source, install, compile, come up) ' +
+          'typically takes about a minute. Poll get_hosted_server with the returned serverId ' +
+          'until it reports ready before calling its tools.',
+        inputSchema: {
+          conversationId: z
+            .string()
+            .uuid()
+            .describe('The conversationId whose generated server should be hosted.'),
+          envVars: z
+            .record(z.string(), z.string())
+            .optional()
+            .describe(
+              'Environment variables to inject into the running container (e.g. an API token ' +
+                'the generated server needs). Values are stored as a Kubernetes Secret. Omit if ' +
+                'the server needs none.',
+            ),
+        },
+      },
+      async ({ conversationId, envVars }) => this.hostServer(userId, conversationId, envVars),
+    );
+
+    server.registerTool(
+      'get_hosted_server',
+      {
+        title: 'Get Hosted Server Status',
+        description:
+          'Reports the live deployment status of one of your own hosted servers: whether it is ' +
+          'ready to serve requests yet, its real replica counts observed from the cluster, its ' +
+          'endpoint, and any failure message. Use it to poll after host_server until the server ' +
+          'is ready, then discover and run its tools with search_tools / call_tool. Read-only ' +
+          'and free of charge.',
+        inputSchema: {
+          serverId: z.string().describe('The serverId of the hosted server to check.'),
+        },
+      },
+      async ({ serverId }) => this.getHostedServer(userId, serverId),
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -506,6 +557,113 @@ export class McpToolsService {
       return await this.hostedMcpClientService.callTool(server, tool, args, undefined);
     } catch (error) {
       return this.toolError('call_tool', error);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // host_server
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Deploys the server generated in `conversationId` onto the cluster via the
+   * exact same entry point the "Host on Cloud" button uses
+   * (`HostingService.deployToCloud`), so ownership scoping, the per-tier
+   * concurrent-server cap, and source-token minting all apply identically to
+   * an agent driving this over MCP.
+   *
+   * `deployToCloud` reports two distinct kinds of failure differently, and
+   * both must reach the agent as a tool error rather than a cheerful success:
+   * ownership / "no generated server" / quota are THROWN (and caught here),
+   * while a deploy that was accepted but could not be realized comes back as a
+   * resolved `{ success: false }` result. The latter is surfaced with
+   * `isError: true` so an agent does not mistake a failed deploy for a hosted
+   * server it can immediately call.
+   */
+  async hostServer(
+    userId: string,
+    conversationId: string,
+    envVars: Record<string, string> | undefined,
+  ): Promise<CallToolResult> {
+    try {
+      const result = await this.hostingService.deployToCloud(conversationId, userId, envVars);
+
+      const lines: string[] = [
+        `serverId: ${result.serverId}`,
+        `status: ${result.status}`,
+        `endpointUrl: ${result.endpointUrl}`,
+      ];
+      if (result.error) {
+        lines.push(`error: ${result.error}`);
+      }
+
+      if (!result.success) {
+        return {
+          isError: true,
+          content: [{ type: 'text', text: lines.join('\n') }],
+        };
+      }
+
+      lines.push(
+        'The server was accepted and is deploying; a cold start (fetch source, install, ' +
+          'compile, come up) typically takes about a minute. Poll get_hosted_server with this ' +
+          'serverId until it reports ready, then use search_tools / call_tool to discover and ' +
+          'invoke its tools through this same connection.',
+      );
+      return this.textResult(lines.join('\n'));
+    } catch (error) {
+      return this.toolError('host_server', error);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // get_hosted_server
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Reports the live, cluster-observed status of one hosted server so an agent
+   * can poll for readiness after host_server. Readiness is taken from the real
+   * `observedReadyReplicas` written back by K8sReconcilerService, not the
+   * derived `status` string - a pod can be `status: 'running'` while still
+   * reporting 0 ready replicas mid cold-start. `getServer` scopes to the owner
+   * and throws NotFound for an id the caller does not own, which `toolError`
+   * turns into a clean tool error.
+   */
+  async getHostedServer(userId: string, serverId: string): Promise<CallToolResult> {
+    try {
+      const server = await this.hostingService.getServer(serverId, userId);
+
+      const readyReplicas = server.observedReadyReplicas ?? 0;
+      const ready = readyReplicas >= 1;
+
+      const payload = {
+        serverId: server.serverId,
+        serverName: server.serverName,
+        endpointUrl: server.endpointUrl,
+        // The honest desired-vs-observed split (see the HostedServer entity):
+        // `status` is a derived mirror kept for the UI; these are the source.
+        desiredState: server.desiredState,
+        observedStatus: server.observedStatus,
+        status: server.status,
+        ready,
+        replicas: server.observedReplicas ?? 0,
+        readyReplicas,
+        message: server.observedMessage || server.statusMessage || '',
+        observedAt: server.observedAt,
+        toolCount: Array.isArray(server.tools) ? server.tools.length : 0,
+      };
+
+      const hint = ready
+        ? 'This server is running. Use search_tools / call_tool to discover and invoke its ' +
+          'tools through this connection.'
+        : server.desiredState !== 'running'
+          ? `This server's desired state is "${server.desiredState}", so it is not serving ` +
+            'requests. Nothing is wrong; it will not become ready until it is started.'
+          : 'This server is not ready yet. Poll this tool again in a few seconds - a cold ' +
+            'start typically takes about a minute.';
+
+      return this.textResult(`${hint}\n${JSON.stringify(payload, null, 2)}`);
+    } catch (error) {
+      return this.toolError('get_hosted_server', error);
     }
   }
 
