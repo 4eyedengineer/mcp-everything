@@ -109,7 +109,7 @@ spec:
   source:
     repoURL: https://github.com/4eyedengineer/mcp-everything.git
     # TODO: flip to `main` once rework/2026-07-review is merged.
-    targetRevision: rework/2026-07-review
+    targetRevision: main
     path: k8s/overlays/homelab
   destination:
     server: https://kubernetes.default.svc
