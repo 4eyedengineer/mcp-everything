@@ -181,7 +181,8 @@ export class CodeExecutionService {
       });
 
       if (result.success) {
-        const outputMatches = JSON.stringify(result.output.result) === JSON.stringify(test.expectedOutput);
+        const outputMatches =
+          JSON.stringify(result.output.result) === JSON.stringify(test.expectedOutput);
 
         if (outputMatches) {
           passed++;
@@ -221,8 +222,8 @@ export class CodeExecutionService {
     };
 
     return modules
-      .filter(mod => mod in allowedModules)
-      .map(mod => allowedModules[mod])
+      .filter((mod) => mod in allowedModules)
+      .map((mod) => allowedModules[mod])
       .join('\n');
   }
 }

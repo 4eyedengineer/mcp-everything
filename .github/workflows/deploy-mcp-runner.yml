@@ -1,0 +1,227 @@
+name: Deploy MCP Runner
+
+# Builds the shared MCP runner image and pushes it to the homelab Harbor
+# registry as mcp-everything/mcp-runner, tagged with the commit SHA (matching
+# how backend/frontend are tagged in deploy-homelab.yml) plus a moving :latest.
+#
+# This image is the runtime for EVERY hosted MCP server: it is used as both the
+# initContainer (fetch source, npm install, npm run build) and the main
+# container (node dist/index.js) of a generated server's Deployment. There are
+# no per-server image builds any more, which is what makes hosting possible at
+# all - the backend pod has no docker binary and no docker socket.
+#
+# It is deliberately on its OWN workflow with a narrow path filter: the runner
+# changes far less often than the application, and rebuilding it on every
+# backend commit would waste scarce cluster capacity.
+on:
+  push:
+    branches:
+      - rework/2026-07-review
+      - main
+    paths:
+      - 'packages/mcp-runner/**'
+      - '.github/workflows/deploy-mcp-runner.yml'
+  workflow_dispatch: {}
+
+env:
+  REGISTRY: harbor.192.168.1.240.nip.io
+  PROJECT: mcp-everything
+  IMAGE: mcp-runner
+
+jobs:
+  build-and-push:
+    runs-on: arc-runner-set
+    # Bootstrapping the docker-container builder is genuinely slow on the ARC
+    # runner (pulling moby/buildkit into a fresh dind sidecar took 802s on run
+    # 30848510826), so this needs headroom - but not the 6h default, which
+    # would pin a runner pod for a whole afternoon if a builder ever hangs.
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      # Fail fast if Harbor is unhealthy.
+      #
+      # Run 30848510826 spent ~26 minutes setting up QEMU and BuildKit and
+      # building both architectures, then died on the final push with
+      #   unauthorized: failed to connect to host=harbor-database ...
+      #   FATAL: the database system is in recovery mode (SQLSTATE 57P03)
+      # That is Harbor's own Postgres being down - nothing to do with this
+      # workflow - but it surfaced as "unauthorized", which reads like a
+      # credentials bug and sends you looking in the wrong place.
+      #
+      # This check costs a couple of seconds, names the real culprit, and
+      # hands back ~30 minutes of scarce cluster capacity when Harbor is out.
+      - name: Preflight - Harbor must be healthy
+        run: |
+          set -uo pipefail
+          URL="http://${REGISTRY}/api/v2.0/health"
+          body=""
+          for attempt in 1 2 3; do
+            if body=$(curl -sS --max-time 20 "$URL" 2>&1); then break; fi
+            echo "attempt ${attempt}: could not reach ${URL}"
+            [ "$attempt" -lt 3 ] && sleep 10
+          done
+          echo "$body"
+
+          # A substring test for '"status":"healthy"' is NOT good enough: the
+          # per-component entries carry their own status, so a body whose
+          # database is unhealthy still contains that string via the healthy
+          # `core` component, and the gate would wave through exactly the
+          # outage it exists to catch. Parse it properly.
+          #
+          # Only the components on the push path are gated. Harbor can sit at
+          # overall "unhealthy" because of, say, trivy, while pushes work fine
+          # - blocking on that would wedge every build for an unrelated reason.
+          if ! command -v jq >/dev/null 2>&1; then
+            echo "::warning::jq not available, skipping the Harbor preflight. An advisory gate must never block a legitimate build."
+            exit 0
+          fi
+
+          unhealthy=$(printf '%s' "$body" \
+            | jq -r '[.components[]? | select(.name=="core" or .name=="database" or .name=="registry") | select(.status!="healthy") | "\(.name)=\(.status)"] | join(", ")' 2>/dev/null)
+
+          if [ -z "$unhealthy" ] && printf '%s' "$body" | jq -e '.components' >/dev/null 2>&1; then
+            echo "Harbor core/database/registry all healthy"
+          elif ! printf '%s' "$body" | jq -e '.components' >/dev/null 2>&1; then
+            echo "::error::Harbor at ${REGISTRY} did not return a parseable health document (see above). Treating as an outage - this is a registry/infrastructure problem, NOT a defect in this workflow or the Dockerfile."
+            exit 1
+          else
+            echo "::error::Harbor at ${REGISTRY} is degraded on the push path (${unhealthy}). This is a registry/infrastructure problem, NOT a defect in this workflow or the Dockerfile. Re-run once Harbor recovers."
+            exit 1
+          fi
+
+      # The cluster is 4x arm64 + 2x amd64 and generated Deployments carry no
+      # nodeSelector, so this image MUST be multi-arch or roughly two thirds of
+      # schedulings would ImagePullBackOff. QEMU provides the arm64 emulation
+      # the runtime stage is assembled under.
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      # Unlike deploy-homelab.yml (driver: docker), this needs the
+      # docker-container driver: the classic/docker driver cannot produce a
+      # multi-platform manifest list at all.
+      #
+      # That driver does NOT inherit /etc/docker/daemon.json, so the dind
+      # sidecar's insecure-registries entry does not apply and Harbor's
+      # plain-HTTP endpoint has to be declared to BuildKit explicitly.
+      # network=host lets the builder container reach Harbor over the runner
+      # pod's own network.
+      #
+      # This DOES work on the ARC runner - verified on run 30848510826, where
+      # BuildKit booted with this exact config and reported
+      # linux/amd64,linux/arm64. Note that the boot emits a transient
+      #   Error: Get "http://...docker.sock/.../json": context deadline exceeded
+      # while the daemon is still coming up; the action recovers and the
+      # following "Inspect builder" group shows a healthy worker. That line is
+      # noise, not the failure - don't go rearchitecting the driver over it.
+      #
+      # The buildkit image is pinned rather than tracking buildx-stable-1 so a
+      # rebuild uses the exact version already proven here, and so an upstream
+      # retag cannot change the builder underneath us.
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver: docker-container
+          driver-opts: |
+            network=host
+            image=moby/buildkit:v0.31.2
+          buildkitd-config-inline: |
+            [registry."harbor.192.168.1.240.nip.io"]
+              http = true
+              insecure = true
+
+      - name: Log in to Harbor
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.HARBOR_USERNAME }}
+          password: ${{ secrets.HARBOR_PASSWORD }}
+
+      # Build + push, with retries.
+      #
+      # This is a plain `docker buildx build` rather than build-push-action so
+      # that a transient registry error can be retried without re-running the
+      # 15-minute BuildKit bootstrap. Retries are cheap: BuildKit's cache lives
+      # in the builder container for the life of the job, so attempt 2 reuses
+      # every layer from attempt 1 and only redoes the push.
+      #
+      # This exact invocation is the one that produced the image currently in
+      # Harbor (built and pushed by hand from a cluster node), so the flags
+      # themselves are known-good.
+      #
+      # No registry buildcache: this workflow is path-filtered to
+      # packages/mcp-runner/**, so it only runs when the runner has actually
+      # changed - the cache would miss on nearly every real run while adding
+      # two more round-trips to a registry that has already proven flaky.
+      #
+      # Deployments should pin the immutable :<sha> tag. :latest exists for
+      # convenience and follows whichever deploy branch built most recently.
+      - name: Build and push mcp-runner image
+        run: |
+          set -uo pipefail
+          REF="${REGISTRY}/${PROJECT}/${IMAGE}"
+          ATTEMPTS=3
+
+          for attempt in $(seq 1 $ATTEMPTS); do
+            echo "::group::build+push attempt ${attempt}/${ATTEMPTS}"
+            if docker buildx build \
+                 --platform linux/amd64,linux/arm64 \
+                 --provenance=false \
+                 --tag "${REF}:${GITHUB_SHA}" \
+                 --tag "${REF}:latest" \
+                 --push \
+                 ./packages/mcp-runner; then
+              echo "::endgroup::"
+              echo "build+push succeeded on attempt ${attempt}"
+              exit 0
+            fi
+            echo "::endgroup::"
+            echo "attempt ${attempt} failed"
+            if [ "$attempt" -lt "$ATTEMPTS" ]; then
+              echo "retrying in 60s (BuildKit layer cache is retained, so this is fast)"
+              sleep 60
+            fi
+          done
+
+          echo "::error::build+push failed after ${ATTEMPTS} attempts. If the error mentions harbor-database, Postgres recovery mode, or an 'unauthorized' that appears only at the push, that is a Harbor outage rather than a workflow defect."
+          exit 1
+
+      # Assert the pushed manifest really is multi-arch.
+      #
+      # This guard is not paranoia. On a host without the buildx plugin,
+      # `docker build --platform linux/arm64` silently produces an AMD64 image
+      # (measured: the resulting container reported x86_64). A single-arch
+      # image here would not fail now - it would fail later, as
+      # ImagePullBackOff on four of the six cluster nodes, for every hosted
+      # server. Reading the manifest back from the registry is the only way to
+      # know what was actually published.
+      #
+      # Parses the raw index JSON rather than grepping imagetools'
+      # human-readable output, which is formatting-dependent.
+      - name: Verify multi-arch manifest
+        run: |
+          set -uo pipefail
+          REF="${REGISTRY}/${PROJECT}/${IMAGE}:${GITHUB_SHA}"
+          echo "Inspecting $REF"
+
+          if ! docker buildx imagetools inspect --raw "$REF" > manifest.json; then
+            echo "::error::Could not read back $REF from the registry. The push may still have succeeded - check Harbor before assuming the image is bad."
+            exit 1
+          fi
+          cat manifest.json
+
+          compact=$(tr -d ' \n' < manifest.json)
+          for arch in amd64 arm64; do
+            case "$compact" in
+              *"\"architecture\":\"${arch}\""*)
+                echo "OK: manifest includes linux/${arch}" ;;
+              *)
+                echo "::error::$REF does NOT include linux/${arch}. Refusing to treat this as a good build - a single-arch image would ImagePullBackOff on the ${arch} nodes."
+                exit 1 ;;
+            esac
+          done
+          echo "OK: manifest covers linux/amd64 and linux/arm64"

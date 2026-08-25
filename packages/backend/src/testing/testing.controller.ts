@@ -10,7 +10,11 @@ import {
   Logger,
 } from '@nestjs/common';
 import { Observable } from 'rxjs';
+import { exec } from 'child_process';
+import { promisify } from 'util';
 import { McpTestingService, GeneratedCode, McpServerTestResult } from './mcp-testing.service';
+
+const execAsync = promisify(exec);
 
 /**
  * Request DTO for test endpoint
@@ -85,7 +89,9 @@ export class TestingController {
         cleanup: request.cleanup !== false,
       });
 
-      this.logger.log(`Test completed: ${result.toolsPassedCount}/${result.toolsTested} tools passed`);
+      this.logger.log(
+        `Test completed: ${result.toolsPassedCount}/${result.toolsTested} tools passed`,
+      );
 
       return {
         success: result.overallSuccess,
@@ -137,16 +143,13 @@ export class TestingController {
       // Run test asynchronously
       (async () => {
         try {
-          const result = await this.mcpTestingService.testMcpServer(
-            request.generatedCode,
-            {
-              cpuLimit: request.cpuLimit,
-              memoryLimit: request.memoryLimit,
-              timeout: request.timeout,
-              toolTimeout: request.toolTimeout,
-              cleanup: request.cleanup !== false,
-            },
-          );
+          const result = await this.mcpTestingService.testMcpServer(request.generatedCode, {
+            cpuLimit: request.cpuLimit,
+            memoryLimit: request.memoryLimit,
+            timeout: request.timeout,
+            toolTimeout: request.toolTimeout,
+            cleanup: request.cleanup !== false,
+          });
 
           // Store result for potential retrieval
           this.activeTests.set(sessionId, result);
@@ -216,9 +219,7 @@ export class TestingController {
   async healthCheck(): Promise<{ status: string; docker: boolean }> {
     try {
       // Try to run simple docker command
-      const { stdout } = await require('util').promisify(require('child_process').exec)(
-        'docker ps -q',
-      );
+      await execAsync('docker ps -q');
 
       return {
         status: 'healthy',

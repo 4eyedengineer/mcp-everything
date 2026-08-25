@@ -1,8 +1,9 @@
 import { Injectable } from '@angular/core';
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
-import { Observable, throwError, of } from 'rxjs';
+import { Observable, of } from 'rxjs';
 import { catchError, map } from 'rxjs/operators';
-import { environment } from '../../../environments/environment';
+import { API_BASE } from '../config/api.config';
+import { parseHttpError } from '../../shared/utils/http-error.util';
 
 /**
  * Conversation state that may contain generated code
@@ -39,6 +40,19 @@ export interface Conversation {
   updatedAt?: Date;
   // FIX #130: Include state for generatedCode access after refresh
   state?: ConversationState;
+  /**
+   * True while a pipeline run for this conversation is actively streaming on
+   * the server right now. Backed by an in-process flag (chat/pipeline-status.service.ts),
+   * so it is only meaningful as a live/real-time signal - a server restart
+   * naturally resets it, since there is no run left to be executing.
+   */
+  isGenerating?: boolean;
+  /**
+   * True when the conversation is paused awaiting the user's reply to a
+   * clarification question. Persisted on the conversation row, so this
+   * survives refreshes/restarts unlike `isGenerating`.
+   */
+  awaitingClarification?: boolean;
 }
 
 export interface ConversationMessage {
@@ -95,7 +109,7 @@ export interface Deployment {
   providedIn: 'root'
 })
 export class ConversationService {
-  private readonly baseUrl = `${environment.apiUrl}/api`;
+  private readonly baseUrl = API_BASE;
 
   constructor(private http: HttpClient) {}
 
@@ -221,7 +235,7 @@ export class ConversationService {
    */
   private handleError<T>(operation = 'operation', result?: T) {
     return (error: HttpErrorResponse): Observable<T> => {
-      console.error(`${operation} failed:`, error);
+      console.error(`${operation} failed:`, parseHttpError(error));
 
       // Log error details for debugging
       if (error.error instanceof ErrorEvent) {

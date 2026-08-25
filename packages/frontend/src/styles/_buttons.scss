@@ -1,0 +1,81 @@
+/*
+ * Canonical button styles (2026-07 design standardization).
+ *
+ * The app previously had five independent button definitions
+ * (.submit-button x4 in auth, .primary-button/.secondary-button in explore
+ * and server-detail, plus ad hoc styles in account/chat). These classes are
+ * the single source of truth for hand-rolled (non-Material) buttons:
+ *
+ *   .mcp-btn            base (layout, radius, transition, focus)
+ *   .mcp-btn-primary    solid near-black, white text (the app's primary)
+ *   .mcp-btn-secondary  outlined, transparent fill
+ *   .mcp-btn-danger     solid red - destructive actions only
+ *
+ * Material buttons (mat-flat-button color="primary") render the same
+ * near-black via the $mcp-neutral-palette in styles.scss - use whichever
+ * fits the surface, they now agree visually.
+ *
+ * Deliberately NOT covered: the purple/violet "premium" gradient
+ * (Host on Cloud, Pro/Enterprise cards) - that is an intentional,
+ * distinctive paid-feature signal, keep it bespoke.
+ */
+
+.mcp-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 20px;
+  border-radius: var(--border-radius-md, 8px);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background-color var(--transition-fast, 0.15s ease),
+    border-color var(--transition-fast, 0.15s ease),
+    color var(--transition-fast, 0.15s ease);
+
+  &:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+
+  mat-icon {
+    font-size: 18px;
+    width: 18px;
+    height: 18px;
+  }
+}
+
+.mcp-btn-primary {
+  @extend .mcp-btn;
+  background-color: var(--primary-color);
+  color: var(--text-inverse);
+
+  &:hover:not(:disabled) {
+    background-color: var(--primary-hover);
+  }
+}
+
+.mcp-btn-secondary {
+  @extend .mcp-btn;
+  background-color: transparent;
+  color: var(--text-primary);
+  border-color: var(--border-medium);
+
+  &:hover:not(:disabled) {
+    background-color: var(--background-hover);
+    border-color: var(--border-dark);
+  }
+}
+
+.mcp-btn-danger {
+  @extend .mcp-btn;
+  background-color: var(--error-text, #d32f2f);
+  color: var(--text-inverse);
+
+  &:hover:not(:disabled) {
+    filter: brightness(0.9);
+  }
+}

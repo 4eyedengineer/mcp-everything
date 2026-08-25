@@ -28,6 +28,16 @@ export enum DeploymentErrorCode {
   // === NO RETRY (Fatal) ===
   AUTHENTICATION_FAILED = 'AUTHENTICATION_FAILED',
   INSUFFICIENT_PERMISSIONS = 'INSUFFICIENT_PERMISSIONS',
+  /**
+   * The acting user has no usable stored GitHub OAuth token (never
+   * connected GitHub, or connected before the `gist` scope was requested
+   * and hasn't reconnected). Distinct from AUTHENTICATION_FAILED, which
+   * means GitHub rejected a token we did try - this means we never had one
+   * to try, so there is deliberately no platform-token fallback: a Gist
+   * created for this user must be created under their own account or not
+   * at all. See GistProvider / GitHubService.getUserAccessToken.
+   */
+  GITHUB_NOT_CONNECTED = 'GITHUB_NOT_CONNECTED',
   REPOSITORY_NAME_CONFLICT = 'REPOSITORY_NAME_CONFLICT',
   GIST_NOT_FOUND = 'GIST_NOT_FOUND',
   REPOSITORY_NOT_FOUND = 'REPOSITORY_NOT_FOUND',
@@ -168,6 +178,11 @@ export const ERROR_RETRY_CONFIG: Record<DeploymentErrorCode, RetryConfig> = {
     maxRetries: 0,
     baseDelayMs: 0,
   },
+  [DeploymentErrorCode.GITHUB_NOT_CONNECTED]: {
+    strategy: RetryStrategy.MANUAL,
+    maxRetries: 0,
+    baseDelayMs: 0,
+  },
   [DeploymentErrorCode.REPOSITORY_NAME_CONFLICT]: {
     strategy: RetryStrategy.NONE,
     maxRetries: 0,
@@ -206,38 +221,29 @@ export const ERROR_RETRY_CONFIG: Record<DeploymentErrorCode, RetryConfig> = {
  * User-friendly error messages for each error code
  */
 export const ERROR_USER_MESSAGES: Record<DeploymentErrorCode, string> = {
-  [DeploymentErrorCode.NETWORK_TIMEOUT]:
-    'Network timeout. Retrying automatically...',
-  [DeploymentErrorCode.CONNECTION_RESET]:
-    'Connection was reset. Retrying...',
-  [DeploymentErrorCode.SERVICE_UNAVAILABLE]:
-    'GitHub service temporarily unavailable. Retrying...',
-  [DeploymentErrorCode.RATE_LIMIT_EXCEEDED]:
-    'GitHub rate limit reached. Waiting before retry...',
+  [DeploymentErrorCode.NETWORK_TIMEOUT]: 'Network timeout. Retrying automatically...',
+  [DeploymentErrorCode.CONNECTION_RESET]: 'Connection was reset. Retrying...',
+  [DeploymentErrorCode.SERVICE_UNAVAILABLE]: 'GitHub service temporarily unavailable. Retrying...',
+  [DeploymentErrorCode.RATE_LIMIT_EXCEEDED]: 'GitHub rate limit reached. Waiting before retry...',
   [DeploymentErrorCode.SECONDARY_RATE_LIMIT]:
     'GitHub secondary rate limit hit. Please wait a moment.',
-  [DeploymentErrorCode.INVALID_CODE]:
-    'Generated code has errors. Please regenerate the server.',
+  [DeploymentErrorCode.INVALID_CODE]: 'Generated code has errors. Please regenerate the server.',
   [DeploymentErrorCode.COMPILATION_ERROR]:
     'Code compilation failed. Please check the generated code.',
-  [DeploymentErrorCode.MISSING_DEPENDENCIES]:
-    'Missing dependencies detected. Please regenerate.',
+  [DeploymentErrorCode.MISSING_DEPENDENCIES]: 'Missing dependencies detected. Please regenerate.',
   [DeploymentErrorCode.INVALID_SERVER_NAME]:
     'Invalid server name. Please use alphanumeric characters and hyphens.',
   [DeploymentErrorCode.AUTHENTICATION_FAILED]:
     'GitHub authentication failed. Please check your credentials.',
   [DeploymentErrorCode.INSUFFICIENT_PERMISSIONS]:
     'Insufficient GitHub permissions for this operation.',
+  [DeploymentErrorCode.GITHUB_NOT_CONNECTED]:
+    'Connect your GitHub account to publish to a Gist under your own account, or download the server instead.',
   [DeploymentErrorCode.REPOSITORY_NAME_CONFLICT]:
     'Repository name already exists. Try a different name.',
-  [DeploymentErrorCode.GIST_NOT_FOUND]:
-    'Gist not found. It may have been deleted.',
-  [DeploymentErrorCode.REPOSITORY_NOT_FOUND]:
-    'Repository not found. It may have been deleted.',
-  [DeploymentErrorCode.UNKNOWN_ERROR]:
-    'An unexpected error occurred. Please try again.',
-  [DeploymentErrorCode.NO_FILES_TO_DEPLOY]:
-    'No files to deploy. Please generate the server first.',
-  [DeploymentErrorCode.CONVERSATION_NOT_FOUND]:
-    'Conversation not found.',
+  [DeploymentErrorCode.GIST_NOT_FOUND]: 'Gist not found. It may have been deleted.',
+  [DeploymentErrorCode.REPOSITORY_NOT_FOUND]: 'Repository not found. It may have been deleted.',
+  [DeploymentErrorCode.UNKNOWN_ERROR]: 'An unexpected error occurred. Please try again.',
+  [DeploymentErrorCode.NO_FILES_TO_DEPLOY]: 'No files to deploy. Please generate the server first.',
+  [DeploymentErrorCode.CONVERSATION_NOT_FOUND]: 'Conversation not found.',
 };

@@ -4,7 +4,6 @@ import {
   PrimaryGeneratedColumn,
   CreateDateColumn,
   UpdateDateColumn,
-  OneToMany,
   Index,
 } from 'typeorm';
 
@@ -36,6 +35,26 @@ export class User {
   @Column({ type: 'varchar', length: 255, nullable: true })
   @Index('IDX_users_googleId')
   googleId?: string;
+
+  /**
+   * Encrypted (AES-256-GCM, see TokenEncryptionService) GitHub OAuth access
+   * token, set/refreshed on every GitHub login (AuthService#validateOAuthUser).
+   * `select: false` so ordinary `User` loads - including the object attached
+   * to every authenticated request via JwtStrategy -> @CurrentUser() - never
+   * carry it. The only reader is `UserService.findByIdWithGithubToken`,
+   * used solely by GitHubService to build a per-user Octokit client.
+   * Never serialize this column into an API response.
+   */
+  @Column({ type: 'text', nullable: true, select: false })
+  githubAccessTokenEncrypted?: string;
+
+  /** OAuth scope string granted alongside `githubAccessTokenEncrypted`. */
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  githubTokenScope?: string;
+
+  /** When the GitHub token was last (re)persisted. */
+  @Column({ type: 'timestamp', nullable: true })
+  githubTokenUpdatedAt?: Date;
 
   @Column({ type: 'boolean', default: true })
   isActive: boolean;

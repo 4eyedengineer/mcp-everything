@@ -1,293 +1,122 @@
 import { Injectable } from '@angular/core';
+import { HttpClient, HttpParams } from '@angular/common/http';
 import { Observable } from 'rxjs';
-import { ApiService } from './api.service';
-import {
-  GitHubRepository,
-  GitHubAnalysisResult,
-  API_ENDPOINTS
-} from '@mcp-everything/shared';
+import { API_V1_BASE } from '../config/api.config';
 
-export interface GitHubSearchResult {
-  repositories: GitHubRepository[];
-  totalCount: number;
-  page: number;
-  hasMore: boolean;
+/** Whose repositories `GitHubReposResponse.repos` belongs to, when `available` is true. */
+export type GitHubRepoSource = 'user' | 'server';
+
+export type GitHubUnavailableReason =
+  /** Caller has no stored GitHub token, and no (working) server-configured fallback either. */
+  | 'not_connected'
+  /** Caller has a stored GitHub token, but GitHub rejected it (expired/revoked). */
+  | 'user_token_invalid'
+  | 'rate_limited'
+  | 'error';
+
+export interface GitHubRepoEntry {
+  fullName: string;
+  description: string | null;
+  stars: number;
+  url: string;
+  language: string | null;
+  updatedAt: string | null;
 }
 
-export interface RepositoryAnalysisOptions {
-  includeApiEndpoints?: boolean;
-  includeDependencies?: boolean;
-  includeDocumentation?: boolean;
-  maxFilesScan?: number;
+export interface GitHubReposResponse {
+  available: boolean;
+  reason?: GitHubUnavailableReason;
+  /** Present when `available` is true: whose repos these actually are. */
+  source?: GitHubRepoSource;
+  /**
+   * Whether the CALLING user has a GitHub account connected (a stored
+   * token), independent of whether this call succeeded - lets the UI say
+   * "these are your repos" vs. "these are the server-configured account's
+   * repos, you haven't connected your own" even when `source` is `'server'`.
+   */
+  connected?: boolean;
+  repos: GitHubRepoEntry[];
 }
 
+/** Response for GET /api/v1/github/connection. */
+export interface GitHubConnectionStatus {
+  connected: boolean;
+  username?: string | null;
+}
+
+export type GitHubRepoExistsStatus = 'exists' | 'not_found' | 'unknown';
+
+export interface GitHubRepoExistsInfo {
+  fullName: string;
+  description: string | null;
+  defaultBranch: string;
+  private: boolean;
+  stars: number;
+}
+
+export interface GitHubRepoExistsResponse {
+  status: GitHubRepoExistsStatus;
+  /** Present when status === 'unknown': why we couldn't tell. */
+  reason?: 'rate_limited' | 'error';
+  /** Present when status === 'exists'. */
+  repo?: GitHubRepoExistsInfo;
+}
+
+/**
+ * Backs the repo-picker modal opened from the chat page's "Analyze a GitHub
+ * repository" suggestion card, and the account page's "Connect/Disconnect
+ * GitHub" affordance. The repo-listing/existence endpoints always resolve
+ * with a typed "not available"/"unknown" result rather than erroring when
+ * GitHub isn't reachable/configured - callers should check `.available`/
+ * `.status` rather than relying on the observable's error branch for those
+ * cases.
+ */
 @Injectable({
-  providedIn: 'root'
+  providedIn: 'root',
 })
 export class GitHubService {
-  constructor(private apiService: ApiService) {}
+  private readonly apiUrl = `${API_V1_BASE}/github`;
+
+  constructor(private http: HttpClient) {}
 
   /**
-   * Search GitHub repositories
+   * The calling user's own repositories (via their connected GitHub
+   * account), falling back to the server-configured GITHUB_TOKEN when they
+   * haven't connected one. See `GitHubReposResponse.source`/`connected`.
    */
-  searchRepositories(
-    query: string,
-    page: number = 1,
-    limit: number = 20,
-    filters?: {
-      language?: string;
-      minStars?: number;
-      sort?: 'stars' | 'updated' | 'created';
-      order?: 'asc' | 'desc';
-    }
-  ): Observable<GitHubSearchResult> {
-    const params = {
-      query,
-      page,
-      limit,
-      ...filters
-    };
+  listMyRepos(page = 1, perPage = 30): Observable<GitHubReposResponse> {
+    const params = new HttpParams().set('page', page).set('per_page', perPage);
+    return this.http.get<GitHubReposResponse>(`${this.apiUrl}/repos`, { params });
+  }
 
-    return this.apiService.get<GitHubSearchResult>(
-      API_ENDPOINTS.GITHUB.REPOSITORIES,
-      params
-    );
+  /** Public GitHub repo search (works without a configured token). */
+  searchPublicRepos(query: string, page = 1, perPage = 10): Observable<GitHubReposResponse> {
+    const params = new HttpParams().set('q', query).set('page', page).set('per_page', perPage);
+    return this.http.get<GitHubReposResponse>(`${this.apiUrl}/search`, { params });
   }
 
   /**
-   * Analyze a GitHub repository for MCP server generation
+   * Cheap existence/metadata pre-flight for a hand-typed repo reference -
+   * used to stop a typo'd or dead repo URL from kicking off a (paid)
+   * generation run. `status: 'unknown'` means the check was inconclusive
+   * (rate limited/network error) - callers should NOT treat that the same
+   * as `'not_found'`.
    */
-  analyzeRepository(
-    owner: string,
-    repo: string,
-    branch: string = 'main',
-    options?: RepositoryAnalysisOptions
-  ): Observable<GitHubAnalysisResult> {
-    const params = {
-      owner,
-      repo,
-      branch,
-      ...options
-    };
+  checkRepoExists(owner: string, repo: string): Observable<GitHubRepoExistsResponse> {
+    const params = new HttpParams().set('owner', owner).set('repo', repo);
+    return this.http.get<GitHubRepoExistsResponse>(`${this.apiUrl}/repo-exists`, { params });
+  }
 
-    return this.apiService.post<GitHubAnalysisResult>(
-      API_ENDPOINTS.GITHUB.ANALYZE,
-      params
-    );
+  /** Whether the current user has a GitHub account connected. */
+  getConnectionStatus(): Observable<GitHubConnectionStatus> {
+    return this.http.get<GitHubConnectionStatus>(`${this.apiUrl}/connection`);
   }
 
   /**
-   * Get repository details from GitHub URL
+   * Disconnect the current user's GitHub account - the backend revokes the
+   * token with GitHub, then clears the locally stored copy.
    */
-  getRepositoryFromUrl(url: string): Observable<GitHubRepository> {
-    return this.apiService.post<GitHubRepository>(
-      `${API_ENDPOINTS.GITHUB.REPOSITORIES}/from-url`,
-      { url }
-    );
-  }
-
-  /**
-   * Validate GitHub repository URL
-   */
-  validateRepositoryUrl(url: string): {
-    isValid: boolean;
-    owner?: string;
-    repo?: string;
-    error?: string;
-  } {
-    try {
-      // Support various GitHub URL formats
-      const patterns = [
-        /^https?:\/\/github\.com\/([^\/]+)\/([^\/]+)\/?$/,
-        /^https?:\/\/github\.com\/([^\/]+)\/([^\/]+)\.git$/,
-        /^git@github\.com:([^\/]+)\/([^\/]+)\.git$/,
-        /^([^\/]+)\/([^\/]+)$/ // Simple owner/repo format
-      ];
-
-      for (const pattern of patterns) {
-        const match = url.trim().match(pattern);
-        if (match) {
-          const [, owner, repo] = match;
-
-          // Remove .git suffix if present
-          const cleanRepo = repo.replace(/\.git$/, '');
-
-          return {
-            isValid: true,
-            owner: owner.trim(),
-            repo: cleanRepo.trim()
-          };
-        }
-      }
-
-      return {
-        isValid: false,
-        error: 'Invalid GitHub repository URL format'
-      };
-    } catch (error) {
-      return {
-        isValid: false,
-        error: 'Error parsing repository URL'
-      };
-    }
-  }
-
-  /**
-   * Get user's starred repositories
-   */
-  getStarredRepositories(page: number = 1, limit: number = 20): Observable<GitHubSearchResult> {
-    return this.apiService.get<GitHubSearchResult>(
-      `${API_ENDPOINTS.GITHUB.REPOSITORIES}/starred`,
-      { page, limit }
-    );
-  }
-
-  /**
-   * Get user's repositories
-   */
-  getUserRepositories(
-    username?: string,
-    page: number = 1,
-    limit: number = 20
-  ): Observable<GitHubSearchResult> {
-    const params = { page, limit };
-    if (username) {
-      (params as any).username = username;
-    }
-
-    return this.apiService.get<GitHubSearchResult>(
-      `${API_ENDPOINTS.GITHUB.REPOSITORIES}/user`,
-      params
-    );
-  }
-
-  /**
-   * Get trending repositories
-   */
-  getTrendingRepositories(
-    language?: string,
-    since: 'daily' | 'weekly' | 'monthly' = 'weekly'
-  ): Observable<GitHubRepository[]> {
-    return this.apiService.get<GitHubRepository[]>(
-      `${API_ENDPOINTS.GITHUB.REPOSITORIES}/trending`,
-      { language, since }
-    );
-  }
-
-  /**
-   * Get repository languages
-   */
-  getRepositoryLanguages(owner: string, repo: string): Observable<Record<string, number>> {
-    return this.apiService.get<Record<string, number>>(
-      `${API_ENDPOINTS.GITHUB.REPOSITORIES}/${owner}/${repo}/languages`
-    );
-  }
-
-  /**
-   * Get repository topics/tags
-   */
-  getRepositoryTopics(owner: string, repo: string): Observable<string[]> {
-    return this.apiService.get<string[]>(
-      `${API_ENDPOINTS.GITHUB.REPOSITORIES}/${owner}/${repo}/topics`
-    );
-  }
-
-  /**
-   * Check repository accessibility
-   */
-  checkRepositoryAccess(owner: string, repo: string): Observable<{
-    accessible: boolean;
-    isPrivate: boolean;
-    hasPermission: boolean;
-    error?: string;
-  }> {
-    return this.apiService.get(
-      `${API_ENDPOINTS.GITHUB.REPOSITORIES}/${owner}/${repo}/access`
-    );
-  }
-
-  /**
-   * Get supported languages for MCP generation
-   */
-  getSupportedLanguages(): string[] {
-    return [
-      'JavaScript',
-      'TypeScript',
-      'Python',
-      'Go',
-      'Java',
-      'C#',
-      'PHP',
-      'Ruby',
-      'Swift',
-      'Kotlin',
-      'Rust',
-      'C++',
-      'C',
-      'Scala',
-      'Clojure',
-      'Elixir',
-      'Haskell',
-      'R',
-      'MATLAB',
-      'Shell'
-    ];
-  }
-
-  /**
-   * Estimate MCP generation complexity
-   */
-  estimateComplexity(analysisResult: GitHubAnalysisResult): {
-    complexity: 'simple' | 'moderate' | 'complex';
-    estimatedTime: number; // in minutes
-    factors: string[];
-  } {
-    const factors: string[] = [];
-    let complexity: 'simple' | 'moderate' | 'complex' = 'simple';
-    let estimatedTime = 2; // base time in minutes
-
-    // Check repository size indicators
-    if (analysisResult.structure.dependencies.length > 20) {
-      factors.push('Many dependencies');
-      estimatedTime += 2;
-    }
-
-    if (analysisResult.apiEndpoints && analysisResult.apiEndpoints.length > 10) {
-      factors.push('Multiple API endpoints');
-      estimatedTime += 3;
-      complexity = 'moderate';
-    }
-
-    if (analysisResult.structure.frameworks.length > 2) {
-      factors.push('Multiple frameworks');
-      estimatedTime += 2;
-      complexity = 'moderate';
-    }
-
-    if (analysisResult.repository.language &&
-        !['JavaScript', 'TypeScript', 'Python'].includes(analysisResult.repository.language)) {
-      factors.push('Less common language');
-      estimatedTime += 3;
-      complexity = 'moderate';
-    }
-
-    // Complex indicators
-    if (analysisResult.apiEndpoints && analysisResult.apiEndpoints.length > 50) {
-      factors.push('Large API surface');
-      estimatedTime += 5;
-      complexity = 'complex';
-    }
-
-    if (analysisResult.structure.configFiles.length > 10) {
-      factors.push('Complex configuration');
-      estimatedTime += 2;
-      complexity = 'complex';
-    }
-
-    return {
-      complexity,
-      estimatedTime: Math.min(estimatedTime, 15), // Cap at 15 minutes
-      factors
-    };
+  disconnect(): Observable<{ success: boolean }> {
+    return this.http.delete<{ success: boolean }>(`${this.apiUrl}/connection`);
   }
 }

@@ -2,76 +2,286 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>MCP Everything - AI-Native MCP Server Platform</title>
+  <title>MCP Everything - Generate working MCP servers from any API</title>
   <base href="/">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  <meta name="description" content="Give your AI assistant the tools to call the APIs you use. Name a service, paste a repository, or describe what you want, and get a working Model Context Protocol server, hosted here or run wherever you like.">
+  <link rel="canonical" href="https://mcpeverything.com/">
+  <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#121212" media="(prefers-color-scheme: dark)">
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="MCP Everything">
+  <meta property="og:url" content="https://mcpeverything.com/">
+  <meta property="og:title" content="MCP Everything - Generate working MCP servers from any API">
+  <meta property="og:description" content="Give your AI assistant the tools to call your APIs. Describe what you want, and get a working Model Context Protocol server, hosted here or run wherever you like.">
+  <meta property="og:image" content="https://mcpeverything.com/og-image.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="MCP Everything - generate working MCP servers from any API">
+  <meta property="og:locale" content="en_US">
+
+  <!-- Twitter / X card -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="MCP Everything - Generate working MCP servers from any API">
+  <meta name="twitter:description" content="Give your AI assistant the tools to call your APIs. Describe what you want, and get a working Model Context Protocol server, hosted here or run wherever you like.">
+  <meta name="twitter:image" content="https://mcpeverything.com/og-image.png">
+  <meta name="twitter:image:alt" content="MCP Everything - generate working MCP servers from any API">
+
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <link rel="icon" type="image/x-icon" href="favicon.ico">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+
+  <!--
+    Structured data. Deliberately omitted:
+      - aggregateRating / review: there are no real ratings, and inventing
+        them is a manual-action risk.
+      - offers / price: nothing is for sale - billing is not implemented -
+        so quoting any price, including "0", would be a claim we can't back.
+      - Any MCP-specific type or `.well-known` discovery file: schema.org has
+        no MCP type, and no `.well-known` path for MCP discovery has been
+        standardised (SEP-2127 is an unmerged draft that has since moved off
+        `.well-known` entirely), so nothing of that shape is published here.
+    FAQPage no longer produces a rich result (Google retired it in May 2026)
+    but is kept: it is clean, unambiguous Q&A for any agent parsing the page.
+  -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "Organization",
+        "@id": "https://mcpeverything.com/#organization",
+        "name": "MCP Everything",
+        "url": "https://mcpeverything.com/",
+        "logo": "https://mcpeverything.com/favicon.svg",
+        "description": "A platform that generates working Model Context Protocol servers from repositories, documentation and plain-English descriptions.",
+        "sameAs": ["https://github.com/4eyedengineer/mcp-everything"]
+      },
+      {
+        "@type": "WebSite",
+        "@id": "https://mcpeverything.com/#website",
+        "name": "MCP Everything",
+        "url": "https://mcpeverything.com/",
+        "inLanguage": "en",
+        "publisher": { "@id": "https://mcpeverything.com/#organization" }
+      },
+      {
+        "@type": "SoftwareApplication",
+        "@id": "https://mcpeverything.com/#app",
+        "name": "MCP Everything",
+        "url": "https://mcpeverything.com/",
+        "applicationCategory": "DeveloperApplication",
+        "applicationSubCategory": "Model Context Protocol server generator",
+        "operatingSystem": "Web",
+        "publisher": { "@id": "https://mcpeverything.com/#organization" },
+        "isAccessibleForFree": true,
+        "description": "Generates Model Context Protocol (MCP) servers from a GitHub repository, a documentation site, a service name or a plain-English description. Each generated server is built and tested, and fixed if it fails, before the run is allowed to succeed.",
+        "featureList": [
+          "Generate an MCP server from a GitHub repository URL",
+          "Generate an MCP server from a documentation site URL",
+          "Generate an MCP server from a service name or plain-English description",
+          "Every generated server is tested before delivery, and repaired automatically if a tool call fails",
+          "Generated servers drop into Claude Desktop, or run behind HTTP wherever you host them",
+          "Publish generated code to a public Gist on your own GitHub account once connected, or download it",
+          "Exposes its own MCP server so AI agents can drive generation programmatically",
+          "One connection reaches the tools of every MCP server you host here",
+          "Public, account-free catalogue of published MCP servers"
+        ],
+        "softwareHelp": "https://github.com/4eyedengineer/mcp-everything"
+      },
+      {
+        "@type": "FAQPage",
+        "@id": "https://mcpeverything.com/#faq",
+        "isPartOf": { "@id": "https://mcpeverything.com/#website" },
+        "mainEntity": [
+          {
+            "@type": "Question",
+            "name": "What is an MCP server?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "A Model Context Protocol server exposes tools an AI assistant can call - reading a file, querying an API, searching a database. MCP is the protocol clients such as Claude Desktop use to talk to those tools."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Does MCP Everything cost anything?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "No. Accounts are free and include five generations per month. There is no paid plan available to buy, and no card is collected."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Does MCP Everything host the generated server for me?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Yes. Free accounts can host one server on MCP Everything infrastructure. You can also take the source code - published to a public Gist on your own GitHub account once you connect it, or downloaded - and run it wherever you like."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "How do I know the generated server actually works?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Because it was run, not just written. Every candidate server is started and its tools are actually called; if that fails, the code is repaired and tested again before the run gives up."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Can an AI agent use MCP Everything without a human?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Yes. MCP Everything exposes its own MCP server over Streamable HTTP with eight tools: generate_mcp_server, continue_generation, get_generation_status, get_generated_server, list_conversations, search_marketplace, search_tools and call_tool. search_tools and call_tool find and run the tools of the MCP servers you host here, so one connection reaches all of them. It is authenticated with an API key prefixed mcpe_, sent as an X-API-Key header or an Authorization bearer token."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Can I generate an MCP server from my OpenAPI specification?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "No. There is no OpenAPI or GraphQL parser. Point at the repository or the documentation site instead - that is what the research step is built for."
+            }
+          }
+        ]
+      }
+    ]
+  }
+  </script>
 </head>
 <body class="mat-typography">
+  <!--
+    Static app shell: real crawlable content, not a placeholder. This SPA has
+    no SSR or prerendering, so non-JS crawlers would otherwise see an empty
+    <mcp-root>. Angular replaces this on bootstrap.
+    Keep in sync with src/app/features/landing/landing.component.html and
+    src/seo/llms.txt - see the rationale in landing.component.ts, and the
+    drift assertions in landing.component.spec.ts.
+  -->
   <mcp-root>
-    <div class="loading-container">
-      <div class="loading-spinner">
-        <svg class="circular" viewBox="25 25 50 50">
-          <circle class="path" cx="50" cy="50" r="20" fill="none" stroke="#3f51b5" stroke-width="2" stroke-miterlimit="10"/>
-        </svg>
-      </div>
-      <p>Loading MCP Everything...</p>
+    <div class="boot-shell">
+      <header>
+        <p class="boot-brand">MCP Everything</p>
+      </header>
+
+      <main>
+        <h1>Your assistant can describe your API. Now let it use it.</h1>
+        <p class="boot-lede">
+          Name a service, paste a repository, point at a docs site, or just say what you want.
+          MCP Everything gives your AI assistant the tools to call it: a working Model Context
+          Protocol server, hosted here or run wherever you like.
+        </p>
+
+        <h2>What you get</h2>
+        <ul>
+          <li>A set of named tools your assistant can call, built and tested before you get it, and fixed if something fails</li>
+          <li>One server hosted here free, or take the code and run it anywhere</li>
+          <li>Something that drops straight into Claude Desktop, or runs behind HTTP wherever you put it</li>
+          <li>Source, tests and documentation, published to a public Gist on your own GitHub account (connect it first) or downloaded</li>
+          <li>Sign-in with GitHub, Google, or an email address and password</li>
+          <li>Five generations a month, free. Nothing is for sale and no card is collected.</li>
+        </ul>
+
+        <h2>For AI agents</h2>
+        <p>
+          MCP Everything is itself an MCP server, at
+          <code>POST https://mcpeverything.com/mcp</code>. MCP Streamable HTTP, stateless,
+          authenticated with an API key prefixed <code>mcpe_</code> sent either as an
+          <code>X-API-Key</code> header or as <code>Authorization: Bearer</code>. Keys are created
+          on the account page. It exposes eight tools: <code>generate_mcp_server</code>,
+          <code>continue_generation</code>, <code>get_generation_status</code>,
+          <code>get_generated_server</code>, <code>list_conversations</code>,
+          <code>search_marketplace</code>, <code>search_tools</code> and
+          <code>call_tool</code>. The last two find and run the tools of the MCP servers you host
+          here, so one connection reaches all of them. A machine-readable summary of this site is published at
+          <a href="/llms.txt">/llms.txt</a>.
+        </p>
+
+        <h2>Not available yet</h2>
+        <ul>
+          <li>Paid plans, billing and subscriptions. Nothing is for sale.</li>
+          <li>More than one hosted server. Free accounts get one, and there is no paid tier to buy.</li>
+          <li>Pushing straight to a GitHub repository. Gated to a paid tier, and there is no paid tier to buy. Free accounts publish to a public Gist.</li>
+          <li>OpenAPI or GraphQL specs. We don&rsquo;t read them; point at the repository or the docs instead.</li>
+        </ul>
+
+        <p class="boot-actions">
+          <a href="/auth/register">Create a free account</a> &middot;
+          <a href="/auth/login">Sign in</a> &middot;
+          <a href="/explore">Browse the catalogue</a>
+        </p>
+      </main>
     </div>
   </mcp-root>
 
   <style>
-    .loading-container {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      height: 100vh;
-      font-family: 'Inter', sans-serif;
-      color: #666;
+    /* Styles for the static shell above only. Uses the same design tokens as
+       the app (declared in styles.scss :root / .dark-theme) with literal
+       fallbacks, so it does not flash a mismatched palette before the main
+       stylesheet or Angular arrives. */
+    .boot-shell {
+      max-width: 780px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      color: var(--text-primary, #1f1f1f);
+      line-height: 1.65;
     }
 
-    .loading-spinner {
-      width: 40px;
-      height: 40px;
-      margin-bottom: 16px;
+    .boot-brand {
+      font-size: 16px;
+      font-weight: 650;
+      letter-spacing: -0.2px;
+      margin: 0 0 40px;
     }
 
-    .circular {
-      animation: rotate 2s linear infinite;
-      width: 40px;
-      height: 40px;
+    .boot-shell h1 {
+      font-size: clamp(30px, 6vw, 46px);
+      line-height: 1.1;
+      letter-spacing: -1.2px;
+      margin: 0 0 20px;
     }
 
-    .path {
-      stroke-dasharray: 90, 150;
-      stroke-dashoffset: 0;
-      stroke-linecap: round;
-      animation: dash 1.5s ease-in-out infinite;
+    .boot-shell h2 {
+      font-size: 20px;
+      letter-spacing: -0.3px;
+      margin: 40px 0 12px;
     }
 
-    @keyframes rotate {
-      100% {
-        transform: rotate(360deg);
-      }
+    .boot-lede {
+      font-size: 18px;
+      color: var(--text-secondary, #6b6b6b);
+      margin: 0;
     }
 
-    @keyframes dash {
-      0% {
-        stroke-dasharray: 1, 150;
-        stroke-dashoffset: 0;
-      }
-      50% {
-        stroke-dasharray: 90, 150;
-        stroke-dashoffset: -35;
-      }
-      100% {
-        stroke-dasharray: 90, 150;
-        stroke-dashoffset: -124;
-      }
+    .boot-shell ul {
+      padding-left: 1.2em;
+      margin: 0;
+    }
+
+    .boot-shell li {
+      margin-bottom: 8px;
+      color: var(--text-secondary, #6b6b6b);
+    }
+
+    .boot-shell code {
+      font-family: SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
+      font-size: 0.9em;
+    }
+
+    .boot-actions {
+      margin-top: 40px;
+    }
+
+    .boot-shell a {
+      color: var(--text-primary, #1f1f1f);
     }
   </style>
 </body>

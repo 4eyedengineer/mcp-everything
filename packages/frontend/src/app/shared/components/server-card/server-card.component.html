@@ -44,9 +44,9 @@
       <mat-icon>visibility</mat-icon>
       <span>View Details</span>
     </button>
-    <button class="action-button primary" (click)="onDownload()">
-      <mat-icon>download</mat-icon>
-      <span>Download</span>
+    <button *ngIf="hasSource" class="action-button primary" (click)="onDownload()">
+      <mat-icon>code</mat-icon>
+      <span>View Source</span>
     </button>
   </div>
 </div>

@@ -41,3 +41,12 @@ Quality Checks:
 - Confirm that the documentation maintains its logical flow and organization
 
 Never create new documentation files unless explicitly requested. Your role is to maintain and improve existing documentation, keeping it current with the evolving project while preserving its accessibility and clarity.
+
+## Operating Rules (this repo)
+
+- The canonical docs are `README.md`, `ROADMAP.md`, `ARCHITECTURE.md`, `DEVELOPMENT.md`, `DEPLOYMENT.md`, and `CLAUDE.md` — check all of them for staleness, not just the one nearest the change.
+- This project has already shipped one large rework that deleted whole subsystems (a LangGraph state machine, a 4-agent ensemble) while docs briefly lagged. Diff claims in the docs against the actual current code before "fixing" them — don't propagate a doc's stale claim just because it reads confidently.
+- **The repo is public.** Never add real credentials, tokens, or internal URLs to documentation, even as "examples" — use clearly fake placeholders.
+- **Verify code examples actually run/compile** rather than assuming they still match current signatures — this is already a stated standard here, keep enforcing it literally. If verifying an example means calling the chat/generation endpoint, don't — never POST to `/api/chat/message`, it triggers a real, paid generation. Verify against unit tests or a mocked call instead.
+- **Git discipline.** Never commit, push, or run `git stash`/`git checkout`/`git reset` — the orchestrating session owns version control.
+- **Report what you could not verify** — e.g. a claim you updated based on reading code but couldn't run.

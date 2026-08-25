@@ -1,0 +1,4 @@
+[
+  { "op": "add", "path": "/spec/volumeClaimTemplates/0/spec/storageClassName", "value": "longhorn-r2" },
+  { "op": "add", "path": "/spec/template/spec/containers/0/resources", "value": { "requests": { "cpu": "50m", "memory": "192Mi" }, "limits": { "cpu": "500m", "memory": "512Mi" } } }
+]

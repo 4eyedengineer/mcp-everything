@@ -1,4 +1,4 @@
-<div class="server-card" [ngClass]="statusClass">
+<div class="server-card" [ngClass]="statusClass" [class.embedded]="embedded">
   <div class="status-indicator"></div>
 
   <div class="server-info">
@@ -24,7 +24,7 @@
       <div class="server-endpoint">
         <label>Endpoint:</label>
         <code>{{ server.endpointUrl }}</code>
-        <button mat-icon-button (click)="copyEndpoint()" matTooltip="Copy endpoint URL" class="copy-btn">
+        <button mat-icon-button (click)="copyEndpoint()" matTooltip="Copy endpoint URL" aria-label="Copy endpoint URL" class="copy-btn">
           <mat-icon>content_copy</mat-icon>
         </button>
       </div>
@@ -83,6 +83,14 @@
     </button>
     <button
       mat-button
+      (click)="onManageApiKeys()"
+      class="action-btn"
+      matTooltip="Manage API keys">
+      <mat-icon>key</mat-icon>
+      API keys
+    </button>
+    <button
+      mat-button
       (click)="onViewLogs()"
       class="action-btn"
       matTooltip="View logs">
@@ -97,5 +105,6 @@
       <mat-icon>delete</mat-icon>
       Delete
     </button>
+    <ng-content select="[cardActions]"></ng-content>
   </div>
 </div>

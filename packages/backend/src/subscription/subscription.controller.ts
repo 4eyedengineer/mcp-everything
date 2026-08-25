@@ -1,11 +1,4 @@
-import {
-  Controller,
-  Get,
-  Post,
-  Body,
-  HttpCode,
-  HttpStatus,
-} from '@nestjs/common';
+import { Controller, Get, Post, Body, HttpCode, HttpStatus } from '@nestjs/common';
 import { SubscriptionService } from './subscription.service';
 import { UserService } from '../user/user.service';
 import { CreateCheckoutDto, SubscriptionDto, UsageDto, TierInfoDto } from './dto/subscription.dto';
@@ -26,8 +19,8 @@ export class SubscriptionController {
     return {
       tier: (user.tier as 'free' | 'pro' | 'enterprise') || 'free',
       status: subscription?.status || 'active',
-      currentPeriodStart: subscription?.currentPeriodStart,
-      currentPeriodEnd: subscription?.currentPeriodEnd,
+      currentPeriodStart: subscription?.currentPeriodStart ?? undefined,
+      currentPeriodEnd: subscription?.currentPeriodEnd ?? undefined,
       cancelAtPeriodEnd: subscription?.cancelAtPeriodEnd || false,
     };
   }
@@ -40,7 +33,8 @@ export class SubscriptionController {
     return {
       currentTier: (user.tier as 'free' | 'pro' | 'enterprise') || 'free',
       limits: {
-        monthlyServerLimit: tierConfig.monthlyServerLimit === Infinity ? 999999 : tierConfig.monthlyServerLimit,
+        monthlyServerLimit:
+          tierConfig.monthlyServerLimit === Infinity ? 999999 : tierConfig.monthlyServerLimit,
         privateRepos: tierConfig.privateRepos,
         ciCd: tierConfig.ciCd,
         customDomains: tierConfig.customDomains,

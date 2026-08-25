@@ -1,0 +1,1004 @@
+/*
+ * Public marketing landing page (route `/`).
+ *
+ * Design rules this file follows:
+ *  - Monochrome only. Colour comes from the CSS custom properties declared in
+ *    styles.scss (`:root` / `.dark-theme`) plus the few local tokens below, so
+ *    the page inverts correctly with the theme class ThemeService toggles on
+ *    <html>. No raw hex outside the token block.
+ *  - Buttons use the canonical `.mcp-btn-primary` / `.mcp-btn-secondary`
+ *    classes from styles/_buttons.scss.
+ *  - The purple/violet gradient is reserved for paid-feature signalling and is
+ *    deliberately absent: nothing here is a paid feature.
+ *
+ * The page carries its weight in three built elements - the faded grid, the
+ * "machine" (rotating input + travelling pipeline rail) and the terminal.
+ * Everything else is deliberately plain so those three land. Every animation
+ * is decorative and duplicated in text, and all of them stop under
+ * prefers-reduced-motion (bottom of file).
+ */
+
+/*
+ * Local monochrome tokens, declared on :host.
+ *
+ * The dark variant MUST use :host-context and not `.dark-theme .landing`.
+ * Angular's emulated encapsulation rewrites a descendant selector by stamping
+ * its content attribute onto EVERY compound, so `.dark-theme .landing` emits
+ * `.dark-theme[_ngcontent-x] .landing[_ngcontent-x]` - and ThemeService puts
+ * the class on <html>, which carries no such attribute. The rule therefore
+ * never matched, and this page rendered its light-theme greys in dark mode
+ * until 2026-08-03. :host-context is compiled as a real ancestor test.
+ */
+:host {
+  --grid-line: rgba(0, 0, 0, 0.11);
+  --grid-glow: rgba(0, 0, 0, 0.035);
+  --rail-line: rgba(0, 0, 0, 0.12);
+  --terminal-bg: #131313;
+  --terminal-fg: #e8e8e8;
+  --terminal-dim: #8a8a8a;
+  --terminal-border: #2a2a2a;
+}
+
+:host-context(.dark-theme) {
+  // Dark needs a hotter line than light for the same apparent weight - a
+  // white hairline on #121212 reads far fainter than a black one on white.
+  --grid-line: rgba(255, 255, 255, 0.13);
+  --grid-glow: rgba(255, 255, 255, 0.045);
+  --rail-line: rgba(255, 255, 255, 0.14);
+  --terminal-bg: #0c0c0c;
+  --terminal-border: #242424;
+}
+
+.landing {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  background-color: var(--background-main);
+  color: var(--text-primary);
+
+  // Every call to action is an <a> (they navigate, so they must be links)
+  // wearing the canonical button classes. Without this the user-agent's
+  // anchor underline renders through the button face.
+  a.mcp-btn-primary,
+  a.mcp-btn-secondary {
+    text-decoration: none;
+  }
+}
+
+/* Skip link (keyboard users land on it first) ----------------------------- */
+
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  z-index: 1000;
+  padding: 10px 16px;
+  background-color: var(--surface-color);
+  color: var(--text-primary);
+  border: 1px solid var(--border-dark);
+  border-radius: var(--border-radius);
+  text-decoration: none;
+  font-size: 14px;
+
+  &:focus {
+    left: var(--spacing-md);
+    top: var(--spacing-sm);
+  }
+}
+
+/* Shared shell ------------------------------------------------------------ */
+
+.landing-shell {
+  width: 100%;
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 0 var(--spacing-lg);
+}
+
+.landing-section {
+  padding: 88px 0;
+  border-top: 1px solid var(--border-light);
+}
+
+.section-heading {
+  font-size: clamp(26px, 3.4vw, 34px);
+  line-height: 1.15;
+  font-weight: 680;
+  letter-spacing: -0.9px;
+  margin: 0 0 12px;
+}
+
+.section-intro {
+  font-size: 16px;
+  line-height: 1.65;
+  color: var(--text-secondary);
+  margin: 0 0 var(--spacing-xl);
+  max-width: 56ch;
+}
+
+/* The faded grid ---------------------------------------------------------- */
+
+/*
+ * Two hairline gradients on a 56px cell, masked by a radial so the grid
+ * dissolves before it reaches any edge - the "faded" part is the mask, not a
+ * lower opacity, which is why the lines stay crisp in the middle. It drifts
+ * exactly one cell over 24s so the loop is seamless.
+ */
+.grid-field {
+  position: absolute;
+  inset: -56px 0 0;
+  pointer-events: none;
+  z-index: 0;
+  background-image:
+    linear-gradient(to right, var(--grid-line) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--grid-line) 1px, transparent 1px);
+  background-size: 56px 56px;
+  mask-image: radial-gradient(ellipse 88% 74% at 50% 36%, #000 22%, transparent 78%);
+  -webkit-mask-image: radial-gradient(ellipse 88% 74% at 50% 36%, #000 22%, transparent 78%);
+  animation: grid-drift 24s linear infinite;
+
+  // Soft pool of light under the headline, so the hero has a centre of mass.
+  &::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(ellipse 46% 44% at 50% 34%, var(--grid-glow), transparent 70%);
+  }
+}
+
+.grid-field-bottom {
+  inset: 0 0 -56px;
+  mask-image: radial-gradient(ellipse 70% 78% at 50% 62%, #000 8%, transparent 74%);
+  -webkit-mask-image: radial-gradient(ellipse 70% 78% at 50% 62%, #000 8%, transparent 74%);
+}
+
+@keyframes grid-drift {
+  to {
+    background-position: 56px 56px;
+  }
+}
+
+/* Header ------------------------------------------------------------------ */
+
+.landing-header {
+  position: sticky;
+  top: 0;
+  z-index: 900;
+  background-color: color-mix(in srgb, var(--background-main) 82%, transparent);
+  backdrop-filter: saturate(140%) blur(12px);
+  border-bottom: 1px solid var(--border-light);
+}
+
+.header-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-md);
+  height: 62px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-primary);
+  text-decoration: none;
+  font-size: 15px;
+  font-weight: 680;
+  letter-spacing: -0.3px;
+
+  .brand-mark {
+    width: 24px;
+    height: 24px;
+    flex-shrink: 0;
+    border-radius: 6px;
+  }
+}
+
+.header-nav {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+
+  a {
+    padding: 8px 12px;
+    border-radius: var(--border-radius);
+    color: var(--text-secondary);
+    text-decoration: none;
+    font-size: 14px;
+    font-weight: 500;
+    transition: color var(--transition-fast);
+
+    &:hover {
+      color: var(--text-primary);
+    }
+  }
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+/* Hero -------------------------------------------------------------------- */
+
+.hero {
+  position: relative;
+  overflow: hidden;
+  padding: 104px 0 96px;
+  text-align: center;
+}
+
+.hero-inner {
+  position: relative;
+  z-index: 1;
+}
+
+.hero-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 14px;
+  margin: 0 0 var(--spacing-lg);
+  border: 1px solid var(--border-medium);
+  border-radius: 999px;
+  background-color: color-mix(in srgb, var(--surface-color) 70%, transparent);
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  font-weight: 500;
+  letter-spacing: 0.2px;
+}
+
+// Sized for a THREE-line headline. The previous 76px/15ch was tuned for
+// "Describe an API. / Get a server that runs." - four words a line. The
+// current headline is half as long again, and at that size it pushed the
+// machine card, both CTAs and the note below the fold.
+.hero-title {
+  font-size: clamp(34px, 5.2vw, 56px);
+  line-height: 1.06;
+  font-weight: 700;
+  letter-spacing: -2.2px;
+  margin: 0 auto var(--spacing-md);
+  max-width: 20ch;
+}
+
+/*
+ * A single specular sweep across the second line, once every 7s. Monochrome:
+ * the highlight is the theme's own text colour lightened, never a hue.
+ */
+.hero-title-sweep {
+  background-image: linear-gradient(
+    100deg,
+    var(--text-primary) 0%,
+    var(--text-primary) 38%,
+    var(--text-tertiary) 50%,
+    var(--text-primary) 62%,
+    var(--text-primary) 100%
+  );
+  background-size: 260% 100%;
+  background-position: 130% 0;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: title-sweep 7s ease-in-out infinite;
+}
+
+@keyframes title-sweep {
+  0%,
+  55% {
+    background-position: 130% 0;
+  }
+  90%,
+  100% {
+    background-position: -30% 0;
+  }
+}
+
+.hero-subtitle {
+  font-size: clamp(16px, 2vw, 19px);
+  line-height: 1.6;
+  color: var(--text-secondary);
+  margin: 0 auto var(--spacing-xl);
+  max-width: 52ch;
+}
+
+.hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--spacing-md);
+  margin-bottom: var(--spacing-md);
+
+  .mcp-btn-primary,
+  .mcp-btn-secondary {
+    padding: 14px 28px;
+    font-size: 15px;
+    text-decoration: none;
+  }
+}
+
+.hero-note {
+  font-size: 13px;
+  color: var(--text-tertiary);
+  margin: 0;
+}
+
+/* The machine ------------------------------------------------------------- */
+
+.machine {
+  max-width: 720px;
+  margin: 0 auto var(--spacing-xl);
+  text-align: left;
+  border: 1px solid var(--border-medium);
+  border-radius: var(--border-radius-lg);
+  background-color: color-mix(in srgb, var(--surface-color) 88%, transparent);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+}
+
+.machine-bar,
+.terminal-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border-light);
+}
+
+.machine-dots {
+  display: inline-flex;
+  gap: 6px;
+
+  i {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background-color: var(--border-dark);
+  }
+}
+
+.machine-title {
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.machine-input {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 20px;
+  min-width: 0;
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  font-size: 14.5px;
+}
+
+.machine-chevron {
+  color: var(--text-tertiary);
+  font-size: 18px;
+  line-height: 1;
+}
+
+/*
+ * The four accepted inputs, rolled through on a 16s loop. The track carries a
+ * fifth item that duplicates the first, so the jump back to 0% at the end of
+ * the cycle is invisible instead of rewinding through every line.
+ */
+.rotator {
+  flex: 1;
+  min-width: 0;
+  height: 1.7em;
+  overflow: hidden;
+}
+
+/*
+ * One row height, one set of keyframes.
+ *
+ * The roll steps by `--rotator-row` rather than by a hard-coded 1.7em, so the
+ * taller stacked rows on mobile only need to override that variable. The
+ * previous approach - a second `rotate-inputs-stacked` keyframes selected by
+ * name inside a media query - silently did nothing: Angular's emulated
+ * encapsulation renames @keyframes to `_ngcontent-xxx_rotate-inputs-stacked`
+ * and rewrites references in top-level rules, but NOT references inside an
+ * @media block, so the mobile rule pointed at a name that did not exist in the
+ * compiled stylesheet and the input rotator sat frozen on row one at every
+ * mobile width. A custom property sidesteps that rewriting entirely.
+ */
+.rotator-track {
+  --rotator-row: 1.7em;
+
+  display: flex;
+  flex-direction: column;
+  animation: rotate-inputs 16s cubic-bezier(0.76, 0, 0.24, 1) infinite;
+}
+
+.rotator-item {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  height: 1.7em;
+  line-height: 1.7em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-primary);
+
+  em {
+    flex-shrink: 0;
+    font-style: normal;
+    font-size: 10.5px;
+    letter-spacing: 0.6px;
+    text-transform: uppercase;
+    color: var(--text-tertiary);
+  }
+
+  // The caret belongs to the line, not to the input box: as a sibling of the
+  // rotator it parked against the far right edge of a flex:1 column, reading
+  // as an unrelated artefact rather than as a cursor. As ::after it sits
+  // immediately after each example's last character, where a cursor goes.
+  // Scoped to .rotator-item so the output rows below don't grow one too.
+  &::after {
+    content: '';
+    flex-shrink: 0;
+    align-self: center;
+    width: 8px;
+    height: 1.1em;
+    margin-left: 7px;
+    background-color: var(--text-primary);
+    animation: caret-blink 1.1s steps(1) infinite;
+  }
+}
+
+@keyframes rotate-inputs {
+  0%,
+  18% {
+    transform: translateY(0);
+  }
+  25%,
+  43% {
+    transform: translateY(calc(-1 * var(--rotator-row)));
+  }
+  50%,
+  68% {
+    transform: translateY(calc(-2 * var(--rotator-row)));
+  }
+  75%,
+  93% {
+    transform: translateY(calc(-3 * var(--rotator-row)));
+  }
+  100% {
+    transform: translateY(calc(-4 * var(--rotator-row)));
+  }
+}
+
+@keyframes caret-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+/*
+ * The tools that came out, rolling in lockstep with the input above.
+ *
+ * Both rotators share the SAME keyframes and duration, and this row's height
+ * is the same 1.7em, so row N of the output is always on screen with row N of
+ * the input. If you change one, change the other or they desynchronise.
+ */
+.machine-output {
+  display: flex;
+  align-items: center;
+  padding: 14px 20px 16px;
+  // The hairline is what makes the card read as in -> out rather than as two
+  // unrelated rows.
+  border-top: 1px solid var(--border-light);
+  // Matches .machine-input, so the shared 1.7em step resolves identically.
+  font-size: 14.5px;
+}
+
+.rotator-tools {
+  flex: 1;
+}
+
+.tools-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 1.7em;
+  overflow: hidden;
+
+  code {
+    padding: 3px 8px;
+    border: 1px solid var(--border-medium);
+    border-radius: var(--border-radius-sm);
+    background-color: var(--background-alt);
+    color: var(--text-secondary);
+    font-size: 11.5px;
+    line-height: 1.35;
+    white-space: nowrap;
+    // Long names lose their tail rather than pushing siblings off the row.
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
+
+/* Ideas strip -------------------------------------------------------------- */
+
+// No bottom border: the next .landing-section supplies one, and two hairlines
+// a pixel apart read as a rendering fault rather than a divider.
+.ideas {
+  border-top: 1px solid var(--border-light);
+  background-color: var(--background-alt);
+  padding: 72px 0;
+}
+
+.ideas-heading {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.9px;
+  color: var(--text-tertiary);
+  margin: 0 0 var(--spacing-lg);
+}
+
+.idea-list {
+  list-style: none;
+  margin: 0 0 var(--spacing-lg);
+  padding: 0;
+
+  li {
+    display: grid;
+    // The arrow column is fixed so every arrow lines up vertically; that
+    // alignment is doing the design work here in place of any border or card.
+    grid-template-columns: minmax(0, 1fr) 32px minmax(0, 0.7fr);
+    align-items: baseline;
+    gap: var(--spacing-sm);
+    padding: 14px 0;
+    border-bottom: 1px solid var(--border-medium);
+
+    &:first-child {
+      border-top: 1px solid var(--border-medium);
+    }
+  }
+}
+
+.idea-ask {
+  font-size: clamp(15px, 2vw, 19px);
+  line-height: 1.35;
+  color: var(--text-primary);
+  letter-spacing: -0.2px;
+}
+
+.idea-arrow {
+  text-align: center;
+  color: var(--text-tertiary);
+}
+
+.idea-target {
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  font-size: 12.5px;
+  color: var(--text-tertiary);
+}
+
+.ideas-link {
+  display: inline-block;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-primary);
+  text-decoration: none;
+
+  &:hover {
+    text-decoration: underline;
+  }
+}
+
+/* For AI agents ----------------------------------------------------------- */
+
+.agent-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--spacing-xl);
+  align-items: start;
+}
+
+.facts {
+  display: grid;
+  gap: var(--spacing-md);
+  margin: 0 0 var(--spacing-lg);
+  padding: 0;
+
+  div {
+    min-width: 0;
+  }
+
+  dt {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.7px;
+    color: var(--text-tertiary);
+    margin-bottom: 5px;
+  }
+
+  dd {
+    margin: 0;
+    font-size: 14px;
+    line-height: 1.7;
+    color: var(--text-primary);
+    word-break: break-word;
+  }
+}
+
+.tool-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  list-style: none;
+  margin: 0 0 var(--spacing-lg);
+  padding: 0;
+
+  code {
+    font-size: 12px;
+    padding: 5px 10px;
+    border: 1px solid var(--border-medium);
+    background-color: var(--background-alt);
+  }
+}
+
+.fineprint {
+  font-size: 13.5px;
+  line-height: 1.65;
+  color: var(--text-tertiary);
+  margin: var(--spacing-lg) 0 0;
+  max-width: 52ch;
+}
+
+code {
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  font-size: 0.9em;
+  padding: 2px 6px;
+  border-radius: var(--border-radius-sm);
+  background-color: var(--background-hover);
+  color: var(--text-primary);
+}
+
+/*
+ * The terminal is fixed near-black in BOTH themes on purpose: it is the one
+ * place on the page where an inverted surface reads as a terminal rather than
+ * as a theme bug, and it gives the light theme its only strong value contrast.
+ */
+.terminal {
+  border: 1px solid var(--terminal-border);
+  border-radius: var(--border-radius-lg);
+  background-color: var(--terminal-bg);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+
+  .terminal-bar {
+    border-bottom-color: var(--terminal-border);
+
+    i {
+      background-color: #3a3a3a;
+    }
+
+    .machine-title {
+      color: var(--terminal-dim);
+    }
+  }
+
+  pre {
+    margin: 0;
+    padding: 20px;
+    overflow-x: auto;
+  }
+
+  code {
+    display: block;
+    padding: 0;
+    background: none;
+    color: var(--terminal-fg);
+    font-size: 12.5px;
+    line-height: 1.85;
+    white-space: pre;
+  }
+}
+
+/* Straight talk ----------------------------------------------------------- */
+
+.ledger {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: var(--spacing-xl);
+}
+
+.ledger-col {
+  h3 {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.9px;
+    color: var(--text-tertiary);
+    margin: 0 0 var(--spacing-md);
+    padding-bottom: var(--spacing-sm);
+    border-bottom: 1px solid var(--border-medium);
+  }
+
+  ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 12px;
+  }
+
+  li {
+    position: relative;
+    padding-left: 24px;
+    font-size: 14px;
+    line-height: 1.65;
+    color: var(--text-secondary);
+
+    // Monochrome status marks - no green/amber wash, the page is black and
+    // white and a tick still reads as "yes" without colour.
+    &::before {
+      position: absolute;
+      left: 0;
+      top: 0;
+      font-size: 13px;
+      color: var(--text-tertiary);
+    }
+  }
+
+  strong {
+    color: var(--text-primary);
+    font-weight: 600;
+  }
+}
+
+.ledger-col-ready li::before {
+  content: '\2713'; // check
+}
+
+.ledger-col-pending li::before {
+  content: '\2014'; // em dash
+}
+
+/* Closing ----------------------------------------------------------------- */
+
+.closing {
+  position: relative;
+  overflow: hidden;
+  padding: 104px 0 112px;
+  text-align: center;
+  border-top: 1px solid var(--border-light);
+
+  .landing-shell {
+    position: relative;
+    z-index: 1;
+  }
+
+  .hero-actions {
+    margin-bottom: 0;
+  }
+}
+
+.closing-title {
+  font-size: clamp(30px, 5vw, 52px);
+  line-height: 1.05;
+  font-weight: 700;
+  letter-spacing: -2px;
+  margin: 0 0 var(--spacing-xl);
+}
+
+/* Footer ------------------------------------------------------------------ */
+
+.landing-footer {
+  margin-top: auto;
+  border-top: 1px solid var(--border-light);
+  padding: var(--spacing-lg) 0;
+}
+
+.footer-inner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-md) var(--spacing-lg);
+  align-items: center;
+  justify-content: space-between;
+}
+
+.footer-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-lg);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+
+  a {
+    color: var(--text-tertiary);
+    text-decoration: none;
+    font-size: 13.5px;
+
+    &:hover {
+      color: var(--text-primary);
+    }
+  }
+}
+
+.footer-end {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-md);
+}
+
+.footer-meta {
+  font-size: 13px;
+  color: var(--text-tertiary);
+  margin: 0;
+}
+
+/* Focus visibility -------------------------------------------------------- */
+
+.landing :focus-visible {
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
+}
+
+// Same encapsulation trap as the token block above - :host-context, not
+// `.dark-theme .landing`.
+:host-context(.dark-theme) :focus-visible {
+  outline-color: var(--text-primary);
+}
+
+/* Responsive -------------------------------------------------------------- */
+
+@media (max-width: 900px) {
+  .header-nav {
+    display: none;
+  }
+
+  .agent-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--spacing-lg);
+  }
+
+  // Stacked, the arrow column earns nothing and the target reads better
+  // directly under the question it answers.
+  .idea-list li {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+  }
+
+  .idea-arrow {
+    display: none;
+  }
+}
+
+@media (max-width: 768px) {
+  .landing-section {
+    padding: 64px 0;
+  }
+
+  .hero {
+    padding: 72px 0 64px;
+  }
+
+  .closing {
+    padding: 72px 0 80px;
+  }
+
+  .machine-input {
+    padding: 18px 16px;
+    font-size: 13px;
+  }
+}
+
+@media (max-width: 480px) {
+  .landing-shell {
+    padding: 0 var(--spacing-md);
+  }
+
+  .hero-title {
+    letter-spacing: -1.6px;
+  }
+
+  .hero-actions {
+    flex-direction: column;
+    align-items: stretch;
+
+    .mcp-btn-primary,
+    .mcp-btn-secondary {
+      width: 100%;
+    }
+  }
+
+  .header-actions .mcp-btn-secondary {
+    display: none;
+  }
+
+  // The rotating examples are URLs and sentences; at this width they would
+  // ellipsis into uselessness beside their label, so the label moves above.
+  // The taller rows need their own keyframes: a same-named @keyframes inside
+  // a media query does override the outer one, but only in browsers that
+  // implement it that way - a distinct name is unambiguous everywhere.
+  //
+  // MUST be scoped to .machine-input. Unscoped, these also hit the tools
+  // rotator below, which has 1.7em rows - a 2.9em window then showed two tool
+  // rows at once and the -2.9em steps desynced it from the input entirely.
+  .machine-input .rotator {
+    height: 2.9em;
+  }
+
+  // Only the step height changes - same keyframes, so no @media-scoped
+  // keyframes reference for Angular to leave unrewritten. See .rotator-track.
+  .machine-input .rotator-track {
+    --rotator-row: 2.9em;
+  }
+
+  // Three tool names do not fit at this width; the third truncates to
+  // "create_payment_..." which reads as broken rather than as an example.
+  .tools-item code:nth-child(3) {
+    display: none;
+  }
+
+  .rotator-item {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0;
+    height: 2.9em;
+    line-height: 1.45em;
+
+    // Stacked, the caret would land on its own third row.
+    &::after {
+      display: none;
+    }
+  }
+}
+
+
+/*
+ * Windows High Contrast strips background images, which would erase the
+ * background-clipped headline entirely. Put the text back.
+ */
+@media (forced-colors: active) {
+  .hero-title-sweep {
+    color: CanvasText;
+    -webkit-text-fill-color: CanvasText;
+  }
+}
+
+/*
+ * Every animation on this page is decorative - the rotating inputs, the
+ * pipeline rail and the headline sweep all repeat information that is present
+ * in static text - so they can all be switched off outright.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .landing *,
+  .landing *::before,
+  .landing *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+
+  .rotator {
+    height: auto;
+  }
+
+  .rotator-track {
+    transform: none;
+  }
+
+  // With the roll stopped, show only the first example rather than a stack.
+  .rotator-item:not(:first-child) {
+    display: none;
+  }
+
+  // The rail's resting state is the un-highlighted one, which is correct.
+  .machine-caret {
+    opacity: 1;
+  }
+}

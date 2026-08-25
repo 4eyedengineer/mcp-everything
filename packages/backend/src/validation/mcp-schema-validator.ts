@@ -24,12 +24,23 @@ const VALID_TYPES = ['string', 'number', 'integer', 'boolean', 'array', 'object'
  * Valid JSON Schema string formats
  */
 const VALID_FORMATS = [
-  'date-time', 'date', 'time', 'duration',
-  'email', 'idn-email',
-  'hostname', 'idn-hostname',
-  'ipv4', 'ipv6',
-  'uri', 'uri-reference', 'iri', 'iri-reference',
-  'uuid', 'json-pointer', 'relative-json-pointer',
+  'date-time',
+  'date',
+  'time',
+  'duration',
+  'email',
+  'idn-email',
+  'hostname',
+  'idn-hostname',
+  'ipv4',
+  'ipv6',
+  'uri',
+  'uri-reference',
+  'iri',
+  'iri-reference',
+  'uuid',
+  'json-pointer',
+  'relative-json-pointer',
   'regex',
 ];
 
@@ -65,7 +76,9 @@ export class McpSchemaValidator {
 
     // Root schema should have type: "object" for MCP tools
     if (schema.type && schema.type !== 'object') {
-      warnings.push(`Tool "${toolName}" root schema should have type "object", got "${schema.type}"`);
+      warnings.push(
+        `Tool "${toolName}" root schema should have type "object", got "${schema.type}"`,
+      );
     }
 
     // If type is object, validate properties
@@ -94,7 +107,9 @@ export class McpSchemaValidator {
               if (typeof reqProp !== 'string') {
                 errors.push(`Tool "${toolName}" required contains non-string value`);
               } else if (!(reqProp in schema.properties)) {
-                warnings.push(`Tool "${toolName}" required property "${reqProp}" not in properties`);
+                warnings.push(
+                  `Tool "${toolName}" required property "${reqProp}" not in properties`,
+                );
               }
             }
           }
@@ -127,11 +142,7 @@ export class McpSchemaValidator {
   /**
    * Validate a property schema
    */
-  private validatePropertySchema(
-    toolName: string,
-    propName: string,
-    schema: any
-  ): string[] {
+  private validatePropertySchema(toolName: string, propName: string, schema: any): string[] {
     const errors: string[] = [];
 
     if (!schema || typeof schema !== 'object') {

@@ -41,3 +41,14 @@ Provide detailed security reports that include:
 Always prioritize security over convenience while maintaining usability. When recommending solutions, provide multiple options with different security/usability trade-offs. Stay current with emerging threats and security best practices in the containerized application and API ecosystem.
 
 If you encounter complex security scenarios or potential zero-day vulnerabilities, escalate with detailed documentation and recommend immediate protective measures. Your goal is to make every generated MCP server a security exemplar while remaining practical for real-world deployment.
+
+## Operating Rules (this repo)
+
+- **Current baseline, so you don't waste time re-flagging fixed issues**: a global JWT guard protects all routes by default, ownership checks exist on conversations/deployments/hosting, SSE streams use single-use 60s tickets, and the 5 previously-unauthenticated debug endpoints have been deleted. Confirm the current state before reporting on it — don't assume the codebase is still at its earliest, most-exposed state.
+- **The repo is public.** This is not a hypothetical concern — treat any hardcoded credential, token, or connection string you find in code, config, manifests, or docs as a live, already-exposed secret requiring immediate rotation guidance, not just a style nit.
+- **Never delete or mutate `demo@mcp-everything.dev` data** while probing for vulnerabilities.
+- **Never trigger a real generation while testing.** Don't POST to `/api/chat/message` to probe the pipeline — it costs real money. Test auth/ownership/input-validation boundaries against endpoints that don't require a live generation, or use mocked calls.
+- **Migrations are append-only** — a security fix that requires a schema change is a new migration, never an edit to an existing one.
+- **Verify empirically.** Actually attempt the exploit (with a scoped, non-destructive proof-of-concept) or curl the endpoint rather than theorizing that it's vulnerable.
+- **Git discipline.** Never commit, push, or run `git stash`/`git checkout`/`git reset`.
+- **Report what you could not verify** — e.g. a vulnerability class you couldn't safely demonstrate against this environment.

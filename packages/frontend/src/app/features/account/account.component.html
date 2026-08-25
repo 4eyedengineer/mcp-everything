@@ -19,11 +19,12 @@
         </div>
       </div>
 
-      <div class="section-content">
+      <div class="section-content" *ngIf="user$ | async as user; else noProfile">
         <div class="profile-layout">
           <div class="profile-avatar-section">
             <div class="avatar-circle">
-              <mat-icon>account_circle</mat-icon>
+              <img *ngIf="user.avatarUrl" [src]="user.avatarUrl" [alt]="user.email" class="avatar-image">
+              <mat-icon *ngIf="!user.avatarUrl">account_circle</mat-icon>
             </div>
             <button class="text-button" disabled>
               <span>Change Photo</span>
@@ -36,7 +37,7 @@
               <input
                 type="text"
                 class="form-input"
-                [(ngModel)]="profile.name"
+                [(ngModel)]="editableName"
                 [disabled]="!isEditingProfile"
                 placeholder="Enter your full name">
             </div>
@@ -46,29 +47,32 @@
               <input
                 type="email"
                 class="form-input"
-                [(ngModel)]="profile.email"
-                [disabled]="!isEditingProfile"
+                [(ngModel)]="editableEmail"
+                disabled
                 placeholder="Enter your email">
+              <p class="field-hint">Email address can't be changed.</p>
             </div>
 
             <div class="form-actions">
               <button
                 *ngIf="!isEditingProfile"
-                class="action-button primary"
+                class="mcp-btn-primary"
                 (click)="editProfile()">
                 <mat-icon>edit</mat-icon>
                 <span>Edit Profile</span>
               </button>
               <button
                 *ngIf="isEditingProfile"
-                class="action-button primary"
+                class="mcp-btn-primary"
+                [disabled]="isSavingProfile"
                 (click)="saveProfile()">
                 <mat-icon>check</mat-icon>
-                <span>Save Changes</span>
+                <span>{{ isSavingProfile ? 'Saving...' : 'Save Changes' }}</span>
               </button>
               <button
                 *ngIf="isEditingProfile"
-                class="action-button secondary"
+                class="mcp-btn-secondary"
+                [disabled]="isSavingProfile"
                 (click)="cancelEdit()">
                 <span>Cancel</span>
               </button>
@@ -76,92 +80,21 @@
           </div>
         </div>
       </div>
+      <ng-template #noProfile>
+        <div class="section-content">
+          <p>Unable to load profile - please sign in again.</p>
+        </div>
+      </ng-template>
     </div>
 
-    <!-- API Key Section -->
-    <div class="settings-section">
-      <div class="section-header">
-        <div class="section-icon">
-          <mat-icon>vpn_key</mat-icon>
-        </div>
-        <div class="section-title">
-          <h2>API Key</h2>
-          <p>Use this key for programmatic access to your account</p>
-        </div>
-      </div>
+    <!-- Connected Accounts (GitHub) -->
+    <mcp-github-connection-section></mcp-github-connection-section>
 
-      <div class="section-content">
-        <div class="api-key-container">
-          <div class="form-group">
-            <label class="form-label">Your API Key</label>
-            <div class="input-with-button">
-              <input
-                type="text"
-                class="form-input"
-                [value]="profile.apiKey"
-                readonly>
-              <button
-                class="icon-button"
-                (click)="copyApiKey()"
-                matTooltip="Copy to clipboard">
-                <mat-icon>content_copy</mat-icon>
-              </button>
-            </div>
-          </div>
-
-          <div class="warning-banner">
-            <mat-icon>warning</mat-icon>
-            <span>Keep your API key secure. Never share it publicly or commit it to version control.</span>
-          </div>
-
-          <div class="form-actions">
-            <button
-              class="action-button danger"
-              (click)="regenerateApiKey()">
-              <mat-icon>refresh</mat-icon>
-              <span>Regenerate Key</span>
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
+    <!-- API Keys -->
+    <mcp-api-key-section></mcp-api-key-section>
 
     <!-- Usage Statistics -->
-    <div class="settings-section">
-      <div class="section-header">
-        <div class="section-icon">
-          <mat-icon>bar_chart</mat-icon>
-        </div>
-        <div class="section-title">
-          <h2>Usage Statistics</h2>
-          <p>Track your account activity and resource usage</p>
-        </div>
-      </div>
-
-      <div class="section-content">
-        <div class="stats-grid">
-          <div class="stat-card">
-            <div class="stat-icon">
-              <mat-icon>memory</mat-icon>
-            </div>
-            <div class="stat-details">
-              <div class="stat-value">{{ profile.serversGenerated }}</div>
-              <div class="stat-label">Servers Generated</div>
-            </div>
-          </div>
-
-          <div class="stat-card">
-            <div class="stat-icon">
-              <mat-icon>storage</mat-icon>
-            </div>
-            <div class="stat-details">
-              <div class="stat-value">{{ profile.storageUsed }}</div>
-              <div class="stat-label">Storage Used</div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
+    <mcp-usage-stats-section></mcp-usage-stats-section>
 
     <!-- Subscription & Tier Section -->
     <div class="settings-section" *ngIf="tierInfo$ | async as tierInfo">
@@ -190,7 +123,7 @@
           <!-- Usage Progress (Free tier only) -->
           <div class="usage-progress" *ngIf="tierInfo.currentTier === 'free'">
             <div class="usage-header">
-              <span>Servers deployed this month</span>
+              <span>Servers generated this month</span>
               <span class="usage-count">
                 {{ tierInfo.usage.serversDeployed }} / {{ tierInfo.usage.limit }}
               </span>
@@ -404,19 +337,13 @@
             </div>
           </div>
 
-          <div class="preference-item disabled">
+          <div class="preference-item">
             <div class="preference-info">
-              <div class="preference-label">Dark Mode</div>
-              <div class="preference-description">Use a dark color scheme (coming soon)</div>
+              <div class="preference-label">Theme</div>
+              <div class="preference-description">Choose a light or dark color scheme, or follow your system setting</div>
             </div>
             <div class="preference-control">
-              <label class="toggle-switch">
-                <input
-                  type="checkbox"
-                  [(ngModel)]="settings.darkMode"
-                  disabled>
-                <span class="toggle-slider"></span>
-              </label>
+              <mcp-theme-toggle></mcp-theme-toggle>
             </div>
           </div>
         </div>
@@ -444,10 +371,11 @@
 
           <div class="form-actions">
             <button
-              class="action-button danger"
+              class="mcp-btn-danger"
+              [disabled]="isDeletingAccount"
               (click)="deleteAccount()">
               <mat-icon>delete_forever</mat-icon>
-              <span>Delete Account</span>
+              <span>{{ isDeletingAccount ? 'Deleting...' : 'Delete Account' }}</span>
             </button>
           </div>
         </div>

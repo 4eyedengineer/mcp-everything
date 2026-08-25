@@ -8,6 +8,7 @@ import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatCheckboxModule } from '@angular/material/checkbox';
+import { MatTooltipModule } from '@angular/material/tooltip';
 import { AuthService } from '../../../../core/services/auth.service';
 
 @Component({
@@ -22,7 +23,8 @@ import { AuthService } from '../../../../core/services/auth.service';
     MatButtonModule,
     MatIconModule,
     MatProgressSpinnerModule,
-    MatCheckboxModule
+    MatCheckboxModule,
+    MatTooltipModule
   ],
   templateUrl: './register.component.html',
   styleUrls: ['./register.component.scss']
@@ -68,7 +70,10 @@ export class RegisterComponent implements OnInit {
     this.error = null;
 
     const { name, email, password } = this.registerForm.value;
-    this.authService.register({ name, email, password }).subscribe({
+    // The form collects one full-name field; the API takes firstName/lastName.
+    const [firstName, ...rest] = (name as string).trim().split(/\s+/);
+    const lastName = rest.join(' ') || undefined;
+    this.authService.register({ firstName, lastName, email, password }).subscribe({
       next: () => {
         this.router.navigate(['/chat']);
       },

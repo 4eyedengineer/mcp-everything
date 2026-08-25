@@ -4,89 +4,76 @@
 
 This document describes the architecture for dynamically hosting generated MCP servers on a self-managed Kubernetes cluster.
 
-## GitOps Repository
+## Control Plane
 
-The GitOps manifests are managed in a dedicated repository:
+The backend creates, patches and deletes each hosted server's Kubernetes
+objects **directly against the Kubernetes API** - see
+`packages/backend/src/hosting/services/k8s-control-plane.service.ts`.
 
-**Repository**: [mcp-server-deployments](https://github.com/4eyedengineer/mcp-server-deployments)
+There is no GitOps repository in this path any more. The previous design
+committed per-server YAML to a separate `mcp-server-deployments` repo and
+reported success on commit. That was removed because:
 
-This repository contains:
-- **base/**: Kustomize base resources (namespace, quotas, limits, network policies)
-- **argocd/**: ArgoCD ApplicationSet for dynamic server discovery
-- **servers/**: Auto-generated per-server K8s manifests
+- **Nothing consumed that repo.** The only ArgoCD `Application` in this cluster
+  (`k8s/argocd/application.yaml`) points at *this* repo's
+  `k8s/overlays/homelab`. The `ApplicationSet` that would have watched
+  `servers/*` existed only as a fenced code block in this document - there was
+  never an `applicationset.yaml` file anywhere.
+- **Status was fiction.** `status` was set to `running` the moment the git
+  commit succeeded, and nothing ever reconciled it. A pod in
+  `CrashLoopBackOff` reported `running` indefinitely, and the status endpoint
+  derived replica counts from that same string.
+- **Deletion never deleted.** Git retains history, so a "deleted" server (and
+  anything embedded in its manifests) stayed recoverable forever - wrong for
+  account deletion.
+- **Concurrent deploys raced.** The commit sequence had no conflict handling
+  and would 422 when two deploys overlapped.
 
-See the [mcp-server-deployments README](https://github.com/4eyedengineer/mcp-server-deployments#readme) for setup instructions.
+ArgoCD still manages the *platform itself* (backend/frontend/postgres via
+`k8s/overlays/homelab`). It is simply not in the loop for user-hosted servers.
 
-## High-Level Flow
+### Cluster prerequisites
 
+`k8s/mcp-servers/` must be applied before the backend can host anything:
+
+```bash
+kubectl apply -k k8s/mcp-servers
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                              USER FLOW                                       │
-└─────────────────────────────────────────────────────────────────────────────┘
 
-User: "Create Stripe MCP server" → [Generate] → [Test] → [Host on Cloud]
-                                                              │
-                                                              ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                           HOSTING PIPELINE                                   │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                              │
-│  1. BUILD          2. PUSH           3. MANIFEST        4. GITOPS           │
-│  ┌──────────┐     ┌──────────┐      ┌──────────┐       ┌──────────┐        │
-│  │ Docker   │────►│ GitHub   │      │ Generate │──────►│ Commit   │        │
-│  │ Build    │     │ Container│      │ K8s YAML │       │ to Repo  │        │
-│  │          │     │ Registry │      │          │       │          │        │
-│  └──────────┘     └──────────┘      └──────────┘       └──────────┘        │
-│                                                              │              │
-│                                                              ▼              │
-│                                                        ┌──────────┐        │
-│                                                        │ ArgoCD   │        │
-│                                                        │ Sync     │        │
-│                                                        └──────────┘        │
-│                                                              │              │
-└──────────────────────────────────────────────────────────────┼──────────────┘
-                                                               │
-                                                               ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                         KUBERNETES CLUSTER                                   │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                              │
-│  ┌─────────────────────────────────────────────────────────────────────┐    │
-│  │                    mcp-servers namespace                             │    │
-│  │                                                                      │    │
-│  │   ┌─────────────┐  ┌─────────────┐  ┌─────────────┐                │    │
-│  │   │ stripe-abc  │  │ github-def  │  │ custom-xyz  │   ...          │    │
-│  │   │             │  │             │  │             │                │    │
-│  │   │ Deployment  │  │ Deployment  │  │ Deployment  │                │    │
-│  │   │ Service     │  │ Service     │  │ Service     │                │    │
-│  │   │ Ingress     │  │ Ingress     │  │ Ingress     │                │    │
-│  │   └─────────────┘  └─────────────┘  └─────────────┘                │    │
-│  │                                                                      │    │
-│  └─────────────────────────────────────────────────────────────────────┘    │
-│                                                                              │
-│  ┌─────────────────────────────────────────────────────────────────────┐    │
-│  │                    Ingress Controller (nginx)                        │    │
-│  │                                                                      │    │
-│  │   *.mcp.yourdomain.com → Route to appropriate MCP server            │    │
-│  │                                                                      │    │
-│  └─────────────────────────────────────────────────────────────────────┘    │
-│                                                                              │
-└─────────────────────────────────────────────────────────────────────────────┘
-                                         │
-                                         ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                           CLIENT CONNECTION                                  │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                              │
-│  ┌─────────────────┐     stdio      ┌─────────────────┐     HTTPS          │
-│  │ Claude Desktop  │◄──────────────►│ mcp-connect     │◄──────────────────►│
-│  │                 │                │ (local proxy)   │                     │
-│  └─────────────────┘                └─────────────────┘                     │
-│                                                              │              │
-│                                            https://stripe-abc.mcp.domain.com│
-│                                                                              │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+It creates the `mcp-servers` namespace (nothing previously did), a namespaced
+`Role` + `RoleBinding` granting the backend's ServiceAccount
+deployment/service/secret/pod access **in that namespace only** (not a
+ClusterRole), the `mcp-server-runtime` ServiceAccount hosted pods run as, and
+the ResourceQuota/LimitRange/NetworkPolicy.
+
+### Desired vs observed state
+
+`hosted_servers` now separates intent from reality:
+
+| Column | Written by | Meaning |
+| --- | --- | --- |
+| `desired_state` | `HostingService` | What the user asked for: `running` / `stopped` / `deleted` |
+| `observed_status` | `K8sReconcilerService` | What the cluster reports: `running` / `progressing` / `stopped` / `degraded` / `failed` / `missing` / `unknown` |
+| `observed_message` | `K8sReconcilerService` | Real reason, e.g. `CrashLoopBackOff: back-off 5m0s restarting failed container` |
+| `observed_replicas`, `observed_ready_replicas` | `K8sReconcilerService` | Real counts from the Deployment |
+| `observed_at` | `K8sReconcilerService` | Observation freshness |
+| `status` | `K8sReconcilerService` (derived) | Legacy display value, kept so the existing frontend keeps working |
+
+`status` is deliberately **not** renamed or dropped - the Angular frontend
+reads it and its existing union of values. The reconciler recomputes it from
+(`desired_state`, `observed_status`) on every pass, so old readers see the
+same vocabulary while new readers get the honest split.
+
+### Reconciler: poll, not watch
+
+`K8sReconcilerService` polls every `K8S_RECONCILE_INTERVAL_MS` (default 10s),
+using exactly two label-filtered list calls per pass regardless of how many
+servers are hosted. A watch was considered and rejected: it needs
+resourceVersion/410-Gone/reconnect handling whose failure mode is *silent
+staleness* (precisely the bug being fixed), it still needs a periodic resync
+to catch out-of-band deletions, and it would turn a CrashLooping pod's event
+stream into a flood of database writes. The cost is up to ~10s of status
+latency, which is acceptable for a deployment-status UI.
 
 ## Component Details
 
@@ -104,194 +91,134 @@ ghcr.io/4eyedengineer/mcp-servers/{server-id}:latest
 ghcr.io/4eyedengineer/mcp-servers/{server-id}:{version}
 ```
 
-### 2. GitOps Repository Structure
+### 2. Per-server object naming
 
-Dedicated repository: `mcp-server-deployments`
+| Object | Name |
+| --- | --- |
+| Deployment | `mcp-{server-id}` |
+| Service | `mcp-{server-id}` (ClusterIP) |
+| Secret | `mcp-{server-id}-env` (only when the server has user env vars) |
 
-```
-mcp-server-deployments/
-├── README.md
-├── base/                          # Shared base resources
-│   ├── namespace.yaml
-│   ├── network-policy.yaml
-│   └── resource-quota.yaml
-├── servers/                       # Per-server manifests (auto-generated)
-│   ├── stripe-abc123/
-│   │   ├── deployment.yaml
-│   │   ├── service.yaml
-│   │   └── ingress.yaml
-│   ├── github-def456/
-│   │   ├── deployment.yaml
-│   │   ├── service.yaml
-│   │   └── ingress.yaml
-│   └── ...
-└── argocd/                        # ArgoCD configuration
-    └── applicationset.yaml        # Auto-discovers servers/ subdirectories
-```
+All three carry `app=mcp-server` and `server-id={server-id}` labels; the
+reconciler lists by the former and keys by the latter.
 
-### 3. ArgoCD ApplicationSet
+### 3. Secret handling
 
-Uses directory generator to auto-discover and deploy all servers:
+User-supplied environment variables go into a Kubernetes `Secret` and reach the
+container via `envFrom.secretRef`. They are **never** written into the
+Deployment as literal `value:` entries.
 
-```yaml
-apiVersion: argoproj.io/v1alpha1
-kind: ApplicationSet
-metadata:
-  name: mcp-servers
-  namespace: argocd
-spec:
-  generators:
-    - git:
-        repoURL: https://github.com/4eyedengineer/mcp-server-deployments.git
-        revision: HEAD
-        directories:
-          - path: servers/*
-  template:
-    metadata:
-      name: 'mcp-{{path.basename}}'
-    spec:
-      project: default
-      source:
-        repoURL: https://github.com/4eyedengineer/mcp-server-deployments.git
-        targetRevision: HEAD
-        path: '{{path}}'
-      destination:
-        server: https://kubernetes.default.svc
-        namespace: mcp-servers
-      syncPolicy:
-        automated:
-          prune: true
-          selfHeal: true
-```
+This is load-bearing, not cosmetic. In the previous design the manifest
+generator inlined them as literals and `GitOpsService` would have committed
+that YAML to a **public** GitHub repo. The only reason user credentials were
+not actually leaked is that `envVars` were silently dropped before ever
+reaching the Kubernetes path. Passing them through is safe now precisely
+because the Secret path exists.
+
+Only three platform-owned, non-secret values remain inlined on the Deployment:
+`MCP_SERVER_ID`, `MCP_TRANSPORT=http` and `PORT=3000`.
 
 ### 4. Per-Server Kubernetes Resources
 
-Each MCP server gets three resources:
+Built as typed `V1Deployment` / `V1Service` / `V1Secret` objects by
+`ManifestGeneratorService` (single source of truth - it no longer emits YAML
+strings, since nothing commits YAML any more).
 
-**Deployment** (`deployment.yaml`):
+**Deployment** (abridged; note the hardening, none of which the previous
+generated pod spec had):
 ```yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: mcp-{server-id}
   namespace: mcp-servers
-  labels:
-    app: mcp-server
-    server-id: {server-id}
+  labels: { app: mcp-server, server-id: "{server-id}" }
 spec:
   replicas: 1
   selector:
-    matchLabels:
-      app: mcp-server
-      server-id: {server-id}
+    matchLabels: { app: mcp-server, server-id: "{server-id}" }
   template:
-    metadata:
-      labels:
-        app: mcp-server
-        server-id: {server-id}
     spec:
+      serviceAccountName: mcp-server-runtime
+      automountServiceAccountToken: false      # hosted code must not reach the API
+      imagePullSecrets: [{ name: "{K8S_IMAGE_PULL_SECRET}" }]   # when configured
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        seccompProfile: { type: RuntimeDefault }
       containers:
         - name: mcp-server
           image: ghcr.io/4eyedengineer/mcp-servers/{server-id}:latest
-          ports:
-            - containerPort: 3000
-          resources:
-            requests:
-              memory: "128Mi"
-              cpu: "100m"
-            limits:
-              memory: "256Mi"
-              cpu: "500m"
-          env:
-            - name: MCP_SERVER_ID
-              value: "{server-id}"
-          livenessProbe:
-            httpGet:
-              path: /health
-              port: 3000
-            initialDelaySeconds: 10
-            periodSeconds: 30
-          readinessProbe:
-            httpGet:
-              path: /health
-              port: 3000
-            initialDelaySeconds: 5
-            periodSeconds: 10
+          ports: [{ name: http, containerPort: 3000 }]
+          env:                                  # platform-owned only
+            - { name: MCP_SERVER_ID, value: "{server-id}" }
+            - { name: MCP_TRANSPORT, value: "http" }
+            - { name: PORT, value: "3000" }
+          envFrom:                              # user env vars, when present
+            - secretRef: { name: mcp-{server-id}-env, optional: false }
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts: [{ name: tmp, mountPath: /tmp }]
+          livenessProbe:  { httpGet: { path: /health, port: 3000 } }
+          readinessProbe: { httpGet: { path: /health, port: 3000 } }
+      volumes: [{ name: tmp, emptyDir: {} }]    # makes read-only root viable
 ```
 
-**Service** (`service.yaml`):
-```yaml
-apiVersion: v1
-kind: Service
-metadata:
-  name: mcp-{server-id}
-  namespace: mcp-servers
-spec:
-  selector:
-    app: mcp-server
-    server-id: {server-id}
-  ports:
-    - port: 80
-      targetPort: 3000
-```
+**Service**: ClusterIP, port 80 -> targetPort 3000, selected by
+`app=mcp-server,server-id={server-id}`.
 
-**Ingress** (`ingress.yaml`):
-```yaml
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: mcp-{server-id}
-  namespace: mcp-servers
-  annotations:
-    kubernetes.io/ingress.class: nginx
-    cert-manager.io/cluster-issuer: letsencrypt-prod
-spec:
-  tls:
-    - hosts:
-        - {server-id}.mcp.yourdomain.com
-      secretName: mcp-{server-id}-tls
-  rules:
-    - host: {server-id}.mcp.yourdomain.com
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: mcp-{server-id}
-                port:
-                  number: 80
-```
+**Ingress**: none. See the routing note in the cluster diagram above -
+per-server Ingress, wildcard DNS and cert-manager are deferred pending the
+gateway decision, and the backend's RBAC deliberately grants no Ingress
+permission at all.
 
-### 5. MCP HTTP Wrapper
+### 5. Generated servers speak HTTP natively (no separate wrapper process)
 
-Since MCP protocol uses stdio, we need to wrap it in HTTP for Kubernetes:
+There is no HTTP wrapper process. Generated MCP servers are dual-transport by
+construction (codegen in `refinement.service.ts`, high-level `McpServer` +
+`registerTool` API from `@modelcontextprotocol/sdk` `1.30.0`): they read
+`MCP_TRANSPORT` from the environment and either start a `StdioServerTransport`
+(default, unset or `stdio` - this is what Claude Desktop and the
+GitHub/Gist download path use unchanged) or a per-session
+`StreamableHTTPServerTransport` (`MCP_TRANSPORT=http`) that serves real MCP
+Streamable HTTP on `POST /mcp` (`PORT`, default 3000) plus `GET /health` for
+K8s probes. `ManifestGeneratorService` sets `MCP_TRANSPORT=http` on every
+generated Deployment, which is what makes the liveness/readiness probes
+below viable at all.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    MCP Server Container                      │
+│              MCP Server Container (MCP_TRANSPORT=http)       │
 ├─────────────────────────────────────────────────────────────┤
 │                                                              │
-│   ┌──────────────────┐        ┌──────────────────┐         │
-│   │ HTTP/WS Wrapper  │──stdio─│ MCP Server       │         │
-│   │ (Express)        │        │ (Generated Code) │         │
-│   │                  │        │                  │         │
-│   │ POST /mcp        │        │ tools/list       │         │
-│   │ WS   /mcp/stream │        │ tools/call       │         │
-│   │ GET  /health     │        │                  │         │
-│   └──────────────────┘        └──────────────────┘         │
+│   ┌──────────────────────────────────────────────────┐     │
+│   │ MCP Server (Generated Code)                       │     │
+│   │  McpServer + registerTool, one instance per        │     │
+│   │  Mcp-Session-Id                                    │     │
+│   │                                                    │     │
+│   │  POST /mcp    (Streamable HTTP, SSE-framed)         │     │
+│   │  GET  /health                                       │     │
+│   └──────────────────────────────────────────────────┘     │
 │          ▲                                                  │
-│          │ port 3000                                        │
+│          │ port 3000 (PORT env)                              │
 └──────────┼──────────────────────────────────────────────────┘
            │
     Kubernetes Service
 ```
 
-The wrapper is a thin Express server that:
-1. Receives HTTP/WebSocket requests
-2. Spawns MCP server as child process
-3. Pipes requests to stdin
-4. Returns stdout as HTTP response
+The previous `packages/mcp-wrapper` package (an Express process that spawned
+the stdio server as a child and bridged HTTP/WebSocket to its stdin/stdout)
+has been **deleted**. It's obsolete now that generated servers open their own
+HTTP listener directly - there's no stdio child process to bridge to in
+`http` mode.
+
+**Unverified**: there is no Docker daemon on the dev machine, so the
+container path above (build → run with `MCP_TRANSPORT=http` → probes pass)
+has not been exercised against a real container, and the K8s hosting path
+as a whole has never been run end-to-end against a real cluster.
 
 ### 6. Local Proxy (`@mcpeverything/connect`)
 
@@ -311,10 +238,20 @@ Claude Desktop config:
 }
 ```
 
-The proxy:
-1. Receives stdio from Claude Desktop
-2. Forwards to `https://{server-id}.mcp.yourdomain.com/mcp`
-3. Streams responses back
+**Intended contract** (the piece this proxy exists to provide): speak stdio
+to Claude Desktop on one side, and real MCP Streamable HTTP
+(`POST https://{server-id}.mcp.yourdomain.com/mcp`, `Accept` including
+`text/event-stream`, `Mcp-Session-Id` echoed after `initialize`) to the
+hosted server on the other - i.e. exactly the protocol generated servers
+now actually speak in `http` mode.
+
+`packages/mcp-connect` is currently being reworked to that contract; as of
+this writing its `StdioTransport` class still speaks a bespoke JSON-RPC
+protocol (`POST {serverUrl}/mcp` with a bearer token, falling back to a raw
+WebSocket for streaming methods) rather than real Streamable HTTP framing.
+Don't take the class name or current request/response shape in
+`packages/mcp-connect/src/transport.ts` as the target design - it predates
+this change and is mid-rewrite.
 
 ## Database Schema
 
@@ -340,7 +277,17 @@ CREATE TABLE hosted_servers (
   -- Endpoint
   endpoint_url TEXT NOT NULL,  -- https://{server-id}.mcp.domain.com
 
-  -- Status
+  -- Status: intent vs reality (migration 1754200000000)
+  desired_state VARCHAR(20) DEFAULT 'running',   -- running | stopped | deleted
+  observed_status VARCHAR(20),                   -- running | progressing | stopped
+                                                 -- | degraded | failed | missing | unknown
+  observed_message TEXT,                         -- real reason from the cluster
+  observed_replicas INTEGER,
+  observed_ready_replicas INTEGER,
+  observed_at TIMESTAMP,
+
+  -- Legacy display value, DERIVED from the two above by the reconciler.
+  -- Kept (not renamed) because the frontend reads it.
   status VARCHAR(20) DEFAULT 'pending',
   -- pending, building, pushing, deploying, running, stopped, failed, deleted
   status_message TEXT,
@@ -383,12 +330,17 @@ DELETE /api/hosting/servers/:serverId        - Delete server
 
 ## Security Considerations
 
-1. **Network Policies**: MCP servers can only receive traffic from ingress
-2. **Resource Limits**: Prevent runaway containers
-3. **Pod Security**: Non-root, read-only filesystem
-4. **Secrets**: User API keys stored in K8s secrets, injected as env vars
-5. **Rate Limiting**: At ingress level per server
-6. **Authentication**: Server IDs are UUIDs (unguessable), future: API keys
+1. **Network Policies**: hosted pods accept ingress only from the
+   `mcp-everything` namespace (the backend/gateway), on port 3000
+2. **Resource Limits**: ResourceQuota + LimitRange on the namespace
+3. **Pod Security**: non-root, read-only root filesystem, all capabilities
+   dropped, `RuntimeDefault` seccomp, dedicated ServiceAccount with
+   `automountServiceAccountToken: false`
+4. **Secrets**: user API keys stored in K8s Secrets and injected via
+   `envFrom` - never inlined in a Deployment, never committed to git
+5. **Backend RBAC**: namespaced Role + RoleBinding limited to `mcp-servers`,
+   no ClusterRole, no Ingress permission
+6. **Authentication**: server IDs are unguessable; future: API keys
 
 ## Scaling Considerations
 
@@ -399,7 +351,7 @@ DELETE /api/hosting/servers/:serverId        - Delete server
 
 ## Monitoring
 
-1. **Prometheus**: Scrape metrics from HTTP wrapper
+1. **Prometheus**: scrape metrics from the generated servers' HTTP listener
 2. **Grafana**: Dashboard per server
 3. **Alerts**: Failed deployments, high error rates
 4. **Logging**: Centralized logging with Loki/ELK

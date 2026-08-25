@@ -1,130 +1,332 @@
 import { Injectable, Logger, Optional } from '@nestjs/common';
-import { ChatAnthropic } from '@langchain/anthropic';
-import { McpTestingService, GeneratedCode, McpServerTestResult } from '../testing/mcp-testing.service';
-import { McpGenerationService } from '../mcp-generation.service';
+import { ConfigService } from '@nestjs/config';
+import { builtinModules } from 'module';
+import * as ts from 'typescript';
+import * as z from 'zod/v4';
+import {
+  McpTestingService,
+  GeneratedCode,
+  McpServerTestResult,
+} from '../testing/mcp-testing.service';
 import {
   McpProtocolValidatorService,
   McpProtocolValidationResult,
 } from '../validation/mcp-protocol-validator.service';
-import {
-  GraphState,
-  FailureAnalysis,
-} from './types';
+import { PipelineState, FailureAnalysis, CodeQualityJudgement } from './types';
 import { getPlatformContextPrompt } from './platform-context';
-import { safeParseJSON } from './json-utils';
+import { AnthropicService } from '../ai/anthropic.service';
+import { TruncatedResponseError } from '../ai/anthropic.errors';
 
 /**
- * MCP SDK Reference Implementation (Issue #140)
- *
- * This reference code is included in prompts to ensure the LLM uses correct
- * library APIs for @modelcontextprotocol/sdk and zod v3.
- *
- * Common API mistakes this prevents:
- * 1. StdioServerTransport({ stdin, stdout }) - WRONG, use StdioServerTransport()
- * 2. error.errors - WRONG, Zod v3 uses error.issues
- * 3. Missing type annotations causing TS7006 implicit any errors
+ * Code quality judge output contract (enforced by the API's structured outputs).
  */
-const MCP_REFERENCE_IMPLEMENTATION = `
-**⚠️ CRITICAL: Use these EXACT patterns from @modelcontextprotocol/sdk and zod v3**
-
-\`\`\`typescript
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import {
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
-} from "@modelcontextprotocol/sdk/types.js";
-import { z } from "zod";
-
-// 1. Server initialization (correct pattern)
-const server = new Server(
-  { name: "my-server", version: "1.0.0" },
-  { capabilities: { tools: {} } }
-);
-
-// 2. Tool listing handler (correct pattern)
-server.setRequestHandler(ListToolsRequestSchema, async () => ({
-  tools: [
-    {
-      name: "my_tool",
-      description: "Description here",
-      inputSchema: {
-        type: "object",
-        properties: {
-          param1: { type: "string", description: "A parameter" },
-        },
-        required: ["param1"],
-      },
-    },
-  ],
-}));
-
-// 3. Tool call handler with Zod validation (correct pattern)
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  const { name, arguments: args } = request.params;
-
-  if (name === "my_tool") {
-    try {
-      // Zod validation with proper types
-      const schema = z.object({ param1: z.string() });
-      const validated = schema.parse(args);
-
-      // Your tool logic here
-      const result = \`Result for \${validated.param1}\`;
-
-      // MCP response format (MUST use this exact structure)
-      return {
-        content: [{ type: "text", text: result }],
-      };
-    } catch (error) {
-      // Zod v3 uses .issues NOT .errors
-      if (error instanceof z.ZodError) {
-        const messages = error.issues.map((issue: z.ZodIssue) =>
-          \`\${issue.path.join(".")}: \${issue.message}\`
-        ).join(", ");
-        return {
-          content: [{ type: "text", text: \`Validation error: \${messages}\` }],
-          isError: true,
-        };
-      }
-      return {
-        content: [{ type: "text", text: \`Error: \${error instanceof Error ? error.message : String(error)}\` }],
-        isError: true,
-      };
-    }
-  }
-
-  return {
-    content: [{ type: "text", text: \`Unknown tool: \${name}\` }],
-    isError: true,
-  };
+const CodeQualityJudgementSchema = z.object({
+  isValid: z.boolean(),
+  score: z.number(),
+  feedback: z.string(),
+  issues: z.array(
+    z.object({
+      category: z.enum(['typescript', 'mcp-protocol', 'tool-implementation', 'code-quality']),
+      message: z.string(),
+      suggestion: z.string(),
+    }),
+  ),
 });
 
-// 4. Transport setup (NO ARGUMENTS - this is critical!)
-async function main() {
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
+/**
+ * Failure analysis output contract (enforced by the API's structured outputs).
+ */
+const FailureAnalysisSchema = z.object({
+  failureCount: z.number(),
+  categories: z.array(
+    z.object({
+      type: z.enum(['syntax', 'runtime', 'mcp_protocol', 'logic', 'timeout']),
+      count: z.number(),
+    }),
+  ),
+  rootCauses: z.array(z.string()),
+  fixes: z.array(
+    z.object({
+      toolName: z.string(),
+      issue: z.string(),
+      solution: z.string(),
+      priority: z.enum(['HIGH', 'MEDIUM', 'LOW']),
+      codeSnippet: z.string().nullable().optional(),
+    }),
+  ),
+  recommendation: z.string(),
+});
+
+/**
+ * Output caps for code generation. The first attempt is generous; if the model
+ * still hits the cap we retry once at the model's ceiling rather than trying to
+ * "repair" a truncated file.
+ */
+const CODE_GEN_MAX_TOKENS = 64000;
+const CODE_GEN_RETRY_MAX_TOKENS = 128000;
+const ANALYSIS_MAX_TOKENS = 16000;
+
+/** Node's own modules never belong in `dependencies`. */
+const NODE_BUILTINS = new Set(builtinModules);
+
+/**
+ * Version ranges for packages generated servers reach for often enough to be
+ * worth pinning deliberately. Anything not listed gets `latest`, which npm
+ * resolves at install time - a slightly loose range still builds, whereas a
+ * *missing* dependency cannot build at all.
+ *
+ * Prefix entries (trailing `/`) match a whole scope, which is how the AWS SDK's
+ * one-package-per-service layout is covered without listing 300 packages.
+ */
+const KNOWN_DEPENDENCY_VERSIONS: Array<[string, string]> = [
+  ['@aws-sdk/', '^3.0.0'],
+  ['@smithy/', '^3.0.0'],
+  // Pinned to the exact version empirically verified against the dual-transport
+  // (stdio + Streamable HTTP) reference implementation below - see
+  // MCP_REFERENCE_IMPLEMENTATION. Do not loosen to a caret range: the
+  // high-level McpServer/registerTool/StreamableHTTPServerTransport surface
+  // this reference relies on was only confirmed on this exact version.
+  ['@modelcontextprotocol/sdk', '1.30.0'],
+  ['@octokit/', '^20.0.0'],
+  ['axios', '^1.7.0'],
+  // Pinned to the major verified alongside the SDK above (zod v4's raw-shape
+  // `inputSchema` and `.issues` error API are what the reference uses).
+  ['zod', '^4.4.3'],
+  ['dotenv', '^16.0.0'],
+  ['form-data', '^4.0.0'],
+  ['jsonwebtoken', '^9.0.0'],
+  ['node-fetch', '^3.3.0'],
+  ['ws', '^8.0.0'],
+];
+
+/** npm package name rules, enough to reject a mangled import specifier. */
+const VALID_PACKAGE_NAME = /^(?:@[a-z0-9][\w.-]*\/)?[a-z0-9][\w.-]*$/;
+
+/**
+ * MCP SDK Reference Implementation (Issue #140; dual-transport migration)
+ *
+ * This reference code is included in prompts to ensure the LLM uses correct
+ * library APIs for @modelcontextprotocol/sdk and zod, and implements BOTH
+ * stdio and Streamable HTTP transports behind one runtime switch.
+ *
+ * Empirically verified 2026-08 against @modelcontextprotocol/sdk 1.30.0 and
+ * zod 4.4.3 (pinned exactly - see KNOWN_DEPENDENCY_VERSIONS and
+ * generatePackageJson): the high-level `McpServer` + `registerTool` API,
+ * dual-transport dispatch on `MCP_TRANSPORT`, and a per-session
+ * `StreamableHTTPServerTransport` were verified with real JSON-RPC round-trips
+ * over both stdio and HTTP (including a real tools/call against a live HTTP
+ * API) and a working `GET /health`. STDIO remains the default transport
+ * (unset `MCP_TRANSPORT` or `MCP_TRANSPORT=stdio`); HTTP is opt-in via
+ * `MCP_TRANSPORT=http`, which is what generated Dockerfiles set for hosting.
+ *
+ * Only declares the `tools` server capability, which remains correct - `roots`,
+ * `sampling`, and `logging` as *server* capabilities were deprecated in the
+ * 2026-07-28 MCP spec revision.
+ *
+ * Common API mistakes this prevents:
+ * 1. Low-level `Server` + `setRequestHandler` instead of the high-level
+ *    `McpServer` + `registerTool` API - WRONG for new servers.
+ * 2. The deprecated `.tool()` method instead of `.registerTool()`.
+ * 3. `inputSchema: z.object({...})` (a compiled schema) instead of a RAW ZOD
+ *    SHAPE (`inputSchema: { a: z.number() }`) - `registerTool` wants the shape.
+ * 4. `console.log(...)` anywhere in the file - stdout IS the JSON-RPC channel
+ *    in stdio mode; a single stray stdout write corrupts every message after
+ *    it. ALL logging, in both transports, must go to `console.error`.
+ * 5. One `McpServer` instance shared across every HTTP session - WRONG. Each
+ *    HTTP session gets its OWN `McpServer` + transport pair, keyed by
+ *    `Mcp-Session-Id`, created only when the request is a real MCP initialize
+ *    request (`isInitializeRequest(body)` is true).
+ * 6. Missing `"types": ["node"]` in tsconfig.json under NodeNext - without it,
+ *    every Node global (`process`, `Buffer`, etc.) fails strict `tsc`.
+ * 7. Hardcoding protocol version "2024-11-05" (too old) or "2026-07-28" (not
+ *    yet implemented by this SDK version) if a protocol version literal is
+ *    ever needed - use "2025-11-25".
+ */
+const MCP_REFERENCE_IMPLEMENTATION = `
+**⚠️ CRITICAL: Use these EXACT patterns from @modelcontextprotocol/sdk and zod - dual transport, stdio is the DEFAULT, HTTP is opt-in**
+
+\`\`\`typescript
+import { randomUUID } from "node:crypto";
+import http from "node:http";
+import { z } from "zod";
+
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
+
+// 1. Build a fresh McpServer with its tools registered (high-level API).
+// In HTTP mode a NEW McpServer + transport pair is created PER SESSION (see
+// runHttp below) - never share one server instance across HTTP sessions.
+function buildServer(): McpServer {
+  const server = new McpServer({ name: "my-server", version: "1.0.0" });
+
+  // 2. registerTool (NOT the deprecated .tool()). inputSchema is a RAW ZOD
+  // SHAPE - { param1: z.string() } - NOT z.object({ param1: z.string() }).
+  server.registerTool(
+    "my_tool",
+    {
+      title: "My Tool",
+      description: "Description here",
+      inputSchema: {
+        param1: z.string().describe("A parameter"),
+      },
+    },
+    async ({ param1 }) => {
+      try {
+        // Your tool logic here
+        const result = \`Result for \${param1}\`;
+
+        // MCP response format (MUST use this exact structure)
+        return { content: [{ type: "text", text: result }] };
+      } catch (error) {
+        return {
+          isError: true,
+          content: [
+            { type: "text", text: \`Error: \${error instanceof Error ? error.message : String(error)}\` },
+          ],
+        };
+      }
+    }
+  );
+
+  return server;
 }
 
-main().catch(console.error);
+// 3. Stdio transport - THE DEFAULT. One server instance for the process
+// lifetime. NEVER console.log here (or anywhere): stdout IS the JSON-RPC
+// stream, and any stray stdout write corrupts every message after it.
+async function runStdio(): Promise<void> {
+  const server = buildServer();
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+  console.error("my-server: listening on stdio");
+}
+
+// 4. Streamable HTTP transport - opt-in via MCP_TRANSPORT=http. One McpServer
+// + transport PER SESSION, keyed by Mcp-Session-Id, plus a GET /health.
+async function runHttp(): Promise<void> {
+  const port = Number(process.env.PORT) || 3000;
+  const transports = new Map<string, StreamableHTTPServerTransport>();
+
+  const httpServer = http.createServer(async (req, res) => {
+    const url = new URL(req.url ?? "/", \`http://\${req.headers.host}\`);
+
+    if (url.pathname === "/health") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ status: "ok" }));
+      return;
+    }
+
+    if (url.pathname !== "/mcp") {
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "not found" }));
+      return;
+    }
+
+    if (req.method === "POST") {
+      const sessionId = req.headers["mcp-session-id"] as string | undefined;
+      let transport: StreamableHTTPServerTransport;
+
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) chunks.push(chunk as Buffer);
+      const rawBody = Buffer.concat(chunks).toString("utf-8");
+      const parsedBody = rawBody.length > 0 ? JSON.parse(rawBody) : undefined;
+
+      if (sessionId && transports.has(sessionId)) {
+        transport = transports.get(sessionId)!;
+      } else if (!sessionId && isInitializeRequest(parsedBody)) {
+        // A new session is created ONLY on a real initialize request.
+        transport = new StreamableHTTPServerTransport({
+          sessionIdGenerator: () => randomUUID(),
+          // Braces matter: a concise arrow body would return the Map, and the
+          // SDK types this callback as () => void | Promise<void>, so the
+          // expression form fails strict tsc with TS2322. Every generated
+          // server copies this verbatim - keep the block body.
+          onsessioninitialized: (newSessionId) => {
+            transports.set(newSessionId, transport);
+          },
+        });
+        transport.onclose = () => {
+          if (transport.sessionId) transports.delete(transport.sessionId);
+        };
+        const server = buildServer();
+        await server.connect(transport);
+      } else {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({
+          jsonrpc: "2.0",
+          error: { code: -32000, message: "Bad Request: no valid session ID provided for non-initialize request" },
+          id: null,
+        }));
+        return;
+      }
+
+      await transport.handleRequest(req, res, parsedBody);
+      return;
+    }
+
+    if (req.method === "GET" || req.method === "DELETE") {
+      const sessionId = req.headers["mcp-session-id"] as string | undefined;
+      if (!sessionId || !transports.has(sessionId)) {
+        res.writeHead(400).end("Invalid or missing session ID");
+        return;
+      }
+      await transports.get(sessionId)!.handleRequest(req, res);
+      return;
+    }
+
+    res.writeHead(405, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "method not allowed" }));
+  });
+
+  await new Promise<void>((resolve) => httpServer.listen(port, resolve));
+  console.error(\`my-server: listening on http://0.0.0.0:\${port} (MCP endpoint: /mcp, health: /health)\`);
+}
+
+// 5. Transport selection - STDIO IS THE DEFAULT when MCP_TRANSPORT is unset.
+const transportMode = (process.env.MCP_TRANSPORT ?? "stdio").toLowerCase();
+
+if (transportMode === "http") {
+  runHttp().catch((err) => {
+    console.error("Fatal error starting HTTP server:", err);
+    process.exit(1);
+  });
+} else if (transportMode === "stdio") {
+  runStdio().catch((err) => {
+    console.error("Fatal error starting stdio server:", err);
+    process.exit(1);
+  });
+} else {
+  console.error(\`Unknown MCP_TRANSPORT "\${transportMode}" - expected "stdio" or "http".\`);
+  process.exit(1);
+}
 \`\`\`
 
 **Common Mistakes to AVOID:**
-- ❌ \`new StdioServerTransport({ stdin: process.stdin, stdout: process.stdout })\` - WRONG
-- ✅ \`new StdioServerTransport()\` - CORRECT (no arguments)
-- ❌ \`error.errors.map(...)\` - WRONG (Zod v2 API)
-- ✅ \`error.issues.map((issue: z.ZodIssue) => ...)\` - CORRECT (Zod v3 API)
-- ❌ \`(e) => e.message\` - WRONG (implicit any in strict mode)
-- ✅ \`(issue: z.ZodIssue) => issue.message\` - CORRECT (explicit type)
+- ❌ \`new Server(...)\` + \`server.setRequestHandler(...)\` - WRONG (low-level API)
+- ✅ \`new McpServer(...)\` + \`server.registerTool(...)\` - CORRECT (high-level API)
+- ❌ \`server.tool("name", schema, handler)\` - WRONG (deprecated method)
+- ✅ \`server.registerTool("name", { title, description, inputSchema }, handler)\` - CORRECT
+- ❌ \`inputSchema: z.object({ a: z.number() })\` - WRONG (compiled schema, not a shape)
+- ✅ \`inputSchema: { a: z.number() }\` - CORRECT (raw zod shape)
+- ❌ \`console.log(...)\` anywhere in the file - WRONG (corrupts the stdio JSON-RPC stream)
+- ✅ \`console.error(...)\` for ALL diagnostics, in both transports - CORRECT
+- ❌ One \`McpServer\` shared across every HTTP session - WRONG
+- ✅ A new \`McpServer\` + transport pair per session, keyed by \`Mcp-Session-Id\`, created only on \`isInitializeRequest()\` - CORRECT
+- ❌ Defaulting to the HTTP transport - WRONG
+- ✅ stdio is the default; HTTP is opt-in via \`MCP_TRANSPORT=http\` - CORRECT
+- ❌ \`protocolVersion: "2024-11-05"\` or \`"2026-07-28"\` if a version literal is ever needed - WRONG (too old / not yet implemented by this SDK)
+- ✅ \`"2025-11-25"\` - CORRECT
 `;
 
 /**
  * Refinement Service
  *
- * Orchestrates Phase 4: Generate-Test-Refine Loop
+ * The `refine` step of the generation pipeline: Generate-Test-Refine Loop
  *
  * Responsibilities:
- * - Generate MCP server code from ensemble plan
+ * - Generate MCP server code from the planned tool set
  * - Test using Docker-based McpTestingService
  * - Analyze failures using AI
  * - Refine code based on failure analysis
@@ -145,6 +347,7 @@ main().catch(console.error);
  * - All tools pass MCP protocol testing
  * - Build succeeds
  * - No runtime errors
+ * - LLM-as-judge quality gate passes (PIPELINE_QUALITY_GATE, default on)
  *
  * Iteration Limit:
  * - Max 5 iterations (prevents infinite loops)
@@ -154,37 +357,265 @@ main().catch(console.error);
 @Injectable()
 export class RefinementService {
   private readonly logger = new Logger(RefinementService.name);
-  private readonly llm: ChatAnthropic;
-  private readonly codeGenLlm: ChatAnthropic;
+
+  /** LLM-as-judge quality gate; on by default, disable with PIPELINE_QUALITY_GATE=false. */
+  private readonly qualityGateEnabled: boolean;
 
   constructor(
     private readonly mcpTestingService: McpTestingService,
-    private readonly mcpGenerationService: McpGenerationService,
+    private readonly anthropic: AnthropicService,
+    @Optional() private readonly configService?: ConfigService,
     @Optional() private readonly mcpProtocolValidator?: McpProtocolValidatorService,
   ) {
-    // Initialize Claude Haiku for failure analysis
-    // streaming: true is required by the Anthropic API configuration (Issue #142)
-    this.llm = new ChatAnthropic({
-      modelName: 'claude-haiku-4-5-20251001',
-      temperature: 0.7,
-      topP: undefined, // Fix for @langchain/anthropic bug sending top_p: -1
-      maxTokens: 16000, // Generous limit for detailed failure analysis
-      anthropicApiKey: process.env.ANTHROPIC_API_KEY,
-      streaming: true,
-    });
+    this.qualityGateEnabled =
+      String(this.configService?.get<string>('PIPELINE_QUALITY_GATE') ?? 'true').toLowerCase() !==
+      'false';
+  }
 
-    // Separate LLM instance for code generation with maximum token limit
-    // Claude Haiku 4.5 supports up to 64K output tokens
-    // This prevents truncation of generated TypeScript files (Issue #136)
-    // streaming: true is required by the Anthropic API configuration (Issue #142)
-    this.codeGenLlm = new ChatAnthropic({
-      modelName: 'claude-haiku-4-5-20251001',
-      temperature: 0.3, // Lower temperature for more consistent code output
-      topP: undefined,
-      maxTokens: 64000, // Maximum output for Haiku 4.5 - no truncation
-      anthropicApiKey: process.env.ANTHROPIC_API_KEY,
-      streaming: true,
-    });
+  /**
+   * Generate code with the configured model, retrying once at a higher output
+   * cap if the response was truncated.
+   *
+   * Truncation is reported by the API (`stop_reason: "max_tokens"`) and surfaced
+   * as a TruncatedResponseError - we never brace-balance or fabricate the tail
+   * of a cut-off file.
+   */
+  private async generateCode(prompt: string, caller: string): Promise<string> {
+    try {
+      return await this.anthropic.completeText({
+        prompt,
+        maxTokens: CODE_GEN_MAX_TOKENS,
+        caller,
+      });
+    } catch (error) {
+      if (!(error instanceof TruncatedResponseError)) {
+        throw error;
+      }
+
+      this.logger.warn(
+        `${caller} truncated at ${CODE_GEN_MAX_TOKENS} output tokens, ` +
+          `retrying at ${CODE_GEN_RETRY_MAX_TOKENS}`,
+      );
+
+      return this.anthropic.completeText({
+        prompt,
+        maxTokens: CODE_GEN_RETRY_MAX_TOKENS,
+        caller: `${caller}.retry`,
+      });
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Dependency reconciliation
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Extract the external npm packages a generated file imports.
+   *
+   * Covers static `from '...'`, side-effect `import '...'`, dynamic
+   * `import('...')` and `require('...')`. Relative paths, absolute paths,
+   * `node:`-prefixed specifiers and Node builtins are not dependencies.
+   *
+   * Deep specifiers collapse to their installable root, so
+   * `@modelcontextprotocol/sdk/server/index.js` -> `@modelcontextprotocol/sdk`
+   * and `lodash/merge` -> `lodash`.
+   */
+  private extractImportedPackages(code: string): string[] {
+    const specifiers = new Set<string>();
+    const patterns = [
+      /\bfrom\s*['"]([^'"]+)['"]/g,
+      /\bimport\s+['"]([^'"]+)['"]/g,
+      /\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/g,
+      /\brequire\s*\(\s*['"]([^'"]+)['"]\s*\)/g,
+    ];
+
+    for (const pattern of patterns) {
+      for (const match of code.matchAll(pattern)) {
+        specifiers.add(match[1]);
+      }
+    }
+
+    const packages = new Set<string>();
+
+    for (const specifier of specifiers) {
+      if (
+        !specifier ||
+        specifier.startsWith('.') ||
+        specifier.startsWith('/') ||
+        specifier.startsWith('node:')
+      ) {
+        continue;
+      }
+
+      const segments = specifier.split('/');
+      const root = specifier.startsWith('@') ? segments.slice(0, 2).join('/') : segments[0];
+
+      if (!root || NODE_BUILTINS.has(root) || !VALID_PACKAGE_NAME.test(root)) {
+        continue;
+      }
+
+      packages.add(root);
+    }
+
+    return [...packages];
+  }
+
+  /** The version range to declare for a package we are adding. */
+  private resolveDependencyVersion(packageName: string): string {
+    for (const [key, version] of KNOWN_DEPENDENCY_VERSIONS) {
+      const matches = key.endsWith('/') ? packageName.startsWith(key) : packageName === key;
+      if (matches) {
+        return version;
+      }
+    }
+    return 'latest';
+  }
+
+  /**
+   * Reconcile the generated code's imports against its declared dependencies.
+   *
+   * Generated servers routinely import a package the generated `package.json`
+   * never declares - an S3 server imported `@aws-sdk/client-s3` against a
+   * manifest listing only the MCP SDK, zod and axios. `tsc` then fails with
+   * TS2307 ("Cannot find module") on every iteration, and no amount of *code*
+   * refinement can fix it, because the code was never the problem: all five
+   * iterations failed identically and the run was written off as a failure.
+   *
+   * Declaring the missing package turns that into a build that either succeeds
+   * or fails for a reason refinement can actually act on.
+   *
+   * Mutates `generatedCode.packageJson` in place and returns the packages added.
+   * Never throws: a manifest we cannot parse is left exactly as it is.
+   */
+  private reconcileDependencies(generatedCode: GeneratedCode): string[] {
+    if (!generatedCode.mainFile || !generatedCode.packageJson) {
+      return [];
+    }
+
+    let manifest: any;
+    try {
+      manifest = JSON.parse(generatedCode.packageJson);
+    } catch (error) {
+      this.logger.warn(
+        `Cannot reconcile dependencies - unparseable package.json: ${error.message}`,
+      );
+      return [];
+    }
+
+    if (!manifest || typeof manifest !== 'object') {
+      return [];
+    }
+
+    const declared = new Set([
+      ...Object.keys(manifest.dependencies || {}),
+      ...Object.keys(manifest.devDependencies || {}),
+      ...Object.keys(manifest.peerDependencies || {}),
+    ]);
+
+    const imported = this.extractImportedPackages(generatedCode.mainFile);
+    const missing = imported.filter((name) => !declared.has(name));
+
+    if (missing.length === 0) {
+      return [];
+    }
+
+    manifest.dependencies = { ...(manifest.dependencies || {}) };
+    for (const name of missing) {
+      manifest.dependencies[name] = this.resolveDependencyVersion(name);
+    }
+
+    generatedCode.packageJson = JSON.stringify(manifest, null, 2);
+
+    this.logger.log(
+      `Added ${missing.length} imported-but-undeclared dependency/ies to package.json: ` +
+        missing.map((name) => `${name}@${manifest.dependencies[name]}`).join(', '),
+    );
+
+    return missing;
+  }
+
+  /** The dependency names a generated manifest already declares. */
+  private declaredDependencies(packageJson?: string): string[] {
+    if (!packageJson) {
+      return [];
+    }
+    try {
+      const manifest = JSON.parse(packageJson);
+      return Object.keys(manifest?.dependencies || {});
+    } catch {
+      return [];
+    }
+  }
+
+  /** Strip a fenced TypeScript code block, if the model wrapped its output. */
+  private stripCodeFence(text: string): string {
+    const codeBlockMatch = text.match(/```(?:typescript|ts)?\n([\s\S]*?)\n```/);
+    return codeBlockMatch ? codeBlockMatch[1] : text;
+  }
+
+  /**
+   * Build the refineUntilWorking() return value for a test-INFRASTRUCTURE
+   * failure (the sandbox/test harness itself never validated the generated
+   * code), as opposed to a genuine test RESULT where the code ran and some
+   * tools failed.
+   *
+   * Deliberately does NOT run failure analysis or refineCode(): there is
+   * nothing about the generated code to diagnose when it was never actually
+   * exercised, and doing so anyway burns LLM calls on "fixing" code that was
+   * already fine, iteration after iteration, while producing misleading
+   * "root cause" analysis. shouldContinue is always false here, so the outer
+   * refine loop (GenerationPipeline.refine) stops immediately instead of
+   * spending its remaining iterations retrying an unrelated infrastructure
+   * problem. The generated code is still returned/persisted, matching the
+   * existing "partial success" persistence behavior.
+   */
+  private abortForTestInfrastructureFailure(
+    generatedCode: GeneratedCode,
+    iteration: number,
+    testStartTime: number,
+    message: string,
+    testResults?: McpServerTestResult,
+  ): {
+    success: boolean;
+    generatedCode: GeneratedCode;
+    testResults: McpServerTestResult;
+    iterations: number;
+    shouldContinue: boolean;
+    error: string;
+  } {
+    this.logger.warn(
+      `Iteration ${iteration}: test infrastructure failed before the generated code could be ` +
+        `validated (${message}); skipping code-fix refinement and stopping.`,
+    );
+
+    const resolvedTestResults: McpServerTestResult =
+      testResults ??
+      ({
+        containerId: 'n/a',
+        imageTag: 'n/a',
+        buildSuccess: false,
+        buildError: message,
+        buildDuration: 0,
+        toolsFound: generatedCode.metadata.tools.length,
+        toolsTested: 0,
+        toolsPassedCount: 0,
+        results: [],
+        overallSuccess: false,
+        totalDuration: Date.now() - testStartTime,
+        cleanupSuccess: true,
+        cleanupErrors: [],
+        timestamp: new Date(),
+        infrastructureFailure: true,
+      } satisfies McpServerTestResult);
+
+    return {
+      success: false,
+      generatedCode,
+      testResults: resolvedTestResults,
+      iterations: iteration,
+      shouldContinue: false,
+      error: `server generated but could not be validated: ${message}`,
+    };
   }
 
   /**
@@ -193,10 +624,10 @@ export class RefinementService {
    * Main entry point for refinement loop.
    * Iterates up to 5 times to get working MCP server.
    *
-   * @param state - Current graph state with generation plan
+   * @param state - Current pipeline state with generation plan
    * @returns Refinement result with final code and test results
    */
-  async refineUntilWorking(state: GraphState): Promise<{
+  async refineUntilWorking(state: PipelineState): Promise<{
     success: boolean;
     generatedCode: GeneratedCode;
     testResults: McpServerTestResult;
@@ -215,19 +646,60 @@ export class RefinementService {
       ? this.convertToGeneratedCode(state.generatedCode)
       : await this.generateInitialCode(state);
 
-    // Step 2: Test MCP server in Docker
+    // Step 1b: Make the manifest match the code before anything tries to build
+    // it. Covers both paths into this iteration - freshly generated code and
+    // code carried over from the previous iteration - so a missing dependency
+    // is fixed on the spot instead of failing the build identically five times.
+    const addedDependencies = this.reconcileDependencies(generatedCode);
+
+    // Step 2: Test MCP server in Docker (or the Kubernetes test-pod sandbox;
+    // see testMcpServer's backend selection). This can fail two structurally
+    // different ways, and only one of them is actionable by regenerating
+    // code:
+    //   - it can THROW: the test harness/sandbox itself never ran the
+    //     generated code at all (e.g. no sandbox backend reachable). There is
+    //     nothing about the generated code to "fix" here.
+    //   - it can RESOLVE with McpServerTestResult.infrastructureFailure set:
+    //     the harness attempted to provision a sandbox but a harness-level
+    //     operation failed (e.g. the Kubernetes test-pod Secret/Deployment/
+    //     Service create failed) before any tool ever ran. Same story: the
+    //     generated code was never exercised, so its buildError/results say
+    //     nothing about the code's quality.
+    // Both are test-INFRASTRUCTURE failures, not code failures, and must not
+    // drive the generate-fix-retest loop below (see abortForTestInfrastructureFailure).
     this.logger.log(`Testing MCP server: ${generatedCode.metadata.tools.length} tools`);
-    const testResults = await this.mcpTestingService.testMcpServer(
-      generatedCode,
-      {
+    const testStartTime = Date.now();
+    let testResults: McpServerTestResult;
+    try {
+      testResults = await this.mcpTestingService.testMcpServer(generatedCode, {
         cpuLimit: '0.5',
         memoryLimit: '512m',
         timeout: 30,
         toolTimeout: 5,
         networkMode: 'none',
         cleanup: true,
-      }
-    );
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return this.abortForTestInfrastructureFailure(
+        generatedCode,
+        iteration,
+        testStartTime,
+        message,
+      );
+    }
+
+    if (testResults.infrastructureFailure) {
+      const message =
+        testResults.buildError || 'the test sandbox failed to run the generated server';
+      return this.abortForTestInfrastructureFailure(
+        generatedCode,
+        iteration,
+        testStartTime,
+        message,
+        testResults,
+      );
+    }
 
     // Step 3: Check if all tools work
     if (testResults.overallSuccess && testResults.toolsPassedCount === testResults.toolsFound) {
@@ -252,25 +724,50 @@ export class RefinementService {
 
           if (protocolValid) {
             this.logger.log(
-              `✅ Protocol validation PASSED (${protocolValidation.checks.filter(c => c.passed).length}/${protocolValidation.checks.length} checks)`
+              `✅ Protocol validation PASSED (${protocolValidation.checks.filter((c) => c.passed).length}/${protocolValidation.checks.length} checks)`,
             );
           } else {
             this.logger.warn(
-              `⚠️ Protocol validation FAILED: ${protocolValidation.errors.join(', ')}`
+              `⚠️ Protocol validation FAILED: ${protocolValidation.errors.join(', ')}`,
             );
           }
         } catch (validationError) {
-          const errorMsg = validationError instanceof Error ? validationError.message : String(validationError);
+          const errorMsg =
+            validationError instanceof Error ? validationError.message : String(validationError);
           this.logger.warn(`Protocol validation error: ${errorMsg}`);
           // Don't fail on validation errors, just log
           protocolValid = true;
         }
       }
 
-      // Only succeed if both tool tests and protocol validation pass
+      // Only succeed if tool tests, protocol validation AND the quality gate pass
       if (protocolValid) {
+        const judgement = await this.runQualityGate(generatedCode, state);
+
+        if (judgement && !judgement.isValid && iteration < maxIterations) {
+          this.logger.warn(
+            `Tools and protocol pass but quality gate failed (score ${judgement.score}) - continuing refinement`,
+          );
+
+          const qualityFailures = this.toFailureAnalysis(judgement, generatedCode);
+          const refinedCode = await this.refineCode(
+            generatedCode,
+            qualityFailures,
+            state.generationPlan!,
+          );
+
+          return {
+            success: false,
+            generatedCode: refinedCode,
+            testResults,
+            failureAnalysis: qualityFailures,
+            iterations: iteration,
+            shouldContinue: true,
+          };
+        }
+
         this.logger.log(
-          `✅ SUCCESS! All ${testResults.toolsPassedCount} tools work (iteration ${iteration})`
+          `✅ SUCCESS! All ${testResults.toolsPassedCount} tools work (iteration ${iteration})`,
         );
 
         return {
@@ -289,14 +786,15 @@ export class RefinementService {
           failureCount: protocolValidation?.errors.length || 1,
           categories: [{ type: 'mcp_protocol', count: protocolValidation?.errors.length || 1 }],
           rootCauses: protocolValidation?.errors || ['Protocol validation failed'],
-          fixes: protocolValidation?.checks
-            .filter(c => !c.passed)
-            .map(c => ({
-              toolName: c.name.includes(':') ? c.name.split(':')[1] : 'server',
-              issue: c.message,
-              solution: `Fix ${c.name} compliance issue`,
-              priority: 'HIGH' as const,
-            })) || [],
+          fixes:
+            protocolValidation?.checks
+              .filter((c) => !c.passed)
+              .map((c) => ({
+                toolName: c.name.includes(':') ? c.name.split(':')[1] : 'server',
+                issue: c.message,
+                solution: `Fix ${c.name} compliance issue`,
+                priority: 'HIGH' as const,
+              })) || [],
           recommendation: 'Fix MCP protocol compliance issues identified by validation',
         };
 
@@ -304,7 +802,7 @@ export class RefinementService {
         const refinedCode = await this.refineCode(
           generatedCode,
           protocolFailures,
-          state.generationPlan!
+          state.generationPlan!,
         );
 
         return {
@@ -321,7 +819,7 @@ export class RefinementService {
     // Step 4: Check max iterations
     if (iteration >= maxIterations) {
       this.logger.warn(
-        `Max iterations (${maxIterations}) reached. ${testResults.toolsPassedCount}/${testResults.toolsFound} tools passed.`
+        `Max iterations (${maxIterations}) reached. ${testResults.toolsPassedCount}/${testResults.toolsFound} tools passed.`,
       );
 
       return {
@@ -336,14 +834,18 @@ export class RefinementService {
 
     // Step 5: Analyze failures
     this.logger.log(`Analyzing ${testResults.toolsFound - testResults.toolsPassedCount} failures`);
-    const failureAnalysis = await this.analyzeFailures(testResults, generatedCode);
+    const failureAnalysis = await this.analyzeFailures(
+      testResults,
+      generatedCode,
+      addedDependencies,
+    );
 
     // Step 6: Refine code
     this.logger.log(`Refining code based on ${failureAnalysis.fixes.length} fixes`);
     const refinedCode = await this.refineCode(
       generatedCode,
       failureAnalysis,
-      state.generationPlan!
+      state.generationPlan!,
     );
 
     // Step 7: Continue loop
@@ -360,66 +862,59 @@ export class RefinementService {
   /**
    * Generate Initial Code
    *
-   * Creates first version of MCP server from generation plan.
+   * Creates the first version of the MCP server from the planned tool set.
    *
-   * Priority:
-   * 1. If ensemble has discovered tools (in generationPlan.toolsToGenerate) - use them
-   * 2. Otherwise, fall back to McpGenerationService for GitHub URLs
-   *
-   * @param state - Graph state with generation plan
+   * @param state - Pipeline state with generation plan
    * @returns Generated code structure
    */
-  private async generateInitialCode(state: GraphState): Promise<GeneratedCode> {
+  private async generateInitialCode(state: PipelineState): Promise<GeneratedCode> {
     const plan = state.generationPlan;
     if (!plan) {
       throw new Error('No generation plan available');
     }
 
-    // PRIORITY: If ensemble already discovered tools, use generateFromPlan
-    // This respects the ensemble's work and avoids duplicate tool discovery
-    if (plan.toolsToGenerate && plan.toolsToGenerate.length > 0) {
-      this.logger.log(`Using ${plan.toolsToGenerate.length} tools from ensemble for MCP server generation`);
-      return await this.generateFromPlan(state);
+    if (!plan.toolsToGenerate || plan.toolsToGenerate.length === 0) {
+      throw new Error(
+        'No tools available for MCP server generation - the planning step produced none.',
+      );
     }
 
-    // Fallback: Use McpGenerationService for GitHub URLs when no ensemble tools exist
-    const githubUrl = state.extractedData?.githubUrl;
-    if (githubUrl && githubUrl.trim().length > 0 && githubUrl.includes('github.com')) {
-      this.logger.log(`Generating MCP server from GitHub repository (no ensemble tools): ${githubUrl}`);
-      const generated = await this.mcpGenerationService.generateMCPServer(githubUrl);
-      return this.convertToGeneratedCode(generated);
-    }
-
-    // No tools available and no GitHub URL - cannot generate
-    throw new Error('No tools available for MCP server generation. Ensemble did not produce tools and no GitHub URL provided.');
+    this.logger.log(`Using ${plan.toolsToGenerate.length} planned tools for MCP server generation`);
+    return this.generateFromPlan(state);
   }
 
   /**
    * Generate From Plan
    *
-   * Generates MCP server code directly from research findings and generation plan
-   * when no GitHub URL is provided (e.g., service name requests like "Stripe API").
+   * Generates MCP server code from research findings and the planned tool set.
    *
-   * @param state - Graph state with research and generation plan
+   * @param state - Pipeline state with research and generation plan
    * @returns Generated code structure
    */
-  private async generateFromPlan(state: GraphState): Promise<GeneratedCode> {
+  private async generateFromPlan(state: PipelineState): Promise<GeneratedCode> {
     const plan = state.generationPlan!;
     const research = state.researchPhase;
 
     // Validate that we have tools to generate
     if (!plan.toolsToGenerate || plan.toolsToGenerate.length === 0) {
-      throw new Error('No tools specified in generation plan. Cannot generate MCP server without tools.');
+      throw new Error(
+        'No tools specified in generation plan. Cannot generate MCP server without tools.',
+      );
     }
 
-    // Extract service name from user input or research
-    const serviceName = state.userInput.match(/(?:for|with)\s+(?:the\s+)?([A-Z][a-zA-Z\s]+(?:API|api))/)?.[1]
-      || research?.synthesizedPlan?.summary?.match(/([A-Z][a-zA-Z\s]+(?:API|api))/)?.[1]
-      || 'API';
+    // The planner names the server; fall back to deriving it from the request.
+    const serviceName =
+      state.userInput.match(/(?:for|with)\s+(?:the\s+)?([A-Z][a-zA-Z\s]+(?:API|api))/)?.[1] ||
+      research?.synthesizedPlan?.summary?.match(/([A-Z][a-zA-Z\s]+(?:API|api))/)?.[1] ||
+      'API';
 
-    const serverName = serviceName.toLowerCase().replace(/\s+/g, '-').replace(/api$/i, '') + '-mcp';
+    const serverName =
+      plan.serverName ||
+      serviceName.toLowerCase().replace(/\s+/g, '-').replace(/api$/i, '') + '-mcp';
 
-    this.logger.log(`Generating MCP server "${serverName}" with ${plan.toolsToGenerate.length} tools`);
+    this.logger.log(
+      `Generating MCP server "${serverName}" with ${plan.toolsToGenerate.length} tools`,
+    );
 
     // Generate TypeScript MCP server code using LLM
     const mainFile = await this.generateMainFile(state, serverName);
@@ -428,11 +923,11 @@ export class RefinementService {
 
     // Filter out any undefined tools and validate structure
     const validTools = plan.toolsToGenerate
-      .filter(t => t && t.name && t.description)
-      .map(t => ({
+      .filter((t) => t && t.name && t.description)
+      .map((t) => ({
         name: t.name,
         inputSchema: t.parameters || {},
-        description: t.description
+        description: t.description,
       }));
 
     if (validTools.length === 0) {
@@ -443,7 +938,14 @@ export class RefinementService {
       mainFile,
       packageJson,
       tsConfig,
-      supportingFiles: {},
+      // Every generated server needs a Dockerfile: container-registry.service.ts
+      // runs `docker build` directly against the on-disk server directory when
+      // deploying. This is the initial generation path, so emitting them here is
+      // required - convertToGeneratedCode only covers refinement iterations 2+.
+      supportingFiles: {
+        Dockerfile: this.generateDockerfile(),
+        '.dockerignore': this.generateDockerignore(),
+      },
       metadata: {
         tools: validTools,
         iteration: 1,
@@ -460,11 +962,11 @@ export class RefinementService {
    *
    * Respects user's tool count constraints (Issue #137).
    *
-   * @param state - Graph state with research and plan
+   * @param state - Pipeline state with research and plan
    * @param serverName - Name of the MCP server
    * @returns Generated TypeScript code
    */
-  private async generateMainFile(state: GraphState, serverName: string): Promise<string> {
+  private async generateMainFile(state: PipelineState, serverName: string): Promise<string> {
     const plan = state.generationPlan!;
     const research = state.researchPhase;
 
@@ -474,24 +976,27 @@ export class RefinementService {
     }
 
     // Filter out any undefined or invalid tools
-    const validTools = plan.toolsToGenerate.filter(t => t && t.name && t.description);
+    const validTools = plan.toolsToGenerate.filter((t) => t && t.name && t.description);
 
     if (validTools.length === 0) {
       throw new Error('No valid tools with name and description found in generation plan');
     }
 
     const toolCount = validTools.length;
-    const toolsList = validTools.map(t => `- ${t.name}: ${t.description}`).join('\n');
+    const toolsList = validTools.map((t) => `- ${t.name}: ${t.description}`).join('\n');
 
     // Build constraint warning if user specified limits (Issue #137)
     let constraintWarning = '';
-    if (state.requestedToolCount || state.requestedToolNames?.length) {
+    if (state.requestedToolCount || state.requestedToolNames?.length || state.readOnlyOnly) {
       constraintWarning = `\n**⚠️ CRITICAL: USER TOOL CONSTRAINTS**\n`;
       if (state.requestedToolCount) {
         constraintWarning += `- User explicitly requested ${state.requestedToolCount} tools\n`;
       }
       if (state.requestedToolNames?.length) {
         constraintWarning += `- User specifically requested: ${state.requestedToolNames.join(', ')}\n`;
+      }
+      if (state.readOnlyOnly) {
+        constraintWarning += `- User asked for READ-ONLY tools: implement NO create/update/delete/write behaviour\n`;
       }
       constraintWarning += `- Implement EXACTLY the ${toolCount} tools listed below\n`;
       constraintWarning += `- Do NOT add extra tools, helpers, or "nice-to-have" functionality\n`;
@@ -513,40 +1018,32 @@ ${JSON.stringify(plan, null, 2)}
 ${toolsList}
 
 **Requirements**:
-1. Use @modelcontextprotocol/sdk for MCP protocol - FOLLOW THE REFERENCE IMPLEMENTATION EXACTLY
+1. Use @modelcontextprotocol/sdk for MCP protocol - FOLLOW THE REFERENCE IMPLEMENTATION EXACTLY (high-level McpServer + registerTool, NOT the low-level Server + setRequestHandler API)
 2. Implement EXACTLY ${toolCount} tools from the plan above - no additional tools
 3. Use proper TypeScript types (no implicit any)
-4. Include error handling using Zod v3 .issues (NOT .errors)
+4. Include error handling using Zod .issues (NOT .errors) if you manually validate input beyond what registerTool's inputSchema already validates
 5. Follow MCP protocol exactly: return { content: [{ type: 'text', text: '...' }] }
 6. Use axios for HTTP requests if needed
 7. Include proper authentication handling
-8. Use StdioServerTransport() with NO ARGUMENTS
+8. Implement BOTH transports exactly as in the reference: read \`MCP_TRANSPORT\` from the environment - unset or \`"stdio"\` MUST start \`StdioServerTransport\` (this is the default and must keep working), \`"http"\` MUST start \`StreamableHTTPServerTransport\` on \`process.env.PORT || 3000\` with a per-session McpServer keyed by \`Mcp-Session-Id\`, plus a \`GET /health\` route returning 200 JSON. Never \`console.log\` - all logging goes to \`console.error\`.
+
+**Dependencies**: \`@modelcontextprotocol/sdk\`, \`zod\` and \`axios\` are declared already -
+prefer them. If this server genuinely needs another package (an official SDK, for
+example), import it normally: the manifest is reconciled against your imports before the
+build, so it will be declared for you. Never import a package you do not use.
 
 **Output Format**: Return ONLY the complete TypeScript code, no explanations.
 Start with imports.`;
 
-    this.logger.log(`Prompt prepared for ${toolCount} valid tools (user constraint: ${state.requestedToolCount || 'none'})`);
-
+    this.logger.log(
+      `Prompt prepared for ${toolCount} valid tools (user constraint: ${state.requestedToolCount || 'none'})`,
+    );
 
     try {
-      // Use codeGenLlm with higher token limit to prevent truncation (Issue #136)
-      const response = await this.codeGenLlm.invoke(prompt);
-      let code = response.content.toString();
+      const response = await this.generateCode(prompt, 'refinement.generateMainFile');
+      const code = this.stripCodeFence(response);
 
-      // Remove markdown code blocks if present
-      const codeBlockMatch = code.match(/\`\`\`(?:typescript|ts)?\n([\s\S]*?)\n\`\`\`/);
-      if (codeBlockMatch) {
-        code = codeBlockMatch[1];
-      }
-
-      // Detect truncation: valid TypeScript files must end with proper structure
-      const truncationDetected = this.detectTruncation(code);
-      if (truncationDetected) {
-        this.logger.warn(`Code truncation detected! Attempting recovery...`);
-        code = this.attemptTruncationRecovery(code);
-      }
-
-      this.logger.log(`Generated main file: ${code.length} characters (truncation: ${truncationDetected})`);
+      this.logger.log(`Generated main file: ${code.length} characters`);
       return code;
     } catch (error) {
       this.logger.error(`Code generation failed: ${error.message}`);
@@ -557,14 +1054,13 @@ Start with imports.`;
   /**
    * Convert to Generated Code
    *
-   * Converts McpGenerationService output to GeneratedCode format.
+   * Normalises a loosely-shaped generated-code object into GeneratedCode.
    *
-   * @param generated - Output from McpGenerationService
+   * @param generated - Generated code from a previous refinement iteration
    * @returns GeneratedCode structure
    */
   private convertToGeneratedCode(generated: any): GeneratedCode {
-    // Handle GeneratedServer structure from McpGenerationService
-    // GeneratedServer has: files[], metadata.tools, serverName
+    // Tolerate a files[] array shape as well as the flat mainFile shape
     // We need to convert to: mainFile, packageJson, tsConfig, supportingFiles, metadata
 
     // Extract main file from files array if available
@@ -591,6 +1087,17 @@ Start with imports.`;
 
     // Extract tools - check metadata.tools first (GeneratedServer), then root tools
     const tools = generated.metadata?.tools || generated.tools || [];
+
+    // Every generated server needs a Dockerfile: container-registry.service.ts
+    // runs `docker build` directly against the on-disk server directory when
+    // deploying to cloud hosting, and nothing else in the pipeline emits one.
+    // Don't clobber a Dockerfile the generation step may have already produced.
+    if (!supportingFiles['Dockerfile']) {
+      supportingFiles['Dockerfile'] = this.generateDockerfile();
+    }
+    if (!supportingFiles['.dockerignore']) {
+      supportingFiles['.dockerignore'] = this.generateDockerignore();
+    }
 
     return {
       mainFile,
@@ -625,9 +1132,17 @@ Start with imports.`;
           start: 'node dist/index.js',
         },
         dependencies: {
-          '@modelcontextprotocol/sdk': '^0.5.0',
-          'zod': '^3.23.0',
-          'axios': '^1.7.0',
+          // Pinned to the EXACT version empirically verified for the
+          // dual-transport (stdio + Streamable HTTP) reference implementation
+          // - see MCP_REFERENCE_IMPLEMENTATION and KNOWN_DEPENDENCY_VERSIONS.
+          // Do not loosen to a caret range: the high-level
+          // McpServer/registerTool/StreamableHTTPServerTransport surface this
+          // reference relies on was only confirmed on this exact version.
+          '@modelcontextprotocol/sdk': '1.30.0',
+          // Verified major alongside the SDK above (raw-shape inputSchema,
+          // .issues error API).
+          zod: '^4.4.3',
+          axios: '^1.7.0',
         },
         devDependencies: {
           '@types/node': '^20.0.0',
@@ -635,7 +1150,7 @@ Start with imports.`;
         },
       },
       null,
-      2
+      2,
     );
   }
 
@@ -651,8 +1166,13 @@ Start with imports.`;
       {
         compilerOptions: {
           target: 'ES2022',
-          module: 'Node16',
-          moduleResolution: 'Node16',
+          module: 'NodeNext',
+          moduleResolution: 'NodeNext',
+          // Required under NodeNext, or every Node global (process, Buffer,
+          // etc.) fails strict tsc - the dual-transport reference implementation
+          // uses node:http and node:crypto directly.
+          lib: ['ES2022'],
+          types: ['node'],
           outDir: './dist',
           rootDir: './src',
           strict: true,
@@ -662,8 +1182,61 @@ Start with imports.`;
         include: ['src/**/*'],
       },
       null,
-      2
+      2,
     );
+  }
+
+  /**
+   * Generate Dockerfile
+   *
+   * Creates a simple multi-stage Dockerfile so generated MCP servers are
+   * container-buildable out of the box. container-registry.service.ts runs
+   * `docker build` directly against the generated server directory when
+   * deploying to cloud hosting, so every generated server needs one of these.
+   *
+   * Containers are for hosting, so the HTTP transport is the right default
+   * here: MCP_TRANSPORT=http selects StreamableHTTPServerTransport on PORT
+   * 3000 (see MCP_REFERENCE_IMPLEMENTATION). Local/CLI use of the same
+   * generated server still defaults to stdio when run outside this image.
+   *
+   * @returns Dockerfile contents
+   */
+  private generateDockerfile(): string {
+    return `# Auto-generated by MCP Everything - simple Node 20 multi-stage build
+FROM node:20-alpine AS build
+WORKDIR /app
+COPY package*.json ./
+# npm install, not npm ci: generated servers ship without a package-lock.json
+RUN npm install --ignore-scripts --no-audit --no-fund
+COPY . .
+RUN npm run build
+
+FROM node:20-alpine
+WORKDIR /app
+RUN addgroup -g 1001 -S mcp && adduser -S mcp -u 1001
+COPY --from=build /app/package*.json ./
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/dist ./dist
+USER mcp
+ENV MCP_TRANSPORT=http
+ENV PORT=3000
+EXPOSE 3000
+CMD ["node", "dist/index.js"]
+`;
+  }
+
+  /**
+   * Generate .dockerignore
+   *
+   * @returns .dockerignore contents
+   */
+  private generateDockerignore(): string {
+    return `node_modules
+dist
+.git
+*.log
+.env
+`;
   }
 
   /**
@@ -684,9 +1257,11 @@ Start with imports.`;
    */
   private async analyzeFailures(
     testResults: McpServerTestResult,
-    generatedCode: GeneratedCode
+    generatedCode: GeneratedCode,
+    addedDependencies: string[] = [],
   ): Promise<FailureAnalysis> {
-    const failures = testResults.results.filter(r => !r.success);
+    const failures = testResults.results.filter((r) => !r.success);
+    const declared = this.declaredDependencies(generatedCode.packageJson);
 
     const prompt = `${getPlatformContextPrompt()}
 
@@ -698,7 +1273,14 @@ ${MCP_REFERENCE_IMPLEMENTATION}
 - Server Name: ${generatedCode.metadata.serverName}
 - Tools: ${generatedCode.metadata.tools.length}
 - Iteration: ${generatedCode.metadata.iteration}
-
+- Declared dependencies: ${declared.join(', ') || 'none'}
+${
+  addedDependencies.length
+    ? `- NOTE: ${addedDependencies.join(', ')} were imported by the code but missing from ` +
+      'package.json, and have just been declared automatically. Do NOT propose adding them ' +
+      'again, and do NOT propose rewriting the code to avoid them - they are installed now.\n'
+    : ''
+}
 **Test Results**:
 - Total Tools: ${testResults.toolsFound}
 - Passed: ${testResults.toolsPassedCount}
@@ -708,12 +1290,16 @@ ${MCP_REFERENCE_IMPLEMENTATION}
 ${testResults.buildError ? `**Build Error**:\n${testResults.buildError}\n` : ''}
 
 **Tool Failures**:
-${failures.map((f, i) => `
+${failures
+  .map(
+    (f, i) => `
 ${i + 1}. Tool: ${f.toolName}
    - Error: ${f.error}
    - MCP Compliant: ${f.mcpCompliant}
    - Execution Time: ${f.executionTime}ms
-`).join('\n')}
+`,
+  )
+  .join('\n')}
 
 **Task**: Analyze root causes and provide specific fixes.
 
@@ -724,28 +1310,12 @@ ${i + 1}. Tool: ${f.toolName}
 4. **Logic**: Incorrect implementation, wrong outputs
 5. **Timeout**: Tools taking >5 seconds
 
-**Output Format** (STRICT JSON):
-\`\`\`json
-{
-  "failureCount": number,
-  "categories": [
-    { "type": "syntax|runtime|mcp_protocol|logic|timeout", "count": number }
-  ],
-  "rootCauses": [
-    "Specific description of root cause"
-  ],
-  "fixes": [
-    {
-      "toolName": "tool_name",
-      "issue": "Specific issue description",
-      "solution": "Specific code fix or change needed",
-      "priority": "HIGH|MEDIUM|LOW",
-      "codeSnippet": "Optional: Example code showing the fix"
-    }
-  ],
-  "recommendation": "Overall strategy for fixing all issues"
-}
-\`\`\`
+**Provide**:
+- failureCount
+- categories: [{ type: syntax|runtime|mcp_protocol|logic|timeout, count }]
+- rootCauses: specific descriptions of each root cause
+- fixes: [{ toolName, issue, solution, priority: HIGH|MEDIUM|LOW, codeSnippet (optional) }]
+- recommendation: overall strategy for fixing all issues
 
 **Quality Guidelines**:
 - Be specific: "Missing 'result' field in MCP response" not "Protocol error"
@@ -762,19 +1332,19 @@ ${i + 1}. Tool: ${f.toolName}
     "priority": "HIGH",
     "codeSnippet": "return { content: [{ type: 'text', text: JSON.stringify(userData) }] };"
   }]
-}
-
-Return ONLY valid JSON with failure analysis.`;
+}`;
 
     try {
-      const response = await this.llm.invoke(prompt);
-      const content = response.content.toString();
-
-      // Extract JSON using safe bracket-balanced parsing
-      const analysis = safeParseJSON<FailureAnalysis>(content, this.logger);
+      const analysis: FailureAnalysis = await this.anthropic.completeStructured({
+        prompt,
+        schema: FailureAnalysisSchema,
+        schemaName: 'FailureAnalysis',
+        maxTokens: ANALYSIS_MAX_TOKENS,
+        caller: 'refinement.analyzeFailures',
+      });
 
       this.logger.log(
-        `Failure analysis: ${analysis.rootCauses.length} root causes, ${analysis.fixes.length} fixes`
+        `Failure analysis: ${analysis.rootCauses.length} root causes, ${analysis.fixes.length} fixes`,
       );
 
       return analysis;
@@ -785,8 +1355,8 @@ Return ONLY valid JSON with failure analysis.`;
       return {
         failureCount: failures.length,
         categories: [{ type: 'runtime', count: failures.length }],
-        rootCauses: failures.map(f => f.error || 'Unknown error'),
-        fixes: failures.map(f => ({
+        rootCauses: failures.map((f) => f.error || 'Unknown error'),
+        fixes: failures.map((f) => ({
           toolName: f.toolName,
           issue: f.error || 'Tool failed',
           solution: 'Review tool implementation and ensure MCP protocol compliance',
@@ -816,13 +1386,21 @@ Return ONLY valid JSON with failure analysis.`;
   private async refineCode(
     generatedCode: GeneratedCode,
     failureAnalysis: FailureAnalysis,
-    plan: GraphState['generationPlan']
+    _plan: PipelineState['generationPlan'],
   ): Promise<GeneratedCode> {
+    const declared = this.declaredDependencies(generatedCode.packageJson);
+
     const prompt = `${getPlatformContextPrompt()}
 
 **Your Role**: Fix MCP server code efficiently. Apply systematic fixes that address root causes.
 
 ${MCP_REFERENCE_IMPLEMENTATION}
+
+**Dependencies declared in this server's package.json**: ${declared.join(', ') || 'none'}
+Prefer these - they are installed and importable. If a fix genuinely needs another
+package, import it normally: the manifest is reconciled against your imports before the
+build, so the dependency will be declared for you. Do NOT hand-roll HTTP calls or
+reimplement an SDK just to avoid adding an import.
 
 **Original Code**:
 \`\`\`typescript
@@ -840,12 +1418,15 @@ ${failureAnalysis.fixes
     const priorityOrder = { HIGH: 3, MEDIUM: 2, LOW: 1 };
     return priorityOrder[b.priority] - priorityOrder[a.priority];
   })
-  .map((f, i) => `
+  .map(
+    (f, i) => `
 ${i + 1}. **${f.toolName}** (${f.priority}):
    - Issue: ${f.issue}
    - Solution: ${f.solution}
    ${f.codeSnippet ? `- Example: ${f.codeSnippet}` : ''}
-`).join('\n')}
+`,
+  )
+  .join('\n')}
 
 **Recommendation**: ${failureAnalysis.recommendation}
 
@@ -855,8 +1436,10 @@ ${i + 1}. **${f.toolName}** (${f.priority}):
 1. Fix ALL issues listed above
 2. Maintain MCP protocol compliance - FOLLOW THE REFERENCE IMPLEMENTATION:
    - Return { content: [{ type: 'text', text: '...' }] }
-   - Use StdioServerTransport() with NO ARGUMENTS
-   - Use Zod v3 .issues (NOT .errors) for validation errors
+   - Use the high-level McpServer + registerTool API (NOT the low-level Server + setRequestHandler API)
+   - Keep BOTH transports working: MCP_TRANSPORT unset or "stdio" -> StdioServerTransport (the default), MCP_TRANSPORT=http -> StreamableHTTPServerTransport on process.env.PORT || 3000 with a per-session McpServer keyed by Mcp-Session-Id, plus GET /health. Do NOT regress to a stdio-only implementation.
+   - Never console.log (stdout is the JSON-RPC channel in stdio mode) - all logging goes to console.error
+   - Use Zod .issues (NOT .errors) for validation errors
    - Include proper TypeScript types (no implicit any)
 3. Preserve working tools (don't break what works)
 4. Keep code structure and imports
@@ -867,25 +1450,10 @@ Return ONLY the complete corrected TypeScript code (no explanations, no markdown
 Start directly with the imports.`;
 
     try {
-      // Use codeGenLlm with higher token limit to prevent truncation (Issue #136)
-      const response = await this.codeGenLlm.invoke(prompt);
-      const content = response.content.toString();
+      const response = await this.generateCode(prompt, 'refinement.refineCode');
+      const refinedCode = this.stripCodeFence(response);
 
-      // Extract TypeScript code (remove markdown if present)
-      let refinedCode = content;
-      const codeBlockMatch = content.match(/```(?:typescript|ts)?\n([\s\S]*?)\n```/);
-      if (codeBlockMatch) {
-        refinedCode = codeBlockMatch[1];
-      }
-
-      // Detect truncation and attempt recovery (Issue #136)
-      const truncationDetected = this.detectTruncation(refinedCode);
-      if (truncationDetected) {
-        this.logger.warn(`Code truncation detected in refinement! Attempting recovery...`);
-        refinedCode = this.attemptTruncationRecovery(refinedCode);
-      }
-
-      this.logger.log(`Code refined: ${refinedCode.length} characters (truncation: ${truncationDetected})`);
+      this.logger.log(`Code refined: ${refinedCode.length} characters`);
 
       // Return new GeneratedCode with refined main file
       return {
@@ -904,114 +1472,206 @@ Start directly with the imports.`;
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Quality gate (salvaged from the retired McpGenerationService)
+  // ---------------------------------------------------------------------------
+
   /**
-   * Detect Truncation
+   * Run the LLM-as-judge quality gate on code that already passed tool tests
+   * and protocol validation.
    *
-   * Checks if generated TypeScript code appears to be truncated.
-   * Valid MCP server files should end with proper structure.
+   * Docker tests prove the tools *run*; the judge catches what running cannot:
+   * leftover TODO/placeholder bodies, truncated files, commentary before the
+   * imports, tools present in the plan but missing from the implementation.
    *
-   * Detection heuristics:
-   * 1. File should end with main() call or export
-   * 2. Braces should be balanced
-   * 3. No trailing incomplete statements
-   *
-   * @param code - Generated TypeScript code
-   * @returns True if truncation detected
+   * Returns null when the gate is disabled or errored (never blocks a run).
    */
-  private detectTruncation(code: string): boolean {
-    if (!code || code.length === 0) {
-      return true;
+  private async runQualityGate(
+    generatedCode: GeneratedCode,
+    state: PipelineState,
+  ): Promise<CodeQualityJudgement | null> {
+    if (!this.qualityGateEnabled) {
+      return null;
     }
 
-    const trimmedCode = code.trim();
-
-    // Check 1: Valid TypeScript files should end with specific patterns
-    const validEndings = [
-      /main\(\)\.catch\([^)]*\);?\s*$/,           // main().catch(console.error);
-      /main\(\);?\s*$/,                            // main();
-      /export\s+\{[^}]*\};?\s*$/,                 // export { ... };
-      /export\s+default\s+\w+;?\s*$/,             // export default X;
-      /\}\s*$/,                                    // ends with closing brace
-    ];
-
-    const hasValidEnding = validEndings.some(pattern => pattern.test(trimmedCode));
-
-    // Check 2: Brace balance (opening vs closing)
-    const openBraces = (code.match(/\{/g) || []).length;
-    const closeBraces = (code.match(/\}/g) || []).length;
-    const bracesBalanced = openBraces === closeBraces;
-
-    // Check 3: Parentheses balance
-    const openParens = (code.match(/\(/g) || []).length;
-    const closeParens = (code.match(/\)/g) || []).length;
-    const parensBalanced = openParens === closeParens;
-
-    // Check 4: Look for obvious truncation patterns
-    const truncationPatterns = [
-      /[=+\-*/%&|^!<>]\s*$/,    // ends with operator
-      /,\s*$/,                   // ends with comma
-      /\(\s*$/,                  // ends with open paren
-      /\[\s*$/,                  // ends with open bracket
-      /:\s*$/,                   // ends with colon
-      /\.\s*$/,                  // ends with dot
-      /=>\s*$/,                  // ends with arrow
-      /\b(if|else|for|while|switch|try|catch|const|let|var|function|async|await|return)\s*$/i,
-    ];
-
-    const hasObviousTruncation = truncationPatterns.some(pattern => pattern.test(trimmedCode));
-
-    // Truncation detected if any of these conditions fail
-    const isTruncated = !hasValidEnding || !bracesBalanced || !parensBalanced || hasObviousTruncation;
-
-    if (isTruncated) {
-      this.logger.debug(`Truncation detection: validEnding=${hasValidEnding}, braces=${openBraces}/${closeBraces}, parens=${openParens}/${closeParens}, obviousTruncation=${hasObviousTruncation}`);
+    try {
+      const judgement = await this.judgeCodeQuality(generatedCode, state);
+      this.logger.log(
+        `Quality gate: ${judgement.isValid ? 'PASSED' : 'FAILED'} ` +
+          `(score ${judgement.score}, ${judgement.issues.length} issues)`,
+      );
+      return judgement;
+    } catch (error) {
+      this.logger.warn(`Quality gate error, treating as pass: ${error.message}`);
+      return null;
     }
-
-    return isTruncated;
   }
 
   /**
-   * Attempt Truncation Recovery
+   * Judge Code Quality
    *
-   * Tries to fix truncated code by adding missing closing structures.
-   * This is a best-effort recovery - the code may still not compile,
-   * but the refinement loop will catch and fix remaining issues.
-   *
-   * @param code - Truncated TypeScript code
-   * @returns Code with attempted fixes
+   * Combines a real TypeScript compile check with an LLM judge that scores the
+   * implementation against MCP protocol and completeness criteria.
    */
-  private attemptTruncationRecovery(code: string): string {
-    let fixedCode = code.trim();
+  private async judgeCodeQuality(
+    generatedCode: GeneratedCode,
+    state: PipelineState,
+  ): Promise<CodeQualityJudgement> {
+    const code = generatedCode.mainFile;
+    const tsValidation = this.validateTypeScriptCompilation(code);
 
-    // Count unbalanced braces and add closing ones
-    const openBraces = (fixedCode.match(/\{/g) || []).length;
-    const closeBraces = (fixedCode.match(/\}/g) || []).length;
-    const missingBraces = openBraces - closeBraces;
+    const plannedTools =
+      state.generationPlan?.toolsToGenerate || generatedCode.metadata.tools || [];
+    const toolNames = plannedTools.map((t: any) => t.name).join(', ');
+    const firstLine = code.split('\n')[0].trim();
+    const hasServerConnect =
+      code.includes('server.connect(transport)') || code.includes('await server.connect(');
+    const hasTodos = /TODO|FIXME|placeholder/i.test(code);
 
-    if (missingBraces > 0) {
-      this.logger.debug(`Adding ${missingBraces} missing closing braces`);
-      fixedCode += '\n' + '}'.repeat(missingBraces);
+    const prompt = `You are a strict code quality judge for TypeScript MCP servers.
+
+**VALIDATION CRITERIA (ALL must pass):**
+
+**1. File Structure (CRITICAL):**
+- Code must start with TypeScript imports
+- NO commentary text before imports
+- NO markdown code blocks
+- Complete file from imports to main() function
+
+**2. TypeScript Syntax:**
+- Valid, parseable TypeScript
+- Proper import statements
+- No syntax errors, no truncated file
+
+**3. MCP Protocol Compliance:**
+- Uses @modelcontextprotocol/sdk correctly
+- Has a ListToolsRequestSchema handler
+- Has a CallToolRequestSchema handler
+- Returns { content: [{ type: 'text', text: '...' }] }
+- Has an async main() with await server.connect(transport)
+
+**4. Implementation Completeness:**
+- ALL planned tools have real implementations
+- NO TODO, FIXME or placeholder bodies
+- No tool returns fabricated/stubbed data
+- No incomplete code blocks, no file truncated mid-function
+
+**5. Scope:**
+- EXACTLY the planned tools are implemented - no extras
+
+**Server**: ${generatedCode.metadata.serverName}
+**Refinement iteration**: ${generatedCode.metadata.iteration}
+**Planned tools (${plannedTools.length})**: ${toolNames}
+
+**Pre-check results:**
+- First line: "${firstLine}"
+- Starts with import: ${firstLine.startsWith('import')}
+- Has server.connect(transport): ${hasServerConnect}
+- Contains TODO/FIXME/placeholder: ${hasTodos}
+- TypeScript parses (syntax only): ${tsValidation.compiles}
+- Syntax errors: ${tsValidation.errors.slice(0, 20).join('; ') || 'None'}
+
+**Code to evaluate:**
+\`\`\`typescript
+${code}
+\`\`\`
+
+Be strict: if any criterion fails, \`isValid\` must be false. Score 0-100.
+Each issue needs a category, the concrete problem, and an actionable fix.`;
+
+    const judgement = await this.anthropic.completeStructured({
+      prompt,
+      schema: CodeQualityJudgementSchema,
+      schemaName: 'CodeQualityJudgement',
+      maxTokens: ANALYSIS_MAX_TOKENS,
+      caller: 'refinement.judgeCodeQuality',
+    });
+
+    // A syntax error is objective - it overrides an optimistic judge.
+    const compilationIssues: CodeQualityJudgement['issues'] = tsValidation.errors.map((error) => ({
+      category: 'typescript' as const,
+      message: error,
+      suggestion: 'Fix the TypeScript syntax error',
+    }));
+
+    return {
+      isValid: judgement.isValid && tsValidation.compiles,
+      score: judgement.score,
+      feedback: judgement.feedback,
+      issues: [...compilationIssues, ...judgement.issues],
+    };
+  }
+
+  /**
+   * Validate TypeScript Syntax
+   *
+   * In-process syntactic check of the generated main file: catches truncated
+   * files, unbalanced blocks, and prose accidentally emitted before the imports
+   * - the failure modes that waste a full Docker build round-trip.
+   *
+   * Deliberately syntax-only. Full type checking needs the server's real
+   * `node_modules` (`@modelcontextprotocol/sdk`, `zod`, lib.d.ts), which this
+   * process does not have; the Docker build in McpTestingService runs `tsc`
+   * against the installed dependencies and is the authority on type errors.
+   */
+  private validateTypeScriptCompilation(code: string): { compiles: boolean; errors: string[] } {
+    try {
+      const { diagnostics = [] } = ts.transpileModule(code, {
+        reportDiagnostics: true,
+        compilerOptions: {
+          target: ts.ScriptTarget.ES2022,
+          module: ts.ModuleKind.ESNext,
+          esModuleInterop: true,
+        },
+      });
+
+      const errors = diagnostics
+        .filter((diagnostic) => diagnostic.category === ts.DiagnosticCategory.Error)
+        .map((diagnostic) => {
+          const message = ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n');
+          const line =
+            diagnostic.file && diagnostic.start !== undefined
+              ? diagnostic.file.getLineAndCharacterOfPosition(diagnostic.start).line + 1
+              : 0;
+          return `Line ${line}: ${message}`;
+        });
+
+      return { compiles: errors.length === 0, errors };
+    } catch (error) {
+      return {
+        compiles: false,
+        errors: [`TypeScript parse error: ${error.message}`],
+      };
     }
+  }
 
-    // Count unbalanced parentheses
-    const openParens = (fixedCode.match(/\(/g) || []).length;
-    const closeParens = (fixedCode.match(/\)/g) || []).length;
-    const missingParens = openParens - closeParens;
+  /** Translate a failed quality judgement into the refinement loop's currency. */
+  private toFailureAnalysis(
+    judgement: CodeQualityJudgement,
+    generatedCode: GeneratedCode,
+  ): FailureAnalysis {
+    const serverTool = generatedCode.metadata.tools[0]?.name || 'server';
 
-    if (missingParens > 0) {
-      this.logger.debug(`Adding ${missingParens} missing closing parentheses`);
-      // Insert before the closing braces we just added
-      const insertPos = fixedCode.length - missingBraces;
-      fixedCode = fixedCode.slice(0, insertPos) + ')'.repeat(missingParens) + fixedCode.slice(insertPos);
-    }
-
-    // Add main() call if missing and we have a main function
-    if (!fixedCode.includes('main()') && fixedCode.includes('async function main')) {
-      this.logger.debug('Adding missing main() call');
-      fixedCode += '\n\nmain().catch(console.error);';
-    }
-
-    this.logger.log(`Truncation recovery: added ${missingBraces} braces, ${missingParens} parens`);
-    return fixedCode;
+    return {
+      failureCount: judgement.issues.length || 1,
+      categories: [
+        {
+          type: judgement.issues.some((i) => i.category === 'typescript') ? 'syntax' : 'logic',
+          count: judgement.issues.length || 1,
+        },
+      ],
+      rootCauses: judgement.issues.length
+        ? judgement.issues.map((i) => i.message)
+        : [judgement.feedback],
+      fixes: judgement.issues.map((issue) => ({
+        toolName: issue.category === 'tool-implementation' ? serverTool : 'server',
+        issue: issue.message,
+        solution: issue.suggestion,
+        priority: issue.category === 'code-quality' ? ('MEDIUM' as const) : ('HIGH' as const),
+      })),
+      recommendation:
+        judgement.feedback ||
+        'Address the quality issues found by the code judge without changing the tool set',
+    };
   }
 }

@@ -20,7 +20,7 @@ export class Subscription {
   userId: string;
 
   @ManyToOne(() => User, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'userId' })
+  @JoinColumn({ name: 'userId', foreignKeyConstraintName: 'subscriptions_userId_fkey' })
   user: User;
 
   @Column({ type: 'varchar', length: 255 })
@@ -42,10 +42,10 @@ export class Subscription {
   status: 'active' | 'canceled' | 'past_due' | 'incomplete' | 'trialing';
 
   @Column({ type: 'timestamp', nullable: true })
-  currentPeriodStart?: Date;
+  currentPeriodStart?: Date | null;
 
   @Column({ type: 'timestamp', nullable: true })
-  currentPeriodEnd?: Date;
+  currentPeriodEnd?: Date | null;
 
   @Column({ type: 'boolean', default: false })
   cancelAtPeriodEnd: boolean;

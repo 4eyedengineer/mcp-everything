@@ -10,7 +10,7 @@ import {
   RepositoryAnalysis,
   RepositoryMetadata,
   ReadmeAnalysis,
-  QualityMetrics
+  QualityMetrics,
 } from './types/github-analysis.types';
 
 @Injectable()
@@ -21,67 +21,85 @@ export class GitHubAnalysisService {
   // File patterns for technology detection
   private readonly techPatterns = {
     languages: {
-      'JavaScript': ['.js', '.mjs', '.jsx'],
-      'TypeScript': ['.ts', '.tsx', '.d.ts'],
-      'Python': ['.py', '.pyx', '.pyi'],
-      'Java': ['.java', '.jar'],
-      'Go': ['.go'],
-      'Rust': ['.rs'],
+      JavaScript: ['.js', '.mjs', '.jsx'],
+      TypeScript: ['.ts', '.tsx', '.d.ts'],
+      Python: ['.py', '.pyx', '.pyi'],
+      Java: ['.java', '.jar'],
+      Go: ['.go'],
+      Rust: ['.rs'],
       'C++': ['.cpp', '.cc', '.cxx', '.hpp'],
-      'C': ['.c', '.h'],
+      C: ['.c', '.h'],
       'C#': ['.cs'],
-      'PHP': ['.php'],
-      'Ruby': ['.rb'],
-      'Swift': ['.swift'],
-      'Kotlin': ['.kt', '.kts'],
-      'Scala': ['.scala'],
-      'Dart': ['.dart'],
-      'Shell': ['.sh', '.bash', '.zsh'],
-      'PowerShell': ['.ps1'],
-      'SQL': ['.sql'],
-      'HTML': ['.html', '.htm'],
-      'CSS': ['.css', '.scss', '.sass', '.less'],
-      'Dockerfile': ['Dockerfile', '.dockerfile']
+      PHP: ['.php'],
+      Ruby: ['.rb'],
+      Swift: ['.swift'],
+      Kotlin: ['.kt', '.kts'],
+      Scala: ['.scala'],
+      Dart: ['.dart'],
+      Shell: ['.sh', '.bash', '.zsh'],
+      PowerShell: ['.ps1'],
+      SQL: ['.sql'],
+      HTML: ['.html', '.htm'],
+      CSS: ['.css', '.scss', '.sass', '.less'],
+      Dockerfile: ['Dockerfile', '.dockerfile'],
     },
     frameworks: {
-      'React': ['package.json'],
-      'Vue': ['package.json'],
-      'Angular': ['package.json', 'angular.json'],
-      'Svelte': ['package.json'],
+      React: ['package.json'],
+      Vue: ['package.json'],
+      Angular: ['package.json', 'angular.json'],
+      Svelte: ['package.json'],
       'Next.js': ['package.json', 'next.config.js'],
-      'Nuxt': ['package.json', 'nuxt.config.js'],
-      'Express': ['package.json'],
-      'NestJS': ['package.json', 'nest-cli.json'],
-      'FastAPI': ['requirements.txt', 'pyproject.toml'],
-      'Django': ['requirements.txt', 'manage.py'],
-      'Flask': ['requirements.txt'],
+      Nuxt: ['package.json', 'nuxt.config.js'],
+      Express: ['package.json'],
+      NestJS: ['package.json', 'nest-cli.json'],
+      FastAPI: ['requirements.txt', 'pyproject.toml'],
+      Django: ['requirements.txt', 'manage.py'],
+      Flask: ['requirements.txt'],
       'Spring Boot': ['pom.xml', 'build.gradle'],
-      'Laravel': ['composer.json'],
-      'Rails': ['Gemfile']
+      Laravel: ['composer.json'],
+      Rails: ['Gemfile'],
     },
     buildSystems: {
-      'npm': ['package.json'],
-      'yarn': ['yarn.lock'],
-      'pnpm': ['pnpm-lock.yaml'],
-      'Maven': ['pom.xml'],
-      'Gradle': ['build.gradle', 'gradlew'],
-      'Make': ['Makefile'],
-      'CMake': ['CMakeLists.txt'],
-      'Cargo': ['Cargo.toml'],
-      'Poetry': ['pyproject.toml'],
-      'pip': ['requirements.txt'],
-      'Composer': ['composer.json'],
-      'Bundler': ['Gemfile']
-    }
+      npm: ['package.json'],
+      yarn: ['yarn.lock'],
+      pnpm: ['pnpm-lock.yaml'],
+      Maven: ['pom.xml'],
+      Gradle: ['build.gradle', 'gradlew'],
+      Make: ['Makefile'],
+      CMake: ['CMakeLists.txt'],
+      Cargo: ['Cargo.toml'],
+      Poetry: ['pyproject.toml'],
+      pip: ['requirements.txt'],
+      Composer: ['composer.json'],
+      Bundler: ['Gemfile'],
+    },
   };
 
   // Main source file patterns to prioritize
   private readonly mainFilePatterns = [
-    'index.js', 'index.ts', 'main.js', 'main.ts', 'app.js', 'app.ts',
-    'server.js', 'server.ts', 'index.py', 'main.py', 'app.py',
-    'Main.java', 'Application.java', 'main.go', 'main.rs',
-    'package.json', 'requirements.txt', 'Cargo.toml', 'pom.xml',
-    'build.gradle', 'composer.json', 'Gemfile', 'go.mod'
+    'index.js',
+    'index.ts',
+    'main.js',
+    'main.ts',
+    'app.js',
+    'app.ts',
+    'server.js',
+    'server.ts',
+    'index.py',
+    'main.py',
+    'app.py',
+    'Main.java',
+    'Application.java',
+    'main.go',
+    'main.rs',
+    'package.json',
+    'requirements.txt',
+    'Cargo.toml',
+    'pom.xml',
+    'build.gradle',
+    'composer.json',
+    'Gemfile',
+    'go.mod',
   ];
 
   constructor(private configService: ConfigService) {
@@ -135,12 +153,11 @@ export class GitHubAnalysisService {
         sourceFiles,
         features,
         readme,
-        quality
+        quality,
       };
 
       this.logger.log(`Analysis completed for ${owner}/${repo}`);
       return analysis;
-
     } catch (error) {
       this.logger.error(`Failed to analyze repository: ${error.message}`);
       throw new Error(`Repository analysis failed: ${error.message}`);
@@ -150,12 +167,17 @@ export class GitHubAnalysisService {
   /**
    * Get complete repository file tree structure
    */
-  async getFileTree(owner: string, repo: string, path = '', recursive = true): Promise<FileTreeNode[]> {
+  async getFileTree(
+    owner: string,
+    repo: string,
+    path = '',
+    recursive = true,
+  ): Promise<FileTreeNode[]> {
     try {
       const response = await this.octokit.rest.repos.getContent({
         owner,
         repo,
-        path
+        path,
       });
 
       const files: FileTreeNode[] = [];
@@ -166,12 +188,11 @@ export class GitHubAnalysisService {
           path: item.path,
           type: item.type as 'file' | 'dir',
           size: item.size,
-          downloadUrl: item.download_url || undefined
+          downloadUrl: item.download_url || undefined,
         };
 
         if (item.type === 'file') {
-          const extension = item.name.includes('.') ?
-            '.' + item.name.split('.').pop() : '';
+          const extension = item.name.includes('.') ? '.' + item.name.split('.').pop() : '';
           node.extension = extension;
         }
 
@@ -194,7 +215,11 @@ export class GitHubAnalysisService {
   /**
    * Detect technology stack from file extensions and package files
    */
-  async detectTechStack(owner: string, repo: string, fileTree: FileTreeNode[]): Promise<TechnologyStack> {
+  async detectTechStack(
+    owner: string,
+    repo: string,
+    fileTree: FileTreeNode[],
+  ): Promise<TechnologyStack> {
     const languages = new Set<string>();
     const frameworks = new Set<string>();
     const databases = new Set<string>();
@@ -206,7 +231,10 @@ export class GitHubAnalysisService {
     for (const file of fileTree) {
       if (file.type === 'file' && file.extension) {
         for (const [lang, extensions] of Object.entries(this.techPatterns.languages)) {
-          if (extensions.includes(file.extension) || extensions.includes(file.path.split('/').pop() || '')) {
+          if (
+            extensions.includes(file.extension) ||
+            extensions.includes(file.path.split('/').pop() || '')
+          ) {
             languages.add(lang);
           }
         }
@@ -214,8 +242,8 @@ export class GitHubAnalysisService {
     }
 
     // Analyze package files for frameworks and build systems
-    const packageFiles = fileTree.filter(f =>
-      this.mainFilePatterns.includes(f.path.split('/').pop() || '')
+    const packageFiles = fileTree.filter((f) =>
+      this.mainFilePatterns.includes(f.path.split('/').pop() || ''),
     );
 
     for (const file of packageFiles) {
@@ -246,11 +274,12 @@ export class GitHubAnalysisService {
     }
 
     // Detect databases from common config files
-    const dbFiles = fileTree.filter(f =>
-      f.path.includes('docker-compose') ||
-      f.path.includes('database') ||
-      f.path.includes('.env') ||
-      f.path.includes('config')
+    const dbFiles = fileTree.filter(
+      (f) =>
+        f.path.includes('docker-compose') ||
+        f.path.includes('database') ||
+        f.path.includes('.env') ||
+        f.path.includes('config'),
     );
 
     for (const file of dbFiles) {
@@ -272,14 +301,17 @@ export class GitHubAnalysisService {
       tools: Array.from(tools),
       packageManagers: Array.from(packageManagers),
       buildSystems: Array.from(buildSystems),
-      confidence
+      confidence,
     };
   }
 
   /**
    * Extract API patterns from source files
    */
-  async extractApiPatterns(sourceFiles: SourceFile[], fileTree: FileTreeNode[]): Promise<ApiPattern[]> {
+  async extractApiPatterns(
+    sourceFiles: SourceFile[],
+    _fileTree: FileTreeNode[],
+  ): Promise<ApiPattern[]> {
     const patterns: ApiPattern[] = [];
 
     // REST API patterns
@@ -297,7 +329,7 @@ export class GitHubAnalysisService {
         /app\.(get|post|put|delete|patch)\s*\(\s*['"`]([^'"`]+)['"`]/g,
         /router\.(get|post|put|delete|patch)\s*\(\s*['"`]([^'"`]+)['"`]/g,
         /@(get|post|put|delete|patch)\s*\(\s*['"`]([^'"`]+)['"`]/g,
-        /route\s*\(\s*['"`]([^'"`]+)['"`]/g
+        /route\s*\(\s*['"`]([^'"`]+)['"`]/g,
       ];
 
       for (const pattern of restPatterns) {
@@ -309,18 +341,26 @@ export class GitHubAnalysisService {
       }
 
       // GraphQL detection
-      if (content.includes('graphql') || content.includes('apollo') || content.includes('type query')) {
+      if (
+        content.includes('graphql') ||
+        content.includes('apollo') ||
+        content.includes('type query')
+      ) {
         graphqlEndpoints.push('GraphQL endpoint detected');
       }
 
       // WebSocket detection
-      if (content.includes('websocket') || content.includes('socket.io') || content.includes('ws://')) {
+      if (
+        content.includes('websocket') ||
+        content.includes('socket.io') ||
+        content.includes('ws://')
+      ) {
         patterns.push({
           type: 'WebSocket',
           endpoints: ['WebSocket connection detected'],
           methods: ['CONNECT', 'MESSAGE'],
           patterns: ['Real-time communication'],
-          confidence: 0.8
+          confidence: 0.8,
         });
       }
     }
@@ -332,7 +372,7 @@ export class GitHubAnalysisService {
         endpoints: [...new Set(restEndpoints)],
         methods: [...new Set(restMethods)],
         patterns: ['RESTful API'],
-        confidence: restEndpoints.length > 3 ? 0.9 : 0.7
+        confidence: restEndpoints.length > 3 ? 0.9 : 0.7,
       });
     }
 
@@ -343,7 +383,7 @@ export class GitHubAnalysisService {
         endpoints: graphqlEndpoints,
         methods: ['QUERY', 'MUTATION', 'SUBSCRIPTION'],
         patterns: ['GraphQL API'],
-        confidence: 0.8
+        confidence: 0.8,
       });
     }
 
@@ -353,12 +393,16 @@ export class GitHubAnalysisService {
   /**
    * Fetch main source files based on priority patterns
    */
-  async getMainSourceFiles(owner: string, repo: string, fileTree: FileTreeNode[]): Promise<SourceFile[]> {
+  async getMainSourceFiles(
+    owner: string,
+    repo: string,
+    fileTree: FileTreeNode[],
+  ): Promise<SourceFile[]> {
     const sourceFiles: SourceFile[] = [];
 
     // Priority order for main files
     const priorityFiles = fileTree
-      .filter(f => f.type === 'file')
+      .filter((f) => f.type === 'file')
       .sort((a, b) => {
         const aPriority = this.getFilePriority(a.path);
         const bPriority = this.getFilePriority(b.path);
@@ -374,7 +418,7 @@ export class GitHubAnalysisService {
           content,
           size: file.size || 0,
           type: this.classifyFileType(file.path),
-          language: this.detectFileLanguage(file.path)
+          language: this.detectFileLanguage(file.path),
         };
         sourceFiles.push(sourceFile);
       } catch (error) {
@@ -404,19 +448,12 @@ export class GitHubAnalysisService {
       if ('content' in readmeResponse.data) {
         content = Buffer.from(readmeResponse.data.content, 'base64').toString('utf-8');
 
-        // Extract features from README
-        const featurePatterns = [
-          /##?\s*(features?|capabilities|what\s+it\s+does)/i,
-          /[-*]\s*([^\n]+)/g,
-          /\*\*([^*]+)\*\*/g
-        ];
-
         // Extract installation instructions
         const installSection = content.match(/##?\s*install[^#]*?```[^`]*```/is);
         if (installSection) {
           const commands = installSection[0].match(/```[\s\S]*?```/g);
           if (commands) {
-            installation.push(...commands.map(cmd => cmd.replace(/```/g, '').trim()));
+            installation.push(...commands.map((cmd) => cmd.replace(/```/g, '').trim()));
           }
         }
 
@@ -425,7 +462,7 @@ export class GitHubAnalysisService {
         if (usageSection) {
           const commands = usageSection[0].match(/```[\s\S]*?```/g);
           if (commands) {
-            usage.push(...commands.map(cmd => cmd.replace(/```/g, '').trim()));
+            usage.push(...commands.map((cmd) => cmd.replace(/```/g, '').trim()));
           }
         }
 
@@ -445,7 +482,7 @@ export class GitHubAnalysisService {
       content,
       extractedFeatures: extractedFeatures.slice(0, 10), // Limit features
       installation,
-      usage
+      usage,
     };
   }
 
@@ -477,7 +514,7 @@ export class GitHubAnalysisService {
       defaultBranch: data.default_branch,
       createdAt: data.created_at,
       updatedAt: data.updated_at,
-      homepage: data.homepage
+      homepage: data.homepage,
     };
   }
 
@@ -485,7 +522,7 @@ export class GitHubAnalysisService {
     const response = await this.octokit.rest.repos.getContent({
       owner,
       repo,
-      path
+      path,
     });
 
     if ('content' in response.data) {
@@ -514,7 +551,8 @@ export class GitHubAnalysisService {
     if (this.mainFilePatterns.includes(fileName)) return 'main';
     if (fileName === 'README.md') return 'readme';
     if (fileName.includes('config') || fileName.startsWith('.')) return 'config';
-    if (['package.json', 'requirements.txt', 'Cargo.toml', 'pom.xml'].includes(fileName)) return 'package';
+    if (['package.json', 'requirements.txt', 'Cargo.toml', 'pom.xml'].includes(fileName))
+      return 'package';
 
     return 'other';
   }
@@ -535,16 +573,16 @@ export class GitHubAnalysisService {
     const deps = { ...packageData.dependencies, ...packageData.devDependencies };
 
     const frameworkMap: Record<string, string> = {
-      'react': 'React',
-      'vue': 'Vue',
+      react: 'React',
+      vue: 'Vue',
       '@angular/core': 'Angular',
-      'svelte': 'Svelte',
-      'next': 'Next.js',
-      'nuxt': 'Nuxt',
-      'express': 'Express',
+      svelte: 'Svelte',
+      next: 'Next.js',
+      nuxt: 'Nuxt',
+      express: 'Express',
       '@nestjs/core': 'NestJS',
-      'fastify': 'Fastify',
-      'koa': 'Koa'
+      fastify: 'Fastify',
+      koa: 'Koa',
     };
 
     for (const [dep, framework] of Object.entries(frameworkMap)) {
@@ -560,15 +598,15 @@ export class GitHubAnalysisService {
     if (deps['vite']) tools.add('Vite');
   }
 
-  private analyzePythonRequirements(content: string, frameworks: Set<string>, tools: Set<string>) {
+  private analyzePythonRequirements(content: string, frameworks: Set<string>, _tools: Set<string>) {
     const lines = content.split('\n');
 
     const frameworkMap: Record<string, string> = {
-      'django': 'Django',
-      'flask': 'Flask',
-      'fastapi': 'FastAPI',
-      'tornado': 'Tornado',
-      'pyramid': 'Pyramid'
+      django: 'Django',
+      flask: 'Flask',
+      fastapi: 'FastAPI',
+      tornado: 'Tornado',
+      pyramid: 'Pyramid',
     };
 
     for (const line of lines) {
@@ -579,7 +617,7 @@ export class GitHubAnalysisService {
     }
   }
 
-  private analyzeRustCargo(content: string, frameworks: Set<string>, tools: Set<string>) {
+  private analyzeRustCargo(content: string, frameworks: Set<string>, _tools: Set<string>) {
     try {
       // Simple TOML parsing for common frameworks
       if (content.includes('tokio')) frameworks.add('Tokio');
@@ -593,18 +631,18 @@ export class GitHubAnalysisService {
 
   private analyzeDatabaseUsage(content: string, databases: Set<string>) {
     const dbPatterns: Record<string, string[]> = {
-      'PostgreSQL': ['postgres', 'postgresql', 'pg'],
-      'MySQL': ['mysql'],
-      'MongoDB': ['mongo', 'mongodb'],
-      'Redis': ['redis'],
-      'SQLite': ['sqlite'],
-      'Oracle': ['oracle'],
-      'SQL Server': ['sqlserver', 'mssql']
+      PostgreSQL: ['postgres', 'postgresql', 'pg'],
+      MySQL: ['mysql'],
+      MongoDB: ['mongo', 'mongodb'],
+      Redis: ['redis'],
+      SQLite: ['sqlite'],
+      Oracle: ['oracle'],
+      'SQL Server': ['sqlserver', 'mssql'],
     };
 
     const lowerContent = content.toLowerCase();
     for (const [db, patterns] of Object.entries(dbPatterns)) {
-      if (patterns.some(pattern => lowerContent.includes(pattern))) {
+      if (patterns.some((pattern) => lowerContent.includes(pattern))) {
         databases.add(db);
       }
     }
@@ -613,13 +651,13 @@ export class GitHubAnalysisService {
   private calculateTechStackConfidence(
     languages: Set<string>,
     frameworks: Set<string>,
-    fileTree: FileTreeNode[]
+    fileTree: FileTreeNode[],
   ): number {
     let confidence = 0.5; // Base confidence
 
     if (languages.size > 0) confidence += 0.2;
     if (frameworks.size > 0) confidence += 0.2;
-    if (fileTree.some(f => f.path === 'package.json')) confidence += 0.1;
+    if (fileTree.some((f) => f.path === 'package.json')) confidence += 0.1;
 
     return Math.min(confidence, 1.0);
   }
@@ -627,50 +665,50 @@ export class GitHubAnalysisService {
   private analyzeRepositoryFeatures(
     fileTree: FileTreeNode[],
     sourceFiles: SourceFile[],
-    readme: { content: string | null }
+    _readme: { content: string | null },
   ): RepositoryFeatures {
-    const hasApi = sourceFiles.some(f =>
-      f.content.includes('app.get') ||
-      f.content.includes('router.') ||
-      f.content.includes('@Controller') ||
-      f.content.includes('def get') ||
-      f.content.includes('func ') && f.content.includes('http')
+    const hasApi = sourceFiles.some(
+      (f) =>
+        f.content.includes('app.get') ||
+        f.content.includes('router.') ||
+        f.content.includes('@Controller') ||
+        f.content.includes('def get') ||
+        (f.content.includes('func ') && f.content.includes('http')),
     );
 
-    const hasCli = sourceFiles.some(f =>
-      f.content.includes('process.argv') ||
-      f.content.includes('argparse') ||
-      f.content.includes('commander') ||
-      f.path.includes('cli')
+    const hasCli = sourceFiles.some(
+      (f) =>
+        f.content.includes('process.argv') ||
+        f.content.includes('argparse') ||
+        f.content.includes('commander') ||
+        f.path.includes('cli'),
     );
 
-    const hasDatabase = sourceFiles.some(f =>
-      f.content.includes('database') ||
-      f.content.includes('db.') ||
-      f.content.includes('connection')
+    const hasDatabase = sourceFiles.some(
+      (f) =>
+        f.content.includes('database') ||
+        f.content.includes('db.') ||
+        f.content.includes('connection'),
     );
 
-    const hasTests = fileTree.some(f =>
-      f.path.includes('test') ||
-      f.path.includes('spec') ||
-      f.path.includes('__tests__')
+    const hasTests = fileTree.some(
+      (f) => f.path.includes('test') || f.path.includes('spec') || f.path.includes('__tests__'),
     );
 
-    const hasDocumentation = fileTree.some(f =>
-      f.path.includes('docs') ||
-      f.path.endsWith('.md')
+    const hasDocumentation = fileTree.some(
+      (f) => f.path.includes('docs') || f.path.endsWith('.md'),
     );
 
-    const hasDocker = fileTree.some(f =>
-      f.path.includes('Dockerfile') ||
-      f.path.includes('docker-compose')
+    const hasDocker = fileTree.some(
+      (f) => f.path.includes('Dockerfile') || f.path.includes('docker-compose'),
     );
 
-    const hasCi = fileTree.some(f =>
-      f.path.includes('.github/workflows') ||
-      f.path.includes('.gitlab-ci') ||
-      f.path.includes('.travis.yml') ||
-      f.path.includes('Jenkinsfile')
+    const hasCi = fileTree.some(
+      (f) =>
+        f.path.includes('.github/workflows') ||
+        f.path.includes('.gitlab-ci') ||
+        f.path.includes('.travis.yml') ||
+        f.path.includes('Jenkinsfile'),
     );
 
     const features: string[] = [];
@@ -690,20 +728,20 @@ export class GitHubAnalysisService {
       hasDocumentation,
       hasDocker,
       hasCi,
-      features
+      features,
     };
   }
 
   private calculateQualityScore(
     fileTree: FileTreeNode[],
     readme: ReadmeAnalysis,
-    features: RepositoryFeatures
+    features: RepositoryFeatures,
   ): QualityMetrics {
     const hasReadme = !!readme.content;
     const hasTests = features.hasTests;
-    const hasLicense = fileTree.some(f => f.path.toLowerCase().includes('license'));
-    const hasContributing = fileTree.some(f => f.path.toLowerCase().includes('contributing'));
-    const hasChangelog = fileTree.some(f => f.path.toLowerCase().includes('changelog'));
+    const hasLicense = fileTree.some((f) => f.path.toLowerCase().includes('license'));
+    const hasContributing = fileTree.some((f) => f.path.toLowerCase().includes('contributing'));
+    const hasChangelog = fileTree.some((f) => f.path.toLowerCase().includes('changelog'));
     const hasDocumentation = features.hasDocumentation;
 
     // Calculate score out of 10
@@ -724,7 +762,7 @@ export class GitHubAnalysisService {
       hasContributing,
       hasChangelog,
       hasDocumentation,
-      score
+      score,
     };
   }
 
@@ -746,39 +784,38 @@ export class GitHubAnalysisService {
    */
   async extractCodeExamples(
     githubUrl: string,
-    maxFiles: number = 5
+    maxFiles: number = 5,
   ): Promise<Array<{ file: string; content: string; language: string }>> {
     try {
       const { owner, repo } = this.parseGitHubUrl(githubUrl);
       const fileTree = await this.getFileTree(owner, repo);
 
       // Prioritize main files
-      const priorityFiles = fileTree.filter(node =>
-        this.mainFilePatterns.some(pattern =>
-          node.path.endsWith(pattern)
-        )
+      const priorityFiles = fileTree.filter((node) =>
+        this.mainFilePatterns.some((pattern) => node.path.endsWith(pattern)),
       );
 
       // Get source files (exclude configs, docs, tests)
-      const sourceFiles = fileTree.filter(node =>
-        node.type === 'file' &&
-        !node.path.includes('test') &&
-        !node.path.includes('spec') &&
-        !node.path.includes('node_modules') &&
-        !node.path.includes('.md') &&
-        (node.path.endsWith('.ts') ||
-          node.path.endsWith('.js') ||
-          node.path.endsWith('.py') ||
-          node.path.endsWith('.go') ||
-          node.path.endsWith('.rs') ||
-          node.path.endsWith('.java'))
+      const sourceFiles = fileTree.filter(
+        (node) =>
+          node.type === 'file' &&
+          !node.path.includes('test') &&
+          !node.path.includes('spec') &&
+          !node.path.includes('node_modules') &&
+          !node.path.includes('.md') &&
+          (node.path.endsWith('.ts') ||
+            node.path.endsWith('.js') ||
+            node.path.endsWith('.py') ||
+            node.path.endsWith('.go') ||
+            node.path.endsWith('.rs') ||
+            node.path.endsWith('.java')),
       );
 
       // Combine and deduplicate
-      const selectedFiles = [
-        ...priorityFiles.slice(0, 2),
-        ...sourceFiles.slice(0, maxFiles)
-      ].slice(0, maxFiles);
+      const selectedFiles = [...priorityFiles.slice(0, 2), ...sourceFiles.slice(0, maxFiles)].slice(
+        0,
+        maxFiles,
+      );
 
       // Fetch content for selected files
       const codeExamples = await Promise.all(
@@ -805,10 +842,10 @@ export class GitHubAnalysisService {
             this.logger.warn(`Failed to fetch ${file.path}: ${err.message}`);
           }
           return null;
-        })
+        }),
       );
 
-      return codeExamples.filter(example => example !== null);
+      return codeExamples.filter((example) => example !== null);
     } catch (error) {
       this.logger.error(`Failed to extract code examples: ${error.message}`);
       return [];
@@ -831,7 +868,7 @@ export class GitHubAnalysisService {
    * @returns Test patterns with framework, pattern type, and examples
    */
   async analyzeTestPatterns(
-    githubUrl: string
+    githubUrl: string,
   ): Promise<Array<{ framework: string; pattern: string; examples: string[] }>> {
     try {
       const { owner, repo } = this.parseGitHubUrl(githubUrl);
@@ -840,16 +877,17 @@ export class GitHubAnalysisService {
       const testPatterns: Array<{ framework: string; pattern: string; examples: string[] }> = [];
 
       // Detect test files
-      const testFiles = fileTree.filter(node =>
-        node.path.includes('test') ||
-        node.path.includes('spec') ||
-        node.path.includes('__tests__') ||
-        node.path.endsWith('.test.ts') ||
-        node.path.endsWith('.test.js') ||
-        node.path.endsWith('.spec.ts') ||
-        node.path.endsWith('.spec.js') ||
-        node.path.endsWith('_test.go') ||
-        node.path.endsWith('_test.py')
+      const testFiles = fileTree.filter(
+        (node) =>
+          node.path.includes('test') ||
+          node.path.includes('spec') ||
+          node.path.includes('__tests__') ||
+          node.path.endsWith('.test.ts') ||
+          node.path.endsWith('.test.js') ||
+          node.path.endsWith('.spec.ts') ||
+          node.path.endsWith('.spec.js') ||
+          node.path.endsWith('_test.go') ||
+          node.path.endsWith('_test.py'),
       );
 
       if (testFiles.length === 0) {
@@ -857,8 +895,8 @@ export class GitHubAnalysisService {
       }
 
       // JavaScript/TypeScript frameworks
-      if (testFiles.some(f => f.path.includes('.test.') || f.path.includes('.spec.'))) {
-        const packageJson = fileTree.find(f => f.path === 'package.json');
+      if (testFiles.some((f) => f.path.includes('.test.') || f.path.includes('.spec.'))) {
+        const packageJson = fileTree.find((f) => f.path === 'package.json');
         if (packageJson) {
           try {
             const response = await this.octokit.repos.getContent({
@@ -876,21 +914,24 @@ export class GitHubAnalysisService {
                 testPatterns.push({
                   framework: 'Jest',
                   pattern: 'Unit Tests',
-                  examples: testFiles.map(f => f.path).slice(0, 3),
+                  examples: testFiles.map((f) => f.path).slice(0, 3),
                 });
               }
               if (devDeps['mocha']) {
                 testPatterns.push({
                   framework: 'Mocha',
                   pattern: 'Unit Tests',
-                  examples: testFiles.map(f => f.path).slice(0, 3),
+                  examples: testFiles.map((f) => f.path).slice(0, 3),
                 });
               }
               if (devDeps['@playwright/test']) {
                 testPatterns.push({
                   framework: 'Playwright',
                   pattern: 'E2E Tests',
-                  examples: testFiles.filter(f => f.path.includes('e2e')).map(f => f.path).slice(0, 3),
+                  examples: testFiles
+                    .filter((f) => f.path.includes('e2e'))
+                    .map((f) => f.path)
+                    .slice(0, 3),
                 });
               }
             }
@@ -901,20 +942,26 @@ export class GitHubAnalysisService {
       }
 
       // Python frameworks
-      if (testFiles.some(f => f.path.endsWith('.py'))) {
+      if (testFiles.some((f) => f.path.endsWith('.py'))) {
         testPatterns.push({
           framework: 'pytest',
           pattern: 'Unit Tests',
-          examples: testFiles.filter(f => f.path.includes('test')).map(f => f.path).slice(0, 3),
+          examples: testFiles
+            .filter((f) => f.path.includes('test'))
+            .map((f) => f.path)
+            .slice(0, 3),
         });
       }
 
       // Go testing
-      if (testFiles.some(f => f.path.endsWith('_test.go'))) {
+      if (testFiles.some((f) => f.path.endsWith('_test.go'))) {
         testPatterns.push({
           framework: 'Go testing',
           pattern: 'Unit Tests',
-          examples: testFiles.filter(f => f.path.endsWith('_test.go')).map(f => f.path).slice(0, 3),
+          examples: testFiles
+            .filter((f) => f.path.endsWith('_test.go'))
+            .map((f) => f.path)
+            .slice(0, 3),
         });
       }
 
@@ -940,7 +987,7 @@ export class GitHubAnalysisService {
    * @returns API usage patterns with endpoint, method, parameters, and examples
    */
   async extractApiUsagePatterns(
-    githubUrl: string
+    githubUrl: string,
   ): Promise<Array<{ endpoint: string; method: string; parameters: any; exampleUsage: string }>> {
     try {
       const { owner, repo } = this.parseGitHubUrl(githubUrl);
@@ -954,11 +1001,12 @@ export class GitHubAnalysisService {
       }> = [];
 
       // Look for API route files
-      const routeFiles = fileTree.filter(node =>
-        node.path.includes('route') ||
-        node.path.includes('controller') ||
-        node.path.includes('api') ||
-        node.path.includes('endpoint')
+      const routeFiles = fileTree.filter(
+        (node) =>
+          node.path.includes('route') ||
+          node.path.includes('controller') ||
+          node.path.includes('api') ||
+          node.path.includes('endpoint'),
       );
 
       // Sample up to 3 route files
@@ -976,9 +1024,11 @@ export class GitHubAnalysisService {
             const content = Buffer.from(response.data.content, 'base64').toString('utf-8');
 
             // Extract Express/NestJS routes
-            const expressRoutes = content.match(/(router|app)\.(get|post|put|delete|patch)\(['"]([^'"]+)['"]/gi);
+            const expressRoutes = content.match(
+              /(router|app)\.(get|post|put|delete|patch)\(['"]([^'"]+)['"]/gi,
+            );
             if (expressRoutes) {
-              expressRoutes.slice(0, 5).forEach(route => {
+              expressRoutes.slice(0, 5).forEach((route) => {
                 const methodMatch = route.match(/\.(get|post|put|delete|patch)/i);
                 const pathMatch = route.match(/['"]([^'"]+)['"]/);
 
@@ -994,9 +1044,11 @@ export class GitHubAnalysisService {
             }
 
             // Extract FastAPI routes
-            const fastapiRoutes = content.match(/@app\.(get|post|put|delete|patch)\(['"]([^'"]+)['"]/gi);
+            const fastapiRoutes = content.match(
+              /@app\.(get|post|put|delete|patch)\(['"]([^'"]+)['"]/gi,
+            );
             if (fastapiRoutes) {
-              fastapiRoutes.slice(0, 5).forEach(route => {
+              fastapiRoutes.slice(0, 5).forEach((route) => {
                 const methodMatch = route.match(/\.(get|post|put|delete|patch)/i);
                 const pathMatch = route.match(/['"]([^'"]+)['"]/);
 

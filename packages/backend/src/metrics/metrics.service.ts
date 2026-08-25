@@ -1,11 +1,5 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
-import {
-  Registry,
-  Counter,
-  Histogram,
-  Gauge,
-  collectDefaultMetrics,
-} from 'prom-client';
+import { Registry, Counter, Histogram, Gauge, collectDefaultMetrics } from 'prom-client';
 
 @Injectable()
 export class MetricsService implements OnModuleInit {
@@ -23,6 +17,11 @@ export class MetricsService implements OnModuleInit {
   private readonly usersTotal: Gauge;
   private readonly deploymentsTotal: Counter;
   private readonly marketplaceDownloads: Counter;
+
+  // AI Metrics
+  private readonly aiCallsTotal: Counter;
+  private readonly aiTokensTotal: Counter;
+  private readonly aiCostUsdTotal: Counter;
 
   constructor() {
     this.registry = new Registry();
@@ -92,6 +91,28 @@ export class MetricsService implements OnModuleInit {
       labelNames: ['server_id', 'server_name'],
       registers: [this.registry],
     });
+
+    // AI Metrics (populated by AnthropicService - the single Claude API seam)
+    this.aiCallsTotal = new Counter({
+      name: 'ai_calls_total',
+      help: 'Total number of Anthropic API calls',
+      labelNames: ['caller', 'model', 'status'],
+      registers: [this.registry],
+    });
+
+    this.aiTokensTotal = new Counter({
+      name: 'ai_tokens_total',
+      help: 'Total Anthropic tokens consumed',
+      labelNames: ['caller', 'model', 'direction'],
+      registers: [this.registry],
+    });
+
+    this.aiCostUsdTotal = new Counter({
+      name: 'ai_cost_usd_total',
+      help: 'Estimated Anthropic spend in USD',
+      labelNames: ['caller', 'model'],
+      registers: [this.registry],
+    });
   }
 
   onModuleInit(): void {
@@ -137,11 +158,7 @@ export class MetricsService implements OnModuleInit {
   }
 
   // API Metrics Methods
-  recordApiRequest(
-    method: string,
-    endpoint: string,
-    statusCode: number,
-  ): void {
+  recordApiRequest(method: string, endpoint: string, statusCode: number): void {
     this.apiRequestsTotal.inc({
       method,
       endpoint,
@@ -164,5 +181,27 @@ export class MetricsService implements OnModuleInit {
 
   recordMarketplaceDownload(serverId: string, serverName: string): void {
     this.marketplaceDownloads.inc({ server_id: serverId, server_name: serverName });
+  }
+
+  // AI Metrics Methods (called by AnthropicService)
+  recordAiCall(usage: {
+    caller: string;
+    model: string;
+    status: 'success' | 'truncated' | 'error';
+    inputTokens: number;
+    outputTokens: number;
+    costUsd: number;
+  }): void {
+    const { caller, model } = usage;
+    this.aiCallsTotal.inc({ caller, model, status: usage.status });
+    if (usage.inputTokens > 0) {
+      this.aiTokensTotal.inc({ caller, model, direction: 'input' }, usage.inputTokens);
+    }
+    if (usage.outputTokens > 0) {
+      this.aiTokensTotal.inc({ caller, model, direction: 'output' }, usage.outputTokens);
+    }
+    if (usage.costUsd > 0) {
+      this.aiCostUsdTotal.inc({ caller, model }, usage.costUsd);
+    }
   }
 }

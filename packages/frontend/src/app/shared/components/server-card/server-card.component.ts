@@ -25,6 +25,16 @@ export class ServerCardComponent {
     this.download.emit(this.server);
   }
 
+  /**
+   * These servers are source-only (real GitHub repos/gists, no downloadable
+   * artifact) - the action button is only rendered when there's a real link
+   * to send the user to, so the button never lies about downloading
+   * something that doesn't exist.
+   */
+  get hasSource(): boolean {
+    return !!(this.server.repositoryUrl || this.server.gistUrl);
+  }
+
   getCategoryIcon(): string {
     const icons: Record<string, string> = {
       api: 'api',

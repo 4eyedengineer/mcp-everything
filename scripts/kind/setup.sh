@@ -67,17 +67,17 @@ EOF
 echo ""
 
 # Step 3: Install nginx-ingress
-echo "[3/5] Installing nginx-ingress controller..."
+echo "[3/4] Installing nginx-ingress controller..."
 "${SCRIPT_DIR}/install-ingress.sh"
 echo ""
 
-# Step 4: Install ArgoCD
-echo "[4/5] Installing ArgoCD..."
-"${SCRIPT_DIR}/install-argocd.sh"
-echo ""
-
-# Step 5: Configure DNS
-echo "[5/5] Configuring DNS..."
+# Step 4: Configure DNS
+#
+# ArgoCD used to be installed here, to sync manifests the backend committed to
+# a GitOps repo. The backend now creates Deployments/Services/Secrets directly
+# via the Kubernetes API (K8sControlPlaneService), so nothing in this local
+# flow needs ArgoCD any more.
+echo "[4/4] Configuring DNS..."
 "${SCRIPT_DIR}/setup-dns.sh"
 echo ""
 
@@ -97,6 +97,7 @@ echo "  - http://test.mcp.localhost"
 echo "  - http://<server-id>.mcp.localhost"
 echo ""
 echo "Next steps:"
+echo "  0. kubectl apply -k k8s/mcp-servers   # namespace + RBAC + quotas"
 echo "  1. Start backend with LOCAL_DEV=true"
 echo "  2. Generate an MCP server through the chat interface"
 echo "  3. Server will be deployed to: http://<server-id>.mcp.localhost"

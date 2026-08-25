@@ -1,20 +1,12 @@
-import {
-  Controller,
-  Get,
-  HttpCode,
-  HttpStatus,
-  ServiceUnavailableException,
-} from '@nestjs/common';
+import { Controller, Get, HttpCode, HttpStatus, ServiceUnavailableException } from '@nestjs/common';
 import { HealthService } from './health.service';
-import {
-  HealthResponse,
-  ReadinessResponse,
-  LivenessResponse,
-} from './health.types';
+import { HealthResponse, ReadinessResponse, LivenessResponse } from './health.types';
 import { Public } from '../auth/decorators/public.decorator';
+import { SkipThrottle } from '@nestjs/throttler';
 
 @Controller('api/v1/health')
 @Public() // Health check endpoints must always be accessible
+@SkipThrottle() // Probes (k8s/docker) must never be rate limited
 export class HealthController {
   constructor(private readonly healthService: HealthService) {}
 

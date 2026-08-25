@@ -1,7 +1,11 @@
 import { Injectable, Logger, ForbiddenException, Inject, forwardRef } from '@nestjs/common';
 import { UserService } from '../../user/user.service';
 import { DeploymentOrchestratorService } from '../deployment.service';
-import { DeploymentResult, DeploymentOptions, EnterpriseDeploymentOptions } from '../types/deployment.types';
+import {
+  DeploymentResult,
+  DeploymentOptions,
+  EnterpriseDeploymentOptions,
+} from '../types/deployment.types';
 import { UserTier, TIER_CONFIG, TIER_DISPLAY_NAMES } from '../../subscription/tier-config';
 
 export interface TierRestrictedDeploymentOptions extends DeploymentOptions {
@@ -50,23 +54,18 @@ export class DeploymentRouterService {
     const tierConfig = TIER_CONFIG[user.tier as UserTier];
     this.logger.log(`Routing deployment for user ${userId} (tier: ${user.tier})`);
 
-    // 2. Check usage limits
-    const canDeploy = await this.userService.checkCanDeploy(userId);
-    if (!canDeploy.allowed) {
-      throw new ForbiddenException({
-        code: 'LIMIT_EXCEEDED',
-        message: canDeploy.reason,
-        currentUsage: canDeploy.usage?.serversDeployedThisMonth,
-        limit: canDeploy.usage?.monthlyLimit,
-        currentTier: user.tier,
-        upgradeUrl: '/account?upgrade=true',
-      } as DeploymentLimitError);
-    }
+    // Monthly server quota is enforced once, at generation time
+    // (GenerationPipeline / UserService.checkCanGenerate) - a server reaching
+    // this router already counted against the user's quota when it was
+    // generated, so deployment (publishing an already-generated server to a
+    // gist/repo) is not separately quota-gated here. See
+    // UserService.checkCanGenerate for the countable-unit rationale.
 
-    // 3. Determine deployment type
-    const requestedType = options.deploymentType || this.getDefaultDeploymentType(user.tier as UserTier);
+    // 2. Determine deployment type
+    const requestedType =
+      options.deploymentType || this.getDefaultDeploymentType(user.tier as UserTier);
 
-    // 4. Validate deployment type for tier
+    // 3. Validate deployment type for tier
     if (!tierConfig.deploymentTypes.includes(requestedType)) {
       const requiredTier = this.getRequiredTierForDeploymentType(requestedType);
       throw new ForbiddenException({
@@ -78,22 +77,28 @@ export class DeploymentRouterService {
       } as DeploymentLimitError);
     }
 
-    // 5. Apply tier-specific options
+    // 4. Apply tier-specific options
     const deployOptions: DeploymentOptions = {
       ...options,
       // Free tier: always public gists
       isPrivate: tierConfig.privateRepos ? (options.isPrivate ?? true) : false,
     };
 
-    // 6. Execute deployment based on type
+    // 5. Execute deployment based on type
+    // Ownership is recorded on the deployment row so later reads can be scoped
+    const owner = { userId, userTier: user.tier as 'free' | 'pro' | 'enterprise' };
     let result: DeploymentResult;
     try {
       switch (requestedType) {
         case 'gist':
-          result = await this.deploymentService.deployToGist(conversationId, deployOptions);
+          result = await this.deploymentService.deployToGist(conversationId, deployOptions, owner);
           break;
         case 'repo':
-          result = await this.deploymentService.deployToGitHub(conversationId, deployOptions);
+          result = await this.deploymentService.deployToGitHub(
+            conversationId,
+            deployOptions,
+            owner,
+          );
           break;
         case 'enterprise':
           const enterpriseOptions: EnterpriseDeploymentOptions = {
@@ -101,20 +106,17 @@ export class DeploymentRouterService {
             region: options.region,
             enableCdn: options.enableCdn,
           };
-          result = await this.deploymentService.deployToEnterprise(conversationId, enterpriseOptions);
+          result = await this.deploymentService.deployToEnterprise(
+            conversationId,
+            enterpriseOptions,
+          );
           break;
         default:
-          result = await this.deploymentService.deployToGist(conversationId, deployOptions);
+          result = await this.deploymentService.deployToGist(conversationId, deployOptions, owner);
       }
     } catch (error) {
       this.logger.error(`Deployment failed for user ${userId}: ${error.message}`);
       throw error;
-    }
-
-    // 7. Increment usage on success
-    if (result.success) {
-      await this.userService.incrementUsage(userId);
-      this.logger.log(`Deployment successful, incremented usage for user ${userId}`);
     }
 
     return result;
@@ -138,21 +140,8 @@ export class DeploymentRouterService {
 
     const tierConfig = TIER_CONFIG[user.tier as UserTier];
 
-    // Check usage limits
-    const canDeploy = await this.userService.checkCanDeploy(userId);
-    if (!canDeploy.allowed) {
-      return {
-        allowed: false,
-        error: {
-          code: 'LIMIT_EXCEEDED',
-          message: canDeploy.reason!,
-          currentUsage: canDeploy.usage?.serversDeployedThisMonth,
-          limit: canDeploy.usage?.monthlyLimit,
-          currentTier: user.tier,
-          upgradeUrl: '/account?upgrade=true',
-        },
-      };
-    }
+    // Monthly server quota is enforced at generation time, not here - see
+    // UserService.checkCanGenerate and the comment in routeDeployment above.
 
     // Check deployment type permission
     if (!tierConfig.deploymentTypes.includes(deploymentType)) {

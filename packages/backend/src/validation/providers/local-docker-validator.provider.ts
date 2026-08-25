@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { existsSync, readdirSync, readFileSync } from 'fs';
 import { join } from 'path';
 
@@ -26,8 +27,17 @@ export class LocalDockerValidatorProvider {
   private readonly generatedServersDir: string;
   private progressCallbacks: Map<string, (update: ValidationProgressUpdate) => void> = new Map();
 
-  constructor(private readonly mcpTestingService: McpTestingService) {
-    this.generatedServersDir = join(process.cwd(), '../../generated-servers');
+  constructor(
+    private readonly mcpTestingService: McpTestingService,
+    private readonly configService: ConfigService,
+  ) {
+    // Must resolve to the same directory as GenerationPipeline (see
+    // orchestration/pipeline.service.ts) so validation can find the files
+    // generation wrote.
+    this.generatedServersDir = this.configService.get<string>(
+      'GENERATED_SERVERS_DIR',
+      join(process.cwd(), 'generated-servers'),
+    );
   }
 
   /**
@@ -129,7 +139,9 @@ export class LocalDockerValidatorProvider {
   /**
    * Load generated code from file system
    */
-  private async loadGeneratedCode(conversationId: string): Promise<GeneratedCodeForValidation | null> {
+  private async loadGeneratedCode(
+    conversationId: string,
+  ): Promise<GeneratedCodeForValidation | null> {
     const serverDir = join(this.generatedServersDir, conversationId);
 
     if (!existsSync(serverDir)) {
@@ -193,7 +205,10 @@ export class LocalDockerValidatorProvider {
   /**
    * Read directory recursively
    */
-  private readDirectory(dir: string, basePath: string = ''): Array<{ path: string; content: string }> {
+  private readDirectory(
+    dir: string,
+    basePath: string = '',
+  ): Array<{ path: string; content: string }> {
     const files: Array<{ path: string; content: string }> = [];
     const entries = readdirSync(dir, { withFileTypes: true });
 
@@ -221,11 +236,14 @@ export class LocalDockerValidatorProvider {
   /**
    * Extract tools from source code (basic pattern matching)
    */
-  private extractToolsFromSource(source: string): Array<{ name: string; inputSchema: any; description: string }> {
+  private extractToolsFromSource(
+    source: string,
+  ): Array<{ name: string; inputSchema: any; description: string }> {
     const tools: Array<{ name: string; inputSchema: any; description: string }> = [];
 
     // Match server.tool() calls with tool definitions
-    const toolPattern = /server\.tool\s*\(\s*['"`]([^'"`]+)['"`]\s*,\s*['"`]([^'"`]*)['"`]\s*,\s*(\{[^}]*\})/g;
+    const toolPattern =
+      /server\.tool\s*\(\s*['"`]([^'"`]+)['"`]\s*,\s*['"`]([^'"`]*)['"`]\s*,\s*(\{[^}]*\})/g;
     let match;
 
     while ((match = toolPattern.exec(source)) !== null) {
@@ -311,18 +329,22 @@ export class LocalDockerValidatorProvider {
    * Get default TypeScript config
    */
   private getDefaultTsConfig(): string {
-    return JSON.stringify({
-      compilerOptions: {
-        target: 'ES2022',
-        module: 'NodeNext',
-        moduleResolution: 'NodeNext',
-        strict: true,
-        esModuleInterop: true,
-        skipLibCheck: true,
-        outDir: './dist',
-        rootDir: './src',
+    return JSON.stringify(
+      {
+        compilerOptions: {
+          target: 'ES2022',
+          module: 'NodeNext',
+          moduleResolution: 'NodeNext',
+          strict: true,
+          esModuleInterop: true,
+          skipLibCheck: true,
+          outDir: './dist',
+          rootDir: './src',
+        },
+        include: ['src/**/*'],
       },
-      include: ['src/**/*'],
-    }, null, 2);
+      null,
+      2,
+    );
   }
 }

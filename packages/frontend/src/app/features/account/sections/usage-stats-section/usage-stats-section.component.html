@@ -1,0 +1,121 @@
+<!-- Usage Statistics Section -->
+<div class="settings-section">
+  <div class="section-header">
+    <div class="section-icon">
+      <mat-icon>bar_chart</mat-icon>
+    </div>
+    <div class="section-title">
+      <h2>Usage Statistics</h2>
+      <p>Your account activity and MCP server generation history</p>
+    </div>
+  </div>
+
+  <div class="section-content">
+    <!-- Loading state -->
+    <div class="usage-stats-loading" *ngIf="loading()">
+      <div class="skeleton-line wide"></div>
+      <div class="skeleton-line"></div>
+      <div class="skeleton-bars">
+        <div class="skeleton-bar" *ngFor="let i of [1,2,3,4,5,6]"></div>
+      </div>
+    </div>
+
+    <!-- Error state -->
+    <div class="usage-stats-error" *ngIf="!loading() && error()">
+      <mat-icon>error_outline</mat-icon>
+      <p>{{ error() }}</p>
+      <button class="action-button secondary" (click)="load()">
+        <mat-icon>refresh</mat-icon>
+        <span>Try again</span>
+      </button>
+    </div>
+
+    <!-- Loaded -->
+    <ng-container *ngIf="!loading() && !error() && stats() as s">
+      <!-- Current period usage -->
+      <div class="usage-progress">
+        <div class="usage-header">
+          <span>MCP servers generated this month</span>
+          <span class="usage-count">
+            {{ s.currentPeriod.generations }} / {{ isUnlimited() ? 'Unlimited' : s.currentPeriod.limit }}
+          </span>
+        </div>
+        <div class="progress-bar-container" *ngIf="!isUnlimited()">
+          <div
+            class="progress-bar-fill"
+            [style.width.%]="percentUsedClamped()"
+            [class.warning]="isNearLimit() && !isAtLimit()"
+            [class.critical]="isAtLimit()">
+          </div>
+        </div>
+        <div class="usage-reset-info">
+          Resets on {{ s.currentPeriod.periodEnd | date:'mediumDate' }}
+        </div>
+      </div>
+
+      <!-- Empty-state note for brand new accounts -->
+      <p class="empty-activity-note" *ngIf="!hasAnyActivity()">
+        No activity yet. Start a conversation to generate your first MCP server, and your stats
+        will show up here.
+      </p>
+
+      <!-- Headline totals -->
+      <div class="stat-cards">
+        <div class="stat-card">
+          <div class="stat-value">{{ s.totals.generations }}</div>
+          <div class="stat-label">Servers generated</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value">{{ s.totals.conversations }}</div>
+          <div class="stat-label">Conversations</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value">{{ s.totals.deployments }}</div>
+          <div class="stat-label">Deployments</div>
+        </div>
+      </div>
+
+      <!-- Monthly trend -->
+      <div class="monthly-trend">
+        <div class="monthly-trend-header">Generations per month</div>
+        <div class="monthly-bars">
+          <div class="monthly-bar-col" *ngFor="let point of s.monthly">
+            <div class="monthly-bar-track">
+              <div
+                class="monthly-bar-fill"
+                [class.has-value]="point.generations > 0"
+                [style.height.%]="barHeightPercent(point.generations)">
+              </div>
+            </div>
+            <div class="monthly-bar-value">{{ point.generations }}</div>
+            <div class="monthly-bar-label">{{ monthLabel(point.month) }}</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Pipeline health -->
+      <div class="pipeline-health">
+        <div class="monthly-trend-header">Generation pipeline health</div>
+        <div class="pipeline-metrics" *ngIf="hasPipelineData(); else noPipelineData">
+          <div class="pipeline-metric">
+            <div class="pipeline-metric-value">{{ s.pipeline.successRate }}%</div>
+            <div class="pipeline-metric-label">Success rate</div>
+          </div>
+          <div class="pipeline-metric">
+            <div class="pipeline-metric-value">{{ s.pipeline.avgDurationSeconds }}s</div>
+            <div class="pipeline-metric-label">Avg. duration</div>
+          </div>
+          <div class="pipeline-metric">
+            <div class="pipeline-metric-value">{{ s.pipeline.totalRuns }}</div>
+            <div class="pipeline-metric-label">Completed runs</div>
+          </div>
+        </div>
+        <ng-template #noPipelineData>
+          <p class="coming-soon-note">
+            No completed generation runs yet.
+          </p>
+        </ng-template>
+      </div>
+    </ng-container>
+  </div>
+</div>

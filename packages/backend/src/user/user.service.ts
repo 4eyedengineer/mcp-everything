@@ -4,7 +4,8 @@ import { Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import { User } from '../database/entities/user.entity';
 import { UsageRecord } from '../database/entities/usage.entity';
-import { UserTier, TIER_CONFIG } from '../subscription/tier-config';
+import { HostedServer } from '../database/entities/hosted-server.entity';
+import { UserTier, TIER_CONFIG, TIER_DISPLAY_NAMES } from '../subscription/tier-config';
 import { CreateUserDto, UpdateUserDto } from './dto/user.dto';
 
 @Injectable()
@@ -17,6 +18,8 @@ export class UserService {
     private readonly userRepository: Repository<User>,
     @InjectRepository(UsageRecord)
     private readonly usageRepository: Repository<UsageRecord>,
+    @InjectRepository(HostedServer)
+    private readonly hostedServerRepository: Repository<HostedServer>,
   ) {}
 
   async findById(id: string): Promise<User | null> {
@@ -33,6 +36,58 @@ export class UserService {
 
   async findByGoogleId(googleId: string): Promise<User | null> {
     return this.userRepository.findOne({ where: { googleId } });
+  }
+
+  /**
+   * Explicit opt-in fetch of a user WITH their encrypted GitHub token
+   * (`githubAccessTokenEncrypted` is `select: false` on the entity - see
+   * database/entities/user.entity.ts - so ordinary `findById` never returns
+   * it). The only caller is GitHubService, to build a per-user Octokit
+   * client; never expose the returned entity's token field in an API
+   * response.
+   */
+  async findByIdWithGithubToken(id: string): Promise<User | null> {
+    return this.userRepository
+      .createQueryBuilder('user')
+      .addSelect('user.githubAccessTokenEncrypted')
+      .where('user.id = :id', { id })
+      .getOne();
+  }
+
+  /**
+   * Store (or refresh) a user's encrypted GitHub access token. `encryptedToken`
+   * must already be encrypted (see TokenEncryptionService) - this method never
+   * touches plaintext and never logs the value.
+   */
+  async setGithubToken(userId: string, encryptedToken: string, scope: string): Promise<void> {
+    await this.userRepository.update(userId, {
+      githubAccessTokenEncrypted: encryptedToken,
+      githubTokenScope: scope,
+      githubTokenUpdatedAt: new Date(),
+    });
+  }
+
+  /**
+   * Clear a user's stored GitHub token (local copy only - callers
+   * responsible for revoking it upstream with GitHub first, see
+   * GitHubService.disconnect).
+   */
+  async clearGithubToken(userId: string): Promise<void> {
+    // IMPORTANT: TypeORM's Repository#update() *omits* any property whose
+    // value is `undefined` from the generated SQL (it does NOT set the
+    // column to NULL) - only an explicit `null` clears it at the database
+    // level. Verified against a live row while building this: passing
+    // `undefined` here left `githubAccessTokenEncrypted` populated after
+    // "successful" disconnect, which would be a real security bug (the
+    // stored token silently surviving a user-initiated disconnect). Using
+    // `null` (cast, since the entity declares these columns as `string?`/
+    // `Date?` rather than `| null`) is required for this to actually clear.
+    await this.userRepository.update(userId, {
+      githubAccessTokenEncrypted: null,
+      githubTokenScope: null,
+      githubTokenUpdatedAt: null,
+    } as unknown as Partial<User>);
+    this.logger.log(`Cleared stored GitHub token for user: ${userId}`);
   }
 
   async createUser(dto: CreateUserDto): Promise<User> {
@@ -80,11 +135,49 @@ export class UserService {
     return this.userRepository.save(user);
   }
 
+  /**
+   * Delete an account.
+   *
+   * Refuses while the user still owns hosted servers that are not fully torn
+   * down. `hosted_servers.user_id` is an ON DELETE RESTRICT foreign key
+   * (1754100000002-AddHostedServerUserForeignKey.ts) precisely because no
+   * `ON DELETE` action can stop a running container or pod: CASCADE would
+   * delete the only record of a still-running server, and SET NULL would make
+   * it invisible to every user-scoped query while it kept serving traffic and
+   * burning resources. So the constraint makes the situation impossible and
+   * this check turns the resulting database error into an actionable 409
+   * instead of an opaque 500.
+   *
+   * Soft-deleted servers (status 'deleted') do not block: their containers
+   * are already stopped and their images removed, so the row is history, and
+   * the FK is dropped from those rows by nulling `user_id` below.
+   */
   async deleteUser(userId: string): Promise<void> {
     const user = await this.findById(userId);
     if (!user) {
       throw new NotFoundException('User not found');
     }
+
+    const liveServers = await this.hostedServerRepository
+      .createQueryBuilder('server')
+      .select(['server.serverId'])
+      .where('server.userId = :userId', { userId })
+      .andWhere('server.status != :deleted', { deleted: 'deleted' })
+      .getMany();
+
+    if (liveServers.length > 0) {
+      const ids = liveServers.map((s) => s.serverId).join(', ');
+      throw new ConflictException(
+        `Cannot delete this account while it still hosts ${liveServers.length} MCP ` +
+          `server(s): ${ids}. Delete them first - removing the account row would not ` +
+          `stop the running containers, it would only lose track of them.`,
+      );
+    }
+
+    // Release the RESTRICT foreign key held by the user's own soft-deleted
+    // servers. They are kept (deployment history / audit trail) but are no
+    // longer owned by anybody.
+    await this.hostedServerRepository.update({ userId }, { userId: null });
 
     await this.userRepository.remove(user);
     this.logger.log(`Deleted user: ${userId}`);
@@ -139,7 +232,8 @@ export class UserService {
     // Update usage limits based on tier
     const usage = await this.getCurrentUsage(userId);
     const tierConfig = TIER_CONFIG[tier];
-    usage.monthlyLimit = tierConfig.monthlyServerLimit === Infinity ? 999999 : tierConfig.monthlyServerLimit;
+    usage.monthlyLimit =
+      tierConfig.monthlyServerLimit === Infinity ? 999999 : tierConfig.monthlyServerLimit;
     await this.usageRepository.save(usage);
 
     this.logger.log(`Updated user ${userId} tier: ${previousTier} -> ${tier}`);
@@ -165,11 +259,15 @@ export class UserService {
     const usage = await this.getCurrentUsage(userId);
     usage.serversDeployedThisMonth += 1;
     const saved = await this.usageRepository.save(usage);
-    this.logger.log(`Incremented usage for user ${userId}: ${saved.serversDeployedThisMonth}/${saved.monthlyLimit}`);
+    this.logger.log(
+      `Incremented usage for user ${userId}: ${saved.serversDeployedThisMonth}/${saved.monthlyLimit}`,
+    );
     return saved;
   }
 
-  async checkCanDeploy(userId: string): Promise<{ allowed: boolean; reason?: string; usage?: UsageRecord }> {
+  async checkCanDeploy(
+    userId: string,
+  ): Promise<{ allowed: boolean; reason?: string; usage?: UsageRecord }> {
     const user = await this.findById(userId);
     if (!user) {
       return { allowed: false, reason: 'User not found' };
@@ -194,13 +292,65 @@ export class UserService {
     return { allowed: true, usage };
   }
 
+  /**
+   * Quota gate for MCP server *generation* - the expensive code path (research,
+   * planning, and the Docker-backed generate-test-refine loop).
+   *
+   * Countable unit decision: a successful *generation* is what consumes quota
+   * (see `incrementUsage` call sites), not a deployment. Generation is where the
+   * cost is actually incurred (LLM calls, web research, sandboxed test runs);
+   * publishing an already-generated server to a gist/repo is comparatively
+   * cheap and does not represent a *new* server. Reusing `serversDeployedThisMonth`
+   * / `monthlyLimit` here (rather than adding a parallel counter) keeps a single
+   * source of truth for "how many servers this account has produced this
+   * month" - the same number `SubscriptionController` already reports back to
+   * the user as their usage against the tier's `monthlyServerLimit`.
+   */
+  async checkCanGenerate(
+    userId: string,
+  ): Promise<{ allowed: boolean; reason?: string; usage?: UsageRecord }> {
+    const user = await this.findById(userId);
+    if (!user) {
+      return { allowed: false, reason: 'User not found' };
+    }
+
+    const tier = (user.tier as UserTier) || UserTier.FREE;
+    const tierConfig = TIER_CONFIG[tier];
+    const usage = await this.getCurrentUsage(userId);
+
+    // Pro and Enterprise generate without limit
+    if (tierConfig.monthlyServerLimit === Infinity) {
+      return { allowed: true, usage };
+    }
+
+    if (usage.serversDeployedThisMonth >= tierConfig.monthlyServerLimit) {
+      return {
+        allowed: false,
+        reason:
+          `You've reached your ${TIER_DISPLAY_NAMES[tier]} tier limit of ` +
+          `${tierConfig.monthlyServerLimit} MCP server generations this month. ` +
+          'Upgrade to Pro for unlimited generations.',
+        usage,
+      };
+    }
+
+    return { allowed: true, usage };
+  }
+
   async resetMonthlyUsage(userId: string): Promise<void> {
     this.logger.log(`Resetting monthly usage for user ${userId}`);
     await this.createUsageRecord(userId);
   }
 
   async getUsageStats(userId: string): Promise<{
+    /**
+     * @deprecated Misleading name - this counts *generations*, not
+     * deployments (see `checkCanGenerate` above for why generation is the
+     * quota-consuming unit). Kept for one release so existing callers don't
+     * break; prefer `generationsThisMonth`.
+     */
     serversDeployedThisMonth: number;
+    generationsThisMonth: number;
     monthlyLimit: number;
     periodStart: Date;
     periodEnd: Date;
@@ -208,15 +358,19 @@ export class UserService {
     remainingDeployments: number;
   }> {
     const usage = await this.getCurrentUsage(userId);
-    const percentUsed = usage.monthlyLimit === 999999
-      ? 0
-      : Math.round((usage.serversDeployedThisMonth / usage.monthlyLimit) * 100);
-    const remainingDeployments = usage.monthlyLimit === 999999
-      ? 999999
-      : Math.max(0, usage.monthlyLimit - usage.serversDeployedThisMonth);
+    const percentUsed =
+      usage.monthlyLimit === 999999
+        ? 0
+        : Math.round((usage.serversDeployedThisMonth / usage.monthlyLimit) * 100);
+    const remainingDeployments =
+      usage.monthlyLimit === 999999
+        ? 999999
+        : Math.max(0, usage.monthlyLimit - usage.serversDeployedThisMonth);
 
     return {
+      // One-release back-compat shim, see field doc comment above.
       serversDeployedThisMonth: usage.serversDeployedThisMonth,
+      generationsThisMonth: usage.serversDeployedThisMonth,
       monthlyLimit: usage.monthlyLimit,
       periodStart: usage.periodStart,
       periodEnd: usage.periodEnd,
@@ -236,7 +390,8 @@ export class UserService {
     const usage = this.usageRepository.create({
       userId,
       serversDeployedThisMonth: 0,
-      monthlyLimit: tierConfig.monthlyServerLimit === Infinity ? 999999 : tierConfig.monthlyServerLimit,
+      monthlyLimit:
+        tierConfig.monthlyServerLimit === Infinity ? 999999 : tierConfig.monthlyServerLimit,
       periodStart,
       periodEnd,
     });
@@ -299,10 +454,14 @@ export class UserService {
    * Clear password reset token after successful reset or expiry.
    */
   async clearPasswordResetToken(userId: string): Promise<void> {
+    // Must be `null`, not `undefined` - see the note on clearGithubToken().
+    // With `undefined` these columns were never actually cleared, leaving a
+    // used reset token valid until its expiry window elapsed, so a single
+    // reset link could be redeemed more than once.
     await this.userRepository.update(userId, {
-      passwordResetTokenHash: undefined,
-      passwordResetExpiresAt: undefined,
-    });
+      passwordResetTokenHash: null,
+      passwordResetExpiresAt: null,
+    } as unknown as Partial<User>);
 
     this.logger.log(`Password reset token cleared for user: ${userId}`);
   }

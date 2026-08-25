@@ -19,16 +19,16 @@ export interface McpTool {
 
 // Tool categories for organization
 export type ToolCategory =
-  | 'data'           // Data extraction/manipulation
-  | 'api'            // API interaction tools
-  | 'file'           // File system operations
-  | 'utility'        // General utility functions
-  | 'analysis'       // Code/repository analysis
-  | 'build'          // Build/deployment tools
-  | 'test'           // Testing utilities
-  | 'documentation'  // Documentation generation
-  | 'search'         // Search/query operations
-  | 'transform';     // Data transformation
+  | 'data' // Data extraction/manipulation
+  | 'api' // API interaction tools
+  | 'file' // File system operations
+  | 'utility' // General utility functions
+  | 'analysis' // Code/repository analysis
+  | 'build' // Build/deployment tools
+  | 'test' // Testing utilities
+  | 'documentation' // Documentation generation
+  | 'search' // Search/query operations
+  | 'transform'; // Data transformation
 
 // JSON Schema definition for tool inputs
 export interface JsonSchema {
@@ -51,13 +51,13 @@ export interface JsonSchemaProperty {
 
 // Implementation guidance for code generation
 export interface ImplementationHints {
-  primaryAction: string;           // Main operation to perform
-  requiredData: string[];          // Data sources needed
-  dependencies: string[];          // External dependencies
+  primaryAction: string; // Main operation to perform
+  requiredData: string[]; // Data sources needed
+  dependencies: string[]; // External dependencies
   complexity: 'simple' | 'medium' | 'complex';
   outputFormat: 'text' | 'json' | 'markdown' | 'html';
-  errorHandling: string[];         // Expected error scenarios
-  examples: ToolExample[];         // Usage examples
+  errorHandling: string[]; // Expected error scenarios
+  examples: ToolExample[]; // Usage examples
 }
 
 export interface ToolExample {
@@ -68,12 +68,12 @@ export interface ToolExample {
 
 // Tool quality assessment
 export interface ToolQuality {
-  usefulness: number;      // 0-1 scale
-  specificity: number;     // How repository-specific (0-1)
+  usefulness: number; // 0-1 scale
+  specificity: number; // How repository-specific (0-1)
   implementability: number; // How feasible to implement (0-1)
-  uniqueness: number;      // How unique/valuable (0-1)
-  overallScore: number;    // Combined score (0-1)
-  reasoning: string;       // AI's quality assessment reasoning
+  uniqueness: number; // How unique/valuable (0-1)
+  overallScore: number; // Combined score (0-1)
+  reasoning: string; // AI's quality assessment reasoning
 }
 
 // Discovery process results
@@ -102,10 +102,10 @@ export interface RepositoryContext {
 }
 
 export type DiscoveryMethod =
-  | 'code_analysis'     // Analyzed source code
+  | 'code_analysis' // Analyzed source code
   | 'readme_extraction' // Found in documentation
-  | 'api_mapping'       // Mapped from API patterns
-  | 'ai_inference';     // AI-generated from context
+  | 'api_mapping' // Mapped from API patterns
+  | 'ai_inference'; // AI-generated from context
 
 // AI prompt templates and configurations
 export interface ToolDiscoveryPrompt {
@@ -147,7 +147,10 @@ export interface AiRegenerationRequest {
 
 // Service interfaces
 export interface ToolDiscoveryService {
-  discoverTools(analysis: RepositoryAnalysis, config?: DiscoveryConfig): Promise<ToolDiscoveryResult>;
+  discoverTools(
+    analysis: RepositoryAnalysis,
+    config?: DiscoveryConfig,
+  ): Promise<ToolDiscoveryResult>;
   generateToolFromCode(code: string, context: RepositoryContext): Promise<McpTool[]>;
   extractToolsFromReadme(readme: string, context: RepositoryContext): Promise<McpTool[]>;
   mapApiToTools(apiPatterns: any[], context: RepositoryContext): Promise<McpTool[]>;
@@ -159,7 +162,7 @@ export class ToolDiscoveryError extends Error {
   constructor(
     message: string,
     public code: 'AI_FAILURE' | 'INVALID_INPUT' | 'QUALITY_THRESHOLD' | 'MAX_ITERATIONS',
-    public context?: any
+    public context?: any,
   ) {
     super(message);
     this.name = 'ToolDiscoveryError';
@@ -178,7 +181,7 @@ export interface ToolTemplate {
 
 // Predefined templates for common repository types
 export const COMMON_TOOL_TEMPLATES: Record<string, ToolTemplate[]> = {
-  'react': [
+  react: [
     {
       pattern: /\.tsx?$/,
       category: 'analysis',
@@ -187,9 +190,9 @@ export const COMMON_TOOL_TEMPLATES: Record<string, ToolTemplate[]> = {
       inputSchemaTemplate: {
         type: 'object',
         properties: {
-          componentPath: { type: 'string', description: 'Path to React component file' }
+          componentPath: { type: 'string', description: 'Path to React component file' },
         },
-        required: ['componentPath']
+        required: ['componentPath'],
       },
       implementationTemplate: {
         primaryAction: 'Parse and analyze React component',
@@ -198,11 +201,11 @@ export const COMMON_TOOL_TEMPLATES: Record<string, ToolTemplate[]> = {
         complexity: 'medium',
         outputFormat: 'json',
         errorHandling: ['file not found', 'parse errors'],
-        examples: []
-      }
-    }
+        examples: [],
+      },
+    },
   ],
-  'api': [
+  api: [
     {
       pattern: /\/api\/|router|controller/i,
       category: 'api',
@@ -212,10 +215,14 @@ export const COMMON_TOOL_TEMPLATES: Record<string, ToolTemplate[]> = {
         type: 'object',
         properties: {
           endpoint: { type: 'string', description: 'API endpoint path' },
-          method: { type: 'string', enum: ['GET', 'POST', 'PUT', 'DELETE'], description: 'HTTP method' },
-          payload: { type: 'object', description: 'Request payload' }
+          method: {
+            type: 'string',
+            enum: ['GET', 'POST', 'PUT', 'DELETE'],
+            description: 'HTTP method',
+          },
+          payload: { type: 'object', description: 'Request payload' },
         },
-        required: ['endpoint', 'method']
+        required: ['endpoint', 'method'],
       },
       implementationTemplate: {
         primaryAction: 'Execute HTTP request',
@@ -224,8 +231,8 @@ export const COMMON_TOOL_TEMPLATES: Record<string, ToolTemplate[]> = {
         complexity: 'simple',
         outputFormat: 'json',
         errorHandling: ['network errors', 'invalid responses'],
-        examples: []
-      }
-    }
-  ]
+        examples: [],
+      },
+    },
+  ],
 };

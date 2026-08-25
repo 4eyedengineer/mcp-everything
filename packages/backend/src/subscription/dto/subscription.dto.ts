@@ -20,7 +20,13 @@ export interface SubscriptionDto {
 }
 
 export interface UsageDto {
+  /**
+   * @deprecated Misleading name - this counts MCP server *generations*, not
+   * deployments. Kept for one release for back-compat; use
+   * `generationsThisMonth` instead.
+   */
   serversDeployedThisMonth: number;
+  generationsThisMonth: number;
   monthlyLimit: number;
   periodStart: Date;
   periodEnd: Date;

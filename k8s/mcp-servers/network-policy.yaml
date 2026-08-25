@@ -1,0 +1,108 @@
+# Network isolation for hosted MCP server pods.
+#
+# These pods run AI-generated code written from an untrusted prompt. Treat
+# them as hostile-by-default: the threat is not only a malicious user, but an
+# ordinary hallucination - a generated "helper" that scans a subnet, or a
+# wrong hostname that happens to resolve to something internal.
+#
+# INGRESS: only from `mcp-everything` (the backend gateway proxying MCP
+# traffic to these ClusterIP Services), only on the server port. The deleted
+# `mcp-server-deployments/base/network-policy.yaml` allowed ingress from an
+# `ingress-nginx` namespace that does not exist on this Traefik cluster, which
+# would have blackholed everything.
+#
+# EGRESS: this previously read `- {}` (allow all), justified by "a generated
+# MCP server's entire purpose is usually to call an external third-party API".
+# That is true and still honoured - but allow-all also reached the platform's
+# own Postgres in `mcp-everything`, the kube-apiserver, Harbor, and SSH on the
+# homelab node. Verified empirically on 2026-08-03: a hosted pod successfully
+# connected to postgres in the neighbouring namespace.
+#
+# So: DNS is permitted explicitly, then the backend pod (and only the backend
+# pod) is permitted on its HTTP port, then the public internet is permitted
+# with every private range carved out. Generated servers keep the outbound
+# access they need for third-party APIs and for fetching their own source, and
+# lose the ability to touch the LAN, Postgres, the kube-apiserver, or
+# link-local metadata endpoints.
+#
+# The 10.0.0.0/8 exclusion covers this cluster's pod CIDR (10.42.0.0/16) and
+# service CIDR (10.43.0.0/16), so it must be listed BEFORE any thought of
+# narrowing it - kube-dns lives at 10.43.0.10 and is reachable only via the
+# dedicated DNS rule below, not via the ipBlock rule.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mcp-servers-policy
+  namespace: mcp-servers
+  labels:
+    app.kubernetes.io/part-of: mcp-everything
+spec:
+  podSelector:
+    matchLabels:
+      app: mcp-server
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: mcp-everything
+      ports:
+        - protocol: TCP
+          port: 3000
+  egress:
+    # 1. DNS resolution. CoreDNS sits inside the service CIDR that rule 3
+    #    excludes, so it needs its own rule or nothing resolves.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # 2. The backend, and ONLY the backend, in mcp-everything.
+    #
+    #    Rule 3 excludes all of 10.0.0.0/8, which is where this cluster's pod
+    #    and service CIDRs live - so without this rule a hosted server cannot
+    #    reach the platform at all. That matters now: every hosted pod's
+    #    initContainer fetches its own source from
+    #    GET /api/hosting/servers/<id>/source on the backend, and a pod that
+    #    cannot fetch its source never starts.
+    #
+    #    Deliberately expressed as namespaceSelector + podSelector, not as a
+    #    CIDR. A CIDR that covered the backend would also cover Postgres (pod
+    #    IPs are assigned from one flat per-node range, so no /24 separates
+    #    them) and would silently re-open the hole this policy was written to
+    #    close. Selecting the backend's pod labels leaves Postgres, the
+    #    kube-apiserver and everything else in 10.0.0.0/8 unreachable.
+    #
+    #    Note both selectors sit under a SINGLE `to` element: as two elements
+    #    they would mean "any pod in mcp-everything, OR any pod anywhere with
+    #    the backend's labels", which is not the intent.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: mcp-everything
+          podSelector:
+            matchLabels:
+              app: mcp-backend
+      ports:
+        - protocol: TCP
+          port: 3000
+    # 3. The public internet, and nothing private.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8 # RFC1918 - includes this cluster's pod + service CIDRs
+              - 172.16.0.0/12 # RFC1918 - includes docker bridge networks on the nodes
+              - 192.168.0.0/16 # RFC1918 - the homelab LAN itself
+              - 169.254.0.0/16 # link-local, incl. cloud metadata endpoints
+              - 100.64.0.0/10 # CGNAT / Tailscale
+              - 127.0.0.0/8 # loopback

@@ -3,7 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigModule } from '@nestjs/config';
 
 import { Deployment } from '../database/entities/deployment.entity';
-import { McpTestingService } from '../testing/mcp-testing.service';
+import { TestingModule } from '../testing/testing.module';
 import { ValidationService } from './validation.service';
 import { ValidationController } from './validation.controller';
 import { LocalDockerValidatorProvider } from './providers/local-docker-validator.provider';
@@ -21,13 +21,16 @@ import { DeploymentModule } from '../deployment/deployment.module';
     ConfigModule,
     // Use forwardRef to handle circular dependency with DeploymentModule
     forwardRef(() => DeploymentModule),
+    // McpTestingService owns Docker container lifecycle/state (running
+    // containers map); it must be a single shared instance, not
+    // independently provided per module. See TestingModule.
+    TestingModule,
   ],
   controllers: [ValidationController],
   providers: [
     ValidationService,
     LocalDockerValidatorProvider,
     GitHubActionsValidatorProvider,
-    McpTestingService,
     McpProtocolValidatorService,
   ],
   exports: [ValidationService, McpProtocolValidatorService],

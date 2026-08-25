@@ -11,7 +11,10 @@ import {
 import { Request } from 'express';
 import { StripeService } from './stripe.service';
 import { SubscriptionService } from './subscription.service';
+import { Public } from '../auth/decorators/public.decorator';
 
+// Authenticated by Stripe signature verification, not JWT
+@Public()
 @Controller('api/webhooks/stripe')
 export class StripeWebhookController {
   private readonly logger = new Logger(StripeWebhookController.name);
@@ -41,10 +44,22 @@ export class StripeWebhookController {
       event = this.stripeService.constructWebhookEvent(req.rawBody, signature);
     } catch (err) {
       this.logger.error(`Webhook signature verification failed: ${(err as Error).message}`);
-      throw new BadRequestException(`Webhook signature verification failed: ${(err as Error).message}`);
+      throw new BadRequestException(
+        `Webhook signature verification failed: ${(err as Error).message}`,
+      );
     }
 
     this.logger.log(`Processing webhook event: ${event.type} (${event.id})`);
+
+    // Idempotency gate: Stripe delivers at-least-once, so record the event id
+    // before dispatching. A duplicate delivery is acked with 200 and skipped so
+    // money-adjacent handlers (e.g. usage reset on invoice.payment_succeeded)
+    // never run twice for the same event. Covers ALL event types below.
+    const isNew = await this.subscriptionService.recordWebhookEvent(event.id, event.type);
+    if (!isNew) {
+      this.logger.log(`Duplicate webhook event ${event.id} (${event.type}) - skipping`);
+      return { received: true };
+    }
 
     try {
       switch (event.type) {
@@ -70,14 +85,19 @@ export class StripeWebhookController {
 
         case 'checkout.session.completed':
           this.logger.log(`Checkout session completed: ${event.data.object.id}`);
-          // Subscription handling is done via subscription.created webhook
+          // Reconcile in case customer.subscription.created was dropped/delayed:
+          // fetch the live subscription and sync tier from the same path.
+          await this.subscriptionService.handleCheckoutSessionCompleted(event.data.object);
           break;
 
         default:
           this.logger.log(`Unhandled event type: ${event.type}`);
       }
     } catch (error) {
-      this.logger.error(`Error processing webhook ${event.type}: ${(error as Error).message}`, (error as Error).stack);
+      this.logger.error(
+        `Error processing webhook ${event.type}: ${(error as Error).message}`,
+        (error as Error).stack,
+      );
       // Don't throw - return 200 to acknowledge receipt
       // Stripe will retry on errors, so we want to prevent infinite retries for processing errors
     }

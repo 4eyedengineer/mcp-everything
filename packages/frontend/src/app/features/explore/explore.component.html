@@ -3,12 +3,18 @@
   <div class="explore-content">
     <!-- Page Header -->
     <div class="page-header">
-      <h1>Explore MCP Servers</h1>
-      <p class="subtitle">Browse and discover AI-generated MCP servers from various sources</p>
+      <div class="page-header-text">
+        <h1>Explore MCP Servers</h1>
+        <p class="subtitle">Browse and discover AI-generated MCP servers from various sources</p>
+      </div>
+      <a routerLink="/chat" class="mcp-btn-primary new-chat-button">
+        <mat-icon>chat</mat-icon>
+        <span>New chat</span>
+      </a>
     </div>
 
-    <!-- Featured Section -->
-    <section class="featured-section" *ngIf="(featuredServers$ | async)?.length">
+    <!-- Featured Section (hidden while a search/category filter is active - see showFeatured) -->
+    <section class="featured-section" *ngIf="showFeatured && (featuredServers$ | async)?.length">
       <div class="section-header">
         <h2>
           <mat-icon>star</mat-icon>
@@ -79,7 +85,7 @@
       <mat-icon class="error-icon">error_outline</mat-icon>
       <h3>Something went wrong</h3>
       <p>{{ error }}</p>
-      <button class="primary-button" (click)="loadServers()">
+      <button class="mcp-btn-primary" (click)="loadServers()">
         <mat-icon>refresh</mat-icon>
         <span>Try Again</span>
       </button>
@@ -100,11 +106,11 @@
       <p *ngIf="hasFilters">Try adjusting your search or filters</p>
       <p *ngIf="!hasFilters">Start by generating your first MCP server using the chat interface</p>
       <div class="empty-actions">
-        <button *ngIf="hasFilters" class="secondary-button" (click)="clearFilters()">
+        <button *ngIf="hasFilters" class="mcp-btn-secondary" (click)="clearFilters()">
           <mat-icon>filter_alt_off</mat-icon>
           <span>Clear Filters</span>
         </button>
-        <button class="primary-button" routerLink="/chat">
+        <button class="mcp-btn-primary" routerLink="/chat">
           <mat-icon>chat</mat-icon>
           <span>Start Chatting</span>
         </button>

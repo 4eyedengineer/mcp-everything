@@ -16,6 +16,7 @@ import {
   McpResourceResponse,
 } from '../../../core/services/marketplace.service';
 import { NotificationService } from '../../../core/services/notification.service';
+import { buildInstallCommand } from './install-command.util';
 
 @Component({
   selector: 'mcp-server-detail',
@@ -76,20 +77,18 @@ export class ServerDetailComponent implements OnInit {
     });
   }
 
+  /**
+   * The Download button is only rendered (see template) when
+   * `server.downloadUrl` is a real, direct download artifact - distinct
+   * from the GitHub/Gist buttons, which open the source instead.
+   */
   downloadServer(): void {
-    if (!this.server) return;
+    if (!this.server?.downloadUrl) return;
+    const downloadUrl = this.server.downloadUrl;
 
     this.marketplaceService.recordDownload(this.server.id).subscribe({
       next: () => {
-        if (this.server?.downloadUrl) {
-          window.open(this.server.downloadUrl, '_blank');
-        } else if (this.server?.gistUrl) {
-          window.open(this.server.gistUrl, '_blank');
-        } else if (this.server?.repositoryUrl) {
-          window.open(this.server.repositoryUrl, '_blank');
-        } else {
-          this.notificationService.info(`Download started for ${this.server?.name}`);
-        }
+        window.open(downloadUrl, '_blank', 'noopener');
 
         // Update local count
         if (this.server) {
@@ -97,8 +96,12 @@ export class ServerDetailComponent implements OnInit {
         }
       },
       error: (err) => {
+        // The global error interceptor already shows a toast for the failed
+        // request - avoid showing a second, redundant one here. The user
+        // should still be able to reach the real download even if recording
+        // the click-through failed.
         console.error('Failed to record download:', err);
-        this.notificationService.error('Failed to download server');
+        window.open(downloadUrl, '_blank', 'noopener');
       },
     });
   }
@@ -125,16 +128,16 @@ export class ServerDetailComponent implements OnInit {
     this.snackBar.open('Copied to clipboard!', 'Close', { duration: 2000 });
   }
 
+  /**
+   * Real, runnable install instructions - no `npx @anthropic/mcp-install`,
+   * which does not exist. For the official modelcontextprotocol/servers
+   * reference servers (whose `repositoryUrl` points at a subdirectory of
+   * that monorepo), this resolves to the actual documented npx/uvx
+   * invocation rather than a `git clone` of the non-clonable tree URL. See
+   * `install-command.util.ts` for the full rationale.
+   */
   getInstallCommand(): string {
-    if (!this.server) return '';
-
-    if (this.server.repositoryUrl) {
-      return `npx @anthropic/mcp-install ${this.server.repositoryUrl}`;
-    }
-    if (this.server.gistUrl) {
-      return `npx @anthropic/mcp-install ${this.server.gistUrl}`;
-    }
-    return `npm install ${this.server.slug}`;
+    return buildInstallCommand(this.server);
   }
 
   getCategoryIcon(): string {

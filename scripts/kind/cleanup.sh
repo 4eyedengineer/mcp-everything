@@ -43,14 +43,6 @@ if grep -q "mcp.localhost" ${HOSTS_FILE} 2>/dev/null; then
     fi
 fi
 
-# Clean up local-gitops/servers directory
-SERVERS_DIR="$(dirname "${BASH_SOURCE[0]}")/../../k8s/local-gitops/servers"
-if [ -d "${SERVERS_DIR}" ]; then
-    # Remove everything except .gitkeep
-    find "${SERVERS_DIR}" -mindepth 1 ! -name '.gitkeep' -exec rm -rf {} + 2>/dev/null || true
-    echo "  ✓ Cleared local-gitops/servers/"
-fi
-
 echo ""
 echo "=============================================="
 echo "  Cleanup Complete!                           "

@@ -1,8 +1,6 @@
 import { MigrationInterface, QueryRunner, TableColumn } from 'typeorm';
 
-export class AddDeploymentServerFields1733200001000
-  implements MigrationInterface
-{
+export class AddDeploymentServerFields1733200001000 implements MigrationInterface {
   name = 'AddDeploymentServerFields1733200001000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {

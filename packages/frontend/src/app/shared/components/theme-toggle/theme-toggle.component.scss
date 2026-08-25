@@ -1,0 +1,54 @@
+// Segmented Light/Dark/System control - matches the account page's
+// preference-row visual language (see account.component.scss `.billing-toggle`
+// / `.interval-btn` for the sibling pattern this mirrors).
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  background-color: var(--background-alt);
+  border: 1px solid var(--border-medium);
+  border-radius: var(--border-radius, 8px);
+}
+
+.theme-toggle-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: none;
+  background: none;
+  border-radius: calc(var(--border-radius, 8px) - 2px);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--transition-fast, 0.15s ease);
+  white-space: nowrap;
+
+  .theme-toggle-icon {
+    flex-shrink: 0;
+  }
+
+  &:hover:not(.active) {
+    color: var(--text-primary);
+    background-color: var(--background-hover);
+  }
+
+  &.active {
+    background-color: var(--surface-color);
+    color: var(--text-primary);
+    box-shadow: var(--shadow-sm);
+  }
+}
+
+@media (max-width: 480px) {
+  .theme-toggle-option span {
+    display: none;
+  }
+
+  .theme-toggle-option {
+    padding: 8px;
+  }
+}

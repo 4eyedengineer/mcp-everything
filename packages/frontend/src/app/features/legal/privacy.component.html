@@ -1,0 +1,110 @@
+<div class="legal-page">
+  <header class="legal-header">
+    <div class="legal-header-inner">
+      <a routerLink="/" class="brand" aria-label="MCP Everything home">
+        <img class="brand-mark" src="favicon.svg" alt="" width="20" height="20" aria-hidden="true" />
+        <span>MCP Everything</span>
+      </a>
+      <div class="flex flex-center" style="gap: 12px;">
+        <a routerLink="/" class="back-link">Back to home</a>
+        <mcp-theme-toggle></mcp-theme-toggle>
+      </div>
+    </div>
+  </header>
+
+  <main class="legal-main">
+    <h1 class="legal-title">Privacy Policy</h1>
+    <p class="legal-updated">Last updated: {{ lastUpdated }}</p>
+
+    <p class="legal-intro">
+      This is a personal, experimental project, not a large company with a dedicated privacy
+      team. This page describes, plainly, what data MCP Everything collects and why, so you can
+      decide whether you're comfortable using it.
+    </p>
+
+    <section class="legal-section">
+      <h2>What we collect</h2>
+      <p>We collect the minimum needed to run your account and the service, which is:</p>
+      <ul>
+        <li>Account information: your email address, and a hashed password if you sign up with email rather than GitHub or Google</li>
+        <li>Content you submit to generate servers, such as repository URLs, descriptions, and any conversation you have with the AI to refine a request</li>
+        <li>The MCP servers you generate or host, and basic metadata about them (name, status, timestamps)</li>
+        <li>Basic usage information needed to enforce free-tier generation limits</li>
+        <li>If you sign in with GitHub or Google, the basic profile information those providers share (such as your name, email, and avatar) as part of standard OAuth sign-in</li>
+      </ul>
+    </section>
+
+    <section class="legal-section">
+      <h2>How we use it</h2>
+      <p>
+        Your data is used to operate your account, generate and host the MCP servers you request,
+        enforce usage limits, and keep the service reasonably secure. We don't sell your data, and
+        we don't use it for advertising.
+      </p>
+    </section>
+
+    <section class="legal-section">
+      <h2>Third parties</h2>
+      <p>Running the service means some of your data passes through a small number of third parties:</p>
+      <ul>
+        <li>Anthropic's API, to process the AI requests that analyze your input and generate MCP servers</li>
+        <li>GitHub and Google, if you choose to sign in or sign up through them</li>
+        <li>The infrastructure that hosts this application and any MCP servers you deploy</li>
+      </ul>
+      <p>
+        Each of these handles data under its own terms and privacy practices, which are outside
+        our control.
+      </p>
+    </section>
+
+    <section class="legal-section">
+      <h2>Data retention</h2>
+      <p>
+        We keep account data and generated content for as long as your account is active, so the
+        service works as expected. If you delete your account, we'll remove what we reasonably
+        can; some records may be retained briefly afterward for operational or security reasons,
+        such as backups aging out.
+      </p>
+    </section>
+
+    <section class="legal-section">
+      <h2>Your rights</h2>
+      <p>
+        You can review or update your account information from the account page at any time. You
+        can request deletion of your account and associated data by contacting us. If you're
+        located somewhere with specific data protection rights (such as access, correction, or
+        deletion rights under a regional privacy law), those requests are welcome too, contact us
+        and we'll do our best to help.
+      </p>
+    </section>
+
+    <section class="legal-section">
+      <h2>Security</h2>
+      <p>
+        We take reasonable steps to protect your data, such as hashing passwords and requiring
+        authentication for account and generation actions, but no service can guarantee perfect
+        security. Use your own judgment about what you submit.
+      </p>
+    </section>
+
+    <section class="legal-section">
+      <h2>Changes to this policy</h2>
+      <p>
+        This policy may be updated as the service changes. The "Last updated" date at the top of
+        this page reflects the most recent revision.
+      </p>
+    </section>
+
+    <section class="legal-section">
+      <h2>Contact</h2>
+      <p>
+        Questions about this policy, or requests about your data, can be sent through the contact
+        details on your account page, or by opening an issue on the project's GitHub repository.
+      </p>
+    </section>
+  </main>
+
+  <footer class="legal-footer">
+    <a routerLink="/terms">Terms of Service</a>
+  </footer>
+</div>

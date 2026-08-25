@@ -4,7 +4,7 @@
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--overlay-color);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -13,7 +13,7 @@
 }
 
 .modal-content.confirm-modal {
-  background: white;
+  background: var(--surface-color);
   border-radius: 12px;
   width: 100%;
   max-width: 420px;
@@ -30,17 +30,17 @@
     font-size: 28px;
     width: 28px;
     height: 28px;
-    color: #6b6b6b;
+    color: var(--text-secondary);
 
     &.danger {
-      color: #c62828;
+      color: var(--error-text);
     }
   }
 
   h2 {
     font-size: 18px;
     font-weight: 600;
-    color: #1f1f1f;
+    color: var(--text-primary);
     margin: 0;
   }
 }
@@ -51,7 +51,7 @@
   p {
     font-size: 14px;
     line-height: 1.6;
-    color: #6b6b6b;
+    color: var(--text-secondary);
     margin: 0;
   }
 }
@@ -61,32 +61,32 @@
   justify-content: flex-end;
   gap: 12px;
   padding: 16px 24px;
-  border-top: 1px solid #e5e5e5;
-  background: #f5f5f5;
+  border-top: 1px solid var(--border-medium);
+  background: var(--background-hover);
   border-radius: 0 0 12px 12px;
 
   .btn-cancel {
-    color: #6b6b6b;
+    color: var(--text-secondary);
     border-radius: 8px;
 
     &:hover {
-      background: #e5e5e5;
-      color: #1f1f1f;
+      background: var(--border-medium);
+      color: var(--text-primary);
     }
   }
 
   .btn-primary {
-    background-color: #2d2d2d;
-    color: white;
+    background-color: var(--primary-color);
+    color: var(--text-inverse);
     border-radius: 8px;
 
     &:hover {
-      background-color: #1a1a1a;
+      background-color: var(--primary-hover);
     }
   }
 
   .btn-danger {
-    background-color: #c62828;
+    background-color: var(--error-text);
     color: white;
     border-radius: 8px;
 

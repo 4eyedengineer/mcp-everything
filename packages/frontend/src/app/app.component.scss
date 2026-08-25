@@ -10,7 +10,7 @@
   height: 100%;
   width: 100%;
   position: relative;
-  background-color: white;
+  background-color: var(--background-main);
 }
 
 .main-container {
@@ -19,13 +19,33 @@
   flex: 1;
   height: 100%;
   overflow: hidden;
+  transition: margin-left 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+// The sidebar is off-canvas (position: fixed) below 1024px, where it
+// overlays the content with a dimmed backdrop instead - see the
+// conversation-sidebar component's own overlay breakpoint. At desktop
+// widths, an open sidebar instead takes up layout space so the content
+// area reflows next to it rather than sitting underneath it.
+@media (min-width: 1024px) {
+  .app-container.sidebar-open .main-container {
+    margin-left: 280px;
+  }
 }
 
 .content-area {
   flex: 1;
   overflow: hidden;
-  background-color: white;
+  background-color: var(--background-main);
   position: relative;
+}
+
+// /auth/* has no sidebar/top-nav siblings to size against - let it take
+// the full viewport and scroll its own content (login/register forms can be
+// taller than the viewport on small screens).
+.auth-content-area {
+  height: 100%;
+  overflow: auto;
 }
 
 // Smooth transitions

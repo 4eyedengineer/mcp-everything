@@ -14,7 +14,7 @@
     <h3>Something went wrong</h3>
     <p>{{ error }}</p>
     <div class="error-actions">
-      <button class="secondary-button" (click)="goBack()">
+      <button class="mcp-btn-secondary" (click)="goBack()">
         <mat-icon>arrow_back</mat-icon>
         <span>Back to Explore</span>
       </button>
@@ -61,15 +61,22 @@
       </div>
 
       <div class="header-actions">
-        <button class="primary-button" (click)="downloadServer()">
+        <!--
+          Only shown when there's a real downloadable artifact - these
+          reference servers are source-only, so for them this button is
+          absent and the GitHub/Gist buttons below (which already exist and
+          point at the real source) are the honest call to action instead of
+          a redundant, misleadingly-labeled second "Download" button.
+        -->
+        <button *ngIf="server.downloadUrl" class="mcp-btn-primary" (click)="downloadServer()">
           <mat-icon>download</mat-icon>
           <span>Download</span>
         </button>
-        <button *ngIf="server.repositoryUrl" class="secondary-button" (click)="openGitHub()">
+        <button *ngIf="server.repositoryUrl" class="mcp-btn-secondary" (click)="openGitHub()">
           <mat-icon>code</mat-icon>
           <span>GitHub</span>
         </button>
-        <button *ngIf="server.gistUrl && !server.repositoryUrl" class="secondary-button" (click)="openGist()">
+        <button *ngIf="server.gistUrl && !server.repositoryUrl" class="mcp-btn-secondary" (click)="openGist()">
           <mat-icon>description</mat-icon>
           <span>View Gist</span>
         </button>

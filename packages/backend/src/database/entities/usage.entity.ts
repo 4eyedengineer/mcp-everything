@@ -20,7 +20,7 @@ export class UsageRecord {
   userId: string;
 
   @ManyToOne(() => User, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'userId' })
+  @JoinColumn({ name: 'userId', foreignKeyConstraintName: 'usage_records_userId_fkey' })
   user: User;
 
   @Column({ type: 'int', default: 0 })

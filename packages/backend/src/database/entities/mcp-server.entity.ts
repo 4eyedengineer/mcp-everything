@@ -21,6 +21,19 @@ import { User } from './user.entity';
  * Key relationships:
  * - author: User who created/owns the server
  * - sourceConversationId: Link to generating conversation (if platform-generated)
+ *
+ * Schema drift note (see 1753900010000-FixMcpServersSchemaDrift.ts):
+ * the 1733500000000 migration also added CHECK (visibility/language/status IN
+ * (...)) constraints that have no TypeORM representation anywhere in this
+ * schema (no other enum-like column in this codebase is DB-CHECK-enforced -
+ * they all rely on the TypeScript union type only, exactly like `visibility`
+ * etc. here). The corrective migration deliberately drops those 3 CHECK
+ * constraints for consistency rather than adding @Check decorators to
+ * resurrect them: dropping loses only defense-in-depth (existing rows already
+ * satisfy them; the union types still constrain writes at the app layer), and
+ * keeping them would require the @Check expression text to exactly match
+ * Postgres's normalized `pg_get_constraintdef` output or migration:generate
+ * would perpetually flag it as changed.
  */
 @Entity('mcp_servers')
 export class McpServer {
@@ -45,7 +58,14 @@ export class McpServer {
   @Index('IDX_mcp_servers_category')
   category: string; // 'api', 'database', 'utility', 'integration', etc.
 
+  /**
+   * `idx_mcp_servers_tags` is a GIN index (for array `@>`/`&&` tag search)
+   * created directly in the 1733500000000 migration - TypeORM's plain
+   * @Index decorator only emits btree, so it's marked synchronize:false to
+   * document the index without TypeORM trying to replace it with a btree.
+   */
   @Column({ type: 'text', array: true, nullable: true })
+  @Index('idx_mcp_servers_tags', { synchronize: false })
   tags?: string[];
 
   @Column({ type: 'varchar', length: 20, default: 'public' })
@@ -57,7 +77,7 @@ export class McpServer {
   authorId?: string;
 
   @ManyToOne(() => User, { nullable: true, onDelete: 'SET NULL' })
-  @JoinColumn({ name: 'authorId' })
+  @JoinColumn({ name: 'authorId', foreignKeyConstraintName: 'mcp_servers_author_id_fkey' })
   author?: User;
 
   @Column({ type: 'varchar', length: 500, nullable: true })
@@ -97,13 +117,23 @@ export class McpServer {
   @Column({ type: 'varchar', length: 20, default: 'typescript' })
   language: 'typescript' | 'python' | 'javascript';
 
+  /**
+   * `idx_mcp_servers_downloads` is a DESC-ordered index created directly in
+   * the 1733500000000 migration (optimized for "most downloaded" sort
+   * queries) - TypeORM's @Index decorator cannot express column sort order,
+   * so it's marked synchronize:false here purely to document that the index
+   * exists and to stop `migration:generate` from proposing to drop it.
+   */
   @Column({ type: 'integer', default: 0 })
+  @Index('idx_mcp_servers_downloads', { synchronize: false })
   downloadCount: number;
 
   @Column({ type: 'integer', default: 0 })
   viewCount: number;
 
+  /** See `idx_mcp_servers_downloads` above - same reasoning, DESC "top rated" sort. */
   @Column({ type: 'numeric', precision: 2, scale: 1, default: 0 })
+  @Index('idx_mcp_servers_rating', { synchronize: false })
   rating: number;
 
   @Column({ type: 'integer', default: 0 })
@@ -127,7 +157,9 @@ export class McpServer {
   @Column({ type: 'jsonb', nullable: true })
   metadata?: Record<string, unknown>;
 
+  /** See `idx_mcp_servers_downloads` above - same reasoning, DESC "newest" sort. */
   @CreateDateColumn()
+  @Index('idx_mcp_servers_created_at', { synchronize: false })
   createdAt: Date;
 
   @UpdateDateColumn()

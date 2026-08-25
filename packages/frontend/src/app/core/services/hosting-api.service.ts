@@ -2,6 +2,8 @@ import { Injectable } from '@angular/core';
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { Observable, throwError, interval } from 'rxjs';
 import { catchError, map, switchMap, takeWhile, startWith } from 'rxjs/operators';
+import { API_BASE } from '../config/api.config';
+import { parseHttpError } from '../../shared/utils/http-error.util';
 
 /**
  * Status values for hosted servers
@@ -37,7 +39,31 @@ export interface DeployToCloudResponse {
 }
 
 /**
- * Server status response from polling endpoint
+ * What the user asked for, as opposed to what the cluster is doing.
+ */
+export type HostedServerDesiredState = 'running' | 'stopped' | 'deleted';
+
+/**
+ * What the cluster actually reports, written only by the backend's
+ * reconciler. `status` above remains the value this UI renders; this is the
+ * finer-grained truth behind it.
+ */
+export type HostedServerObservedStatus =
+  | 'running'
+  | 'progressing'
+  | 'stopped'
+  | 'degraded'
+  | 'failed'
+  | 'missing'
+  | 'unknown';
+
+/**
+ * Server status response from polling endpoint.
+ *
+ * `replicas`/`readyReplicas` are now REAL counts observed from the Kubernetes
+ * Deployment. They used to be derived from `status` on the backend
+ * (`status === 'running' ? 1 : 0`), so they could never disagree with it.
+ * They are 0 until the reconciler's first pass over a freshly deployed server.
  */
 export interface ServerStatusResponse {
   serverId: string;
@@ -45,6 +71,11 @@ export interface ServerStatusResponse {
   message: string;
   replicas: number;
   readyReplicas: number;
+  /** Optional: older backends do not return these. */
+  desiredState?: HostedServerDesiredState;
+  observedStatus?: HostedServerObservedStatus | null;
+  /** When the cluster was last observed; bounded by the reconciler interval. */
+  observedAt?: Date | null;
   lastUpdated: Date;
 }
 
@@ -89,11 +120,51 @@ export interface ServerListResponse {
   };
 }
 
+/**
+ * Metadata for a hosted server's API key. Never contains the secret - the
+ * backend only ever returns the plaintext key once, at creation
+ * (see {@link CreatedHostedServerApiKey}).
+ */
+export interface HostedServerApiKey {
+  id: string;
+  label: string;
+  /** Non-secret leading chars, e.g. `mcps_A1b2c3`. */
+  keyPrefix: string;
+  /** Last 4 chars of the key, for disambiguation in a list. */
+  lastFour: string;
+  createdAt: Date;
+  lastUsedAt: Date | null;
+  expiresAt: Date | null;
+  revokedAt: Date | null;
+  /** Derived by the backend: not revoked and not past its expiry. */
+  active: boolean;
+}
+
+/** Request body for creating a hosted-server API key. */
+export interface CreateHostedServerApiKeyRequest {
+  label: string;
+  /** Optional lifetime in days. Omit for a key that never expires. */
+  expiresInDays?: number;
+}
+
+/**
+ * Response from creating a hosted-server API key - the ONLY response that
+ * ever carries the plaintext `key`. It cannot be retrieved again afterwards.
+ */
+export interface CreatedHostedServerApiKey {
+  key: string;
+  apiKey: HostedServerApiKey;
+  warning: {
+    shownOnce: string;
+    usage: string;
+  };
+}
+
 @Injectable({
   providedIn: 'root'
 })
 export class HostingApiService {
-  private readonly baseUrl = 'http://localhost:3000/api/hosting';
+  private readonly baseUrl = `${API_BASE}/hosting`;
 
   constructor(private http: HttpClient) {}
 
@@ -201,6 +272,45 @@ export class HostingApiService {
   }
 
   /**
+   * Create an API key for a hosted server the current user owns.
+   * The response's `key` field is the plaintext credential and is only ever
+   * returned here - it cannot be looked up again afterwards.
+   */
+  createServerApiKey(
+    serverId: string,
+    data: CreateHostedServerApiKeyRequest
+  ): Observable<CreatedHostedServerApiKey> {
+    return this.http
+      .post<CreatedHostedServerApiKey>(`${this.baseUrl}/servers/${serverId}/keys`, data)
+      .pipe(catchError((error) => this.handleError(error, 'createServerApiKey')));
+  }
+
+  /**
+   * List API key metadata (active and revoked) for a hosted server. Never
+   * includes the secret - the backend does not store it to return.
+   */
+  listServerApiKeys(serverId: string): Observable<{ apiKeys: HostedServerApiKey[] }> {
+    return this.http
+      .get<{ apiKeys: HostedServerApiKey[] }>(`${this.baseUrl}/servers/${serverId}/keys`)
+      .pipe(catchError((error) => this.handleError(error, 'listServerApiKeys')));
+  }
+
+  /**
+   * Revoke an API key on a hosted server. Takes effect on the key's next use
+   * at the MCP gateway; other keys on the same server keep working.
+   */
+  revokeServerApiKey(
+    serverId: string,
+    keyId: string
+  ): Observable<{ success: boolean; apiKey: HostedServerApiKey }> {
+    return this.http
+      .delete<{ success: boolean; apiKey: HostedServerApiKey }>(
+        `${this.baseUrl}/servers/${serverId}/keys/${keyId}`
+      )
+      .pipe(catchError((error) => this.handleError(error, 'revokeServerApiKey')));
+  }
+
+  /**
    * Get server logs
    * @param serverId The server ID
    * @param lines Number of log lines to retrieve (default: 100)
@@ -223,23 +333,14 @@ export class HostingApiService {
   private handleError(error: HttpErrorResponse, operation: string): Observable<never> {
     console.error(`${operation} failed:`, error);
 
-    let errorMessage = 'An unexpected error occurred';
+    let errorMessage: string;
 
-    if (error.error instanceof ErrorEvent) {
-      // Client-side error
-      errorMessage = error.error.message;
-    } else if (error.error?.error) {
-      // Backend error with message
-      errorMessage = error.error.error;
-    } else if (error.error?.message) {
-      // Alternative backend error format
-      errorMessage = error.error.message;
-    } else if (error.status === 404) {
+    if (error.status === 404) {
       errorMessage = 'Server not found. It may have been deleted.';
-    } else if (error.status === 429) {
-      errorMessage = 'Too many requests. Please wait a moment before trying again.';
     } else if (error.status === 500) {
       errorMessage = 'Server error during operation. Please try again.';
+    } else {
+      errorMessage = parseHttpError(error);
     }
 
     return throwError(() => ({

@@ -1,15 +1,18 @@
 // Overlay
+// Shown below the desktop breakpoint (matches app.component.scss's
+// `.sidebar-open` reflow threshold), where the sidebar is an off-canvas
+// panel over dimmed content rather than something that shares layout space.
 .sidebar-overlay {
   position: fixed;
   top: 0;
   left: 0;
   right: 0;
   bottom: 0;
-  background-color: rgba(0, 0, 0, 0.4);
+  background-color: var(--overlay-color);
   z-index: 998;
   display: none;
 
-  @media (max-width: 768px) {
+  @media (max-width: 1023px) {
     display: block;
   }
 }
@@ -21,8 +24,8 @@
   left: -280px;
   bottom: 0;
   width: 280px;
-  background-color: #f9f9f9;
-  border-right: 1px solid #e5e5e5;
+  background-color: var(--surface-alt);
+  border-right: 1px solid var(--border-medium);
   display: flex;
   flex-direction: column;
   z-index: 999;
@@ -32,7 +35,7 @@
     left: 0;
   }
 
-  @media (max-width: 768px) {
+  @media (max-width: 1023px) {
     width: 280px;
     box-shadow: 2px 0 8px rgba(0, 0, 0, 0.1);
   }
@@ -43,16 +46,16 @@
   position: sticky;
   top: 0;
   z-index: 1;
-  background-color: #f9f9f9;
+  background-color: var(--surface-alt);
   flex-shrink: 0;
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 12px 8px;
-  border-bottom: 1px solid #e5e5e5;
+  border-bottom: 1px solid var(--border-medium);
 
   .close-button {
-    color: #6b6b6b;
+    color: var(--text-secondary);
   }
 
   .new-chat-button {
@@ -62,16 +65,16 @@
     justify-content: center;
     gap: 8px;
     padding: 8px 16px;
-    background-color: white;
-    border: 1px solid #d1d1d1;
+    background-color: var(--surface-color);
+    border: 1px solid var(--border-dark);
     border-radius: 8px;
-    color: #1f1f1f;
+    color: var(--text-primary);
     font-weight: 500;
     transition: all 0.2s ease;
 
     &:hover {
-      background-color: #f5f5f5;
-      border-color: #b8b8b8;
+      background-color: var(--background-hover);
+      border-color: var(--scrollbar-thumb-hover);
     }
 
     mat-icon {
@@ -94,7 +97,7 @@
     padding: 8px 12px;
     font-size: 12px;
     font-weight: 600;
-    color: #6b6b6b;
+    color: var(--text-secondary);
     text-transform: uppercase;
     letter-spacing: 0.5px;
   }
@@ -111,7 +114,7 @@
   margin-bottom: 4px;
 
   &:hover {
-    background-color: #ececec;
+    background-color: var(--background-hover);
 
     .conversation-menu {
       opacity: 1;
@@ -125,8 +128,8 @@
     width: 32px;
     height: 32px;
     border-radius: 6px;
-    background-color: white;
-    color: #6b6b6b;
+    background-color: var(--surface-color);
+    color: var(--text-secondary);
     flex-shrink: 0;
 
     mat-icon {
@@ -143,7 +146,7 @@
     .conversation-title {
       font-size: 14px;
       font-weight: 500;
-      color: #1f1f1f;
+      color: var(--text-primary);
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
@@ -152,14 +155,14 @@
 
     .conversation-time {
       font-size: 12px;
-      color: #8e8e8e;
+      color: var(--text-tertiary);
     }
   }
 
   .conversation-menu {
     opacity: 0;
     transition: opacity 0.2s ease;
-    color: #6b6b6b;
+    color: var(--text-secondary);
 
     mat-icon {
       font-size: 18px;
@@ -176,7 +179,7 @@
   justify-content: center;
   padding: 48px 24px;
   text-align: center;
-  color: #8e8e8e;
+  color: var(--text-tertiary);
 
   mat-icon {
     font-size: 48px;
@@ -192,7 +195,7 @@
 
     &.empty-hint {
       font-size: 12px;
-      color: #b0b0b0;
+      color: var(--text-disabled);
     }
   }
 }
@@ -201,15 +204,15 @@
 .usage-section {
   flex-shrink: 0;
   padding: 12px 16px;
-  border-top: 1px solid #e5e5e5;
-  background-color: #f5f5f5;
+  border-top: 1px solid var(--border-medium);
+  background-color: var(--background-hover);
 
   .usage-header {
     display: flex;
     align-items: center;
     gap: 8px;
     margin-bottom: 8px;
-    color: #6b6b6b;
+    color: var(--text-secondary);
     font-size: 12px;
     font-weight: 600;
     text-transform: uppercase;
@@ -225,7 +228,7 @@
   .usage-stats {
     .usage-count {
       font-size: 13px;
-      color: #1f1f1f;
+      color: var(--text-primary);
       margin-bottom: 6px;
 
       &.unlimited {
@@ -248,13 +251,13 @@
       margin-bottom: 4px;
 
       ::ng-deep .mdc-linear-progress__buffer {
-        background-color: #e0e0e0;
+        background-color: var(--border-light);
       }
     }
 
     .usage-remaining {
       font-size: 11px;
-      color: #8e8e8e;
+      color: var(--text-tertiary);
     }
 
     .usage-limit-reached {
@@ -286,7 +289,7 @@
 // Footer
 .sidebar-footer {
   flex-shrink: 0;
-  border-top: 1px solid #e5e5e5;
+  border-top: 1px solid var(--border-medium);
   padding: 8px;
 
   .footer-button {
@@ -296,12 +299,12 @@
     justify-content: flex-start;
     gap: 12px;
     padding: 10px 12px;
-    color: #6b6b6b;
+    color: var(--text-secondary);
     border-radius: 8px;
     transition: background-color 0.2s ease;
 
     &:hover {
-      background-color: #ececec;
+      background-color: var(--background-hover);
     }
 
     mat-icon {
@@ -323,11 +326,11 @@
   }
 
   &::-webkit-scrollbar-thumb {
-    background: #d1d1d1;
+    background: var(--scrollbar-thumb);
     border-radius: 3px;
 
     &:hover {
-      background: #b8b8b8;
+      background: var(--scrollbar-thumb-hover);
     }
   }
 }

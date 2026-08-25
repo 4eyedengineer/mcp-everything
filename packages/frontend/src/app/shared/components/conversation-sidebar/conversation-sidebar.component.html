@@ -9,6 +9,8 @@
 <aside
   class="conversation-sidebar"
   [class.open]="isOpen"
+  [attr.inert]="isOpen ? null : ''"
+  [attr.aria-hidden]="isOpen ? null : 'true'"
   [@slideIn]>
 
   <!-- Sidebar Header -->
@@ -53,17 +55,19 @@
           mat-icon-button
           class="conversation-menu"
           [matMenuTriggerFor]="conversationMenu"
+          #menuTrigger="matMenuTrigger"
           (click)="$event.stopPropagation()"
-          matTooltip="More options">
+          matTooltip="More options"
+          [attr.aria-label]="'More options for ' + conversation.title">
           <mat-icon>more_vert</mat-icon>
         </button>
 
         <mat-menu #conversationMenu="matMenu">
-          <button mat-menu-item (click)="onRenameConversation($event, conversation)">
+          <button mat-menu-item (click)="onRenameConversation($event, conversation, menuTrigger)">
             <mat-icon>edit</mat-icon>
             <span>Rename</span>
           </button>
-          <button mat-menu-item (click)="onDeleteConversation($event, conversation.id)">
+          <button mat-menu-item (click)="onDeleteConversation($event, conversation.id, menuTrigger)">
             <mat-icon>delete</mat-icon>
             <span>Delete</span>
           </button>
@@ -87,7 +91,7 @@
     <div class="usage-stats">
       <ng-container *ngIf="!isUnlimited(usage.monthlyLimit); else unlimitedUsage">
         <div class="usage-count">
-          {{ usage.serversDeployedThisMonth }} / {{ usage.monthlyLimit }} deployments
+          {{ usage.generationsThisMonth }} / {{ usage.monthlyLimit }} generations
         </div>
         <mat-progress-bar
           mode="determinate"
@@ -105,7 +109,7 @@
       <ng-template #unlimitedUsage>
         <div class="usage-count unlimited">
           <mat-icon>all_inclusive</mat-icon>
-          {{ usage.serversDeployedThisMonth }} deployments (unlimited)
+          {{ usage.generationsThisMonth }} generations (unlimited)
         </div>
       </ng-template>
     </div>

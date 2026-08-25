@@ -1,0 +1,63 @@
+# ArgoCD Application for the namespace that hosts USER-GENERATED MCP servers.
+#
+# WHY THIS IS A SEPARATE APPLICATION, and not just another entry in
+# k8s/overlays/homelab/kustomization.yaml:
+#
+# That overlay sets `namespace: mcp-everything`, and kustomize's namespace
+# transformer rewrites the namespace of EVERY resource it renders. Adding
+# k8s/mcp-servers there would silently relocate the mcp-servers Namespace,
+# Role, RoleBinding, LimitRange and NetworkPolicy into mcp-everything, which
+# is both wrong and hard to notice - the sync would succeed and the RBAC would
+# simply never apply where the backend needs it.
+#
+# These manifests were added to the repo but referenced by no kustomization,
+# so ArgoCD never saw them and the namespace did not exist in the cluster.
+# The backend's ServiceAccount consequently had no permission to create
+# anything, which would have failed every hosted-server deploy after the
+# image build.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: mcp-servers
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/4eyedengineer/mcp-everything.git
+    targetRevision: rework/2026-07-review
+    path: k8s/mcp-servers
+
+  destination:
+    server: https://kubernetes.default.svc
+    # Namespace is declared by the manifests themselves; ArgoCD needs a
+    # destination namespace for namespaced resources it cannot infer.
+    namespace: mcp-servers
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      # The Namespace object is part of this Application's own manifests, so
+      # ArgoCD must be allowed to create it before the resources inside it.
+      - CreateNamespace=true
+      - ServerSideApply=true
+
+  # Tenant workloads (Deployments, Services, Secrets for hosted MCP servers)
+  # are created imperatively by the backend's K8sControlPlaneService, NOT by
+  # ArgoCD. Without these ignores, ArgoCD's prune would delete every hosted
+  # server it did not find in git - i.e. all of them.
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      namespace: mcp-servers
+      jsonPointers:
+        - /spec
+    - group: ''
+      kind: Service
+      namespace: mcp-servers
+      jsonPointers:
+        - /spec

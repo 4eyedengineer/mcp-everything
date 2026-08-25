@@ -10,7 +10,13 @@ export class StripeService {
   constructor(private readonly configService: ConfigService) {
     const secretKey = this.configService.get<string>('STRIPE_SECRET_KEY');
     if (secretKey) {
-      this.stripe = new Stripe(secretKey);
+      // Pin the API version to the one the installed SDK (stripe@20) is typed
+      // against. Under this version the billing period lives on the
+      // subscription *item* (`items.data[].current_period_start/end`), not on
+      // the Subscription object - which is exactly where SubscriptionService
+      // reads it. Leaving it unpinned would let Stripe swap in a version whose
+      // field layout no longer matches our parsing.
+      this.stripe = new Stripe(secretKey, { apiVersion: '2025-11-17.clover' });
       this.logger.log('Stripe client initialized');
     } else {
       this.logger.warn('STRIPE_SECRET_KEY not configured - Stripe features will be disabled');

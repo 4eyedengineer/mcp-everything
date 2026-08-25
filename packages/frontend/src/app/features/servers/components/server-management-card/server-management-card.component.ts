@@ -7,6 +7,10 @@ import { MatProgressBarModule } from '@angular/material/progress-bar';
 
 import { HostedServer, HostedServerStatus } from '../../../../core/services/hosting-api.service';
 import { TimeAgoPipe } from '../../../../shared/pipes/time-ago.pipe';
+import {
+  buildClaudeDesktopConfigJson,
+  claudeDesktopApiKeyHint
+} from '../../../../shared/utils/claude-desktop-config.util';
 
 @Component({
   selector: 'mcp-server-management-card',
@@ -24,18 +28,33 @@ import { TimeAgoPipe } from '../../../../shared/pipes/time-ago.pipe';
 })
 export class ServerManagementCardComponent {
   @Input() server!: HostedServer;
+  /**
+   * When true, renders without its own border/background/shadow - used by
+   * the My Servers ladder, which already supplies that card chrome, so the
+   * two don't stack into a "card within a card" with doubled borders.
+   */
+  @Input() embedded = false;
   @Output() start = new EventEmitter<HostedServer>();
   @Output() stop = new EventEmitter<HostedServer>();
   @Output() delete = new EventEmitter<HostedServer>();
   @Output() viewLogs = new EventEmitter<HostedServer>();
+  @Output() manageApiKeys = new EventEmitter<HostedServer>();
 
   get isDeploying(): boolean {
     const deployingStates: HostedServerStatus[] = ['pending', 'building', 'pushing', 'deploying'];
     return deployingStates.includes(this.server.status);
   }
 
+  /**
+   * 'building' and 'pushing' remain in `isDeploying` and in the status
+   * icon/class switches so historical rows still render as in-progress rather
+   * than "unknown", but they are gone from the progress scale: the Kubernetes
+   * path builds and pushes nothing (each hosted server compiles its own source
+   * in an initContainer from the shared runner image), so a scale that
+   * reserved 40% of the bar for them would never fill.
+   */
   get deployProgress(): number {
-    const stages: HostedServerStatus[] = ['pending', 'building', 'pushing', 'deploying', 'running'];
+    const stages: HostedServerStatus[] = ['pending', 'deploying', 'running'];
     const index = stages.indexOf(this.server.status);
     if (index === -1) return 0;
     return ((index + 1) / stages.length) * 100;
@@ -86,16 +105,18 @@ export class ServerManagementCardComponent {
   }
 
   copyClaudeConfig(): void {
-    const serverSlug = this.server.serverName.toLowerCase().replace(/\s+/g, '-');
-    const config = {
-      mcpServers: {
-        [serverSlug]: {
-          command: 'mcp-connect',
-          args: [this.server.serverId]
-        }
-      }
-    };
-    navigator.clipboard.writeText(JSON.stringify(config, null, 2));
+    navigator.clipboard.writeText(
+      buildClaudeDesktopConfigJson(this.server.serverName, this.server.serverId)
+    );
+  }
+
+  /**
+   * Instruction to render next to the copied snippet. Hosted servers are behind
+   * the authenticating MCP gateway, so the snippet needs a real API key pasted
+   * in before it will work.
+   */
+  get claudeDesktopApiKeyHint(): string {
+    return claudeDesktopApiKeyHint(this.server.serverId);
   }
 
   onStart(): void {
@@ -112,5 +133,9 @@ export class ServerManagementCardComponent {
 
   onViewLogs(): void {
     this.viewLogs.emit(this.server);
+  }
+
+  onManageApiKeys(): void {
+    this.manageApiKeys.emit(this.server);
   }
 }

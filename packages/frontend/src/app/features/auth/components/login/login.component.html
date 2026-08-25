@@ -6,12 +6,12 @@
     </div>
 
     <div class="oauth-buttons">
-      <button mat-stroked-button class="oauth-button github" (click)="loginWithGitHub()">
-        <mat-icon svgIcon="github">code</mat-icon>
+      <button mat-stroked-button class="oauth-button github" (click)="loginWithGitHub()" aria-label="Continue with GitHub">
+        <mat-icon svgIcon="github-logo" aria-hidden="true"></mat-icon>
         <span>Continue with GitHub</span>
       </button>
-      <button mat-stroked-button class="oauth-button google" (click)="loginWithGoogle()">
-        <mat-icon>g_mobiledata</mat-icon>
+      <button mat-stroked-button class="oauth-button google" (click)="loginWithGoogle()" aria-label="Continue with Google">
+        <mat-icon svgIcon="google-logo" class="google-icon-tile" aria-hidden="true"></mat-icon>
         <span>Continue with Google</span>
       </button>
     </div>
@@ -36,8 +36,15 @@
       <mat-form-field appearance="outline" class="full-width">
         <mat-label>Password</mat-label>
         <input matInput formControlName="password" [type]="hidePassword ? 'password' : 'text'" autocomplete="current-password">
-        <mat-icon matPrefix>lock</mat-icon>
-        <button mat-icon-button matSuffix (click)="togglePasswordVisibility()" type="button">
+        <mat-icon matPrefix>lock_outline</mat-icon>
+        <button
+          mat-icon-button
+          matSuffix
+          (click)="togglePasswordVisibility()"
+          type="button"
+          [matTooltip]="hidePassword ? 'Show password' : 'Hide password'"
+          [attr.aria-label]="hidePassword ? 'Show password' : 'Hide password'"
+          [attr.aria-pressed]="!hidePassword">
           <mat-icon>{{ hidePassword ? 'visibility_off' : 'visibility' }}</mat-icon>
         </button>
         @if (passwordControl?.hasError('required') && passwordControl?.touched) {
@@ -54,12 +61,12 @@
 
       @if (error) {
         <div class="error-message">
-          <mat-icon>error</mat-icon>
+          <mat-icon>error_outline</mat-icon>
           <span>{{ error }}</span>
         </div>
       }
 
-      <button mat-flat-button color="primary" type="submit" [disabled]="isLoading" class="submit-button">
+      <button type="submit" [disabled]="isLoading" class="mcp-btn-primary full-width">
         @if (isLoading) {
           <mat-spinner diameter="20"></mat-spinner>
         } @else {

@@ -59,4 +59,12 @@ When analyzing repositories, go beyond surface-level file scanning to understand
 - Testing strategies and quality gates
 - Deployment and infrastructure patterns
 
-Always consider scalability, security, and maintainability in your implementations. Provide specific code examples using modern GitHub API patterns and explain the reasoning behind architectural decisions. When relevant to the MCP Everything project context, align your solutions with the local-first Docker architecture and NestJS backend patterns.
+Always consider scalability, security, and maintainability in your implementations. Provide specific code examples using modern GitHub API patterns and explain the reasoning behind architectural decisions. When relevant to the MCP Everything project context, align your solutions with the local-first Docker architecture, the single explicit `GenerationPipeline` (not a multi-agent or LangGraph system — that was deleted), and NestJS backend patterns.
+
+## Operating Rules (this repo)
+
+- **The repo is public.** Never commit webhook secrets, GitHub App private keys, or PATs into code, config, or docs — env vars / secrets managers only.
+- **Never trigger a real generation.** If a webhook or automation you're building would call `/api/chat/message`, treat that as a real paid Claude generation trigger and gate it deliberately (auth, rate limits, user consent) — don't fire it casually while testing.
+- **Git discipline.** Never commit, push, or run `git stash`/`git checkout`/`git reset` yourself — the orchestrating session owns version control, even though you have GitHub write tools available for the repository's remote state.
+- **Verify empirically.** Where you can exercise a webhook, API call, or auth flow for real (sandbox repo, test payload), do it and paste the real response rather than describing the expected behavior.
+- **Report what you could not verify** — e.g. a GitHub App flow you designed but couldn't exercise against a live installation.

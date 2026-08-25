@@ -63,10 +63,7 @@ export class ValidationService {
     }
 
     // Check if already validated and not forcing revalidation
-    if (
-      deployment.validationStatus === 'passed' &&
-      !options.forceRevalidate
-    ) {
+    if (deployment.validationStatus === 'passed' && !options.forceRevalidate) {
       return {
         success: true,
         deploymentId,
@@ -110,7 +107,9 @@ export class ValidationService {
             // If GitHub Actions failed but local passed, add a warning
             if (!ghResult.buildSuccess) {
               result.errors = result.errors || [];
-              result.errors.push(`GitHub Actions validation failed: ${ghResult.errors?.join(', ')}`);
+              result.errors.push(
+                `GitHub Actions validation failed: ${ghResult.errors?.join(', ')}`,
+              );
             }
           } catch (error) {
             this.logger.warn(`GitHub Actions validation failed: ${error.message}`);
@@ -136,9 +135,8 @@ export class ValidationService {
       // Calculate metrics
       const toolsTestedCount = result.toolResults.length;
       const toolsPassedCount = result.toolResults.filter((r) => r.success).length;
-      const validationStatus: ValidationStatus = result.buildSuccess && toolsPassedCount === toolsTestedCount
-        ? 'passed'
-        : 'failed';
+      const validationStatus: ValidationStatus =
+        result.buildSuccess && toolsPassedCount === toolsTestedCount ? 'passed' : 'failed';
 
       // Update deployment record
       await this.deploymentRepository.update(deploymentId, {
@@ -235,9 +233,7 @@ export class ValidationService {
     }
 
     try {
-      const result = await this.githubActionsValidator.validateRepository(
-        deployment.repositoryUrl,
-      );
+      const result = await this.githubActionsValidator.validateRepository(deployment.repositoryUrl);
 
       const toolsTestedCount = result.toolResults.length;
       const toolsPassedCount = result.toolResults.filter((r) => r.success).length;

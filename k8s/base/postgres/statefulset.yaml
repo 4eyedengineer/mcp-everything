@@ -19,9 +19,15 @@ spec:
         app.kubernetes.io/name: mcp-postgres
         app.kubernetes.io/component: database
     spec:
+      securityContext:
+        fsGroup: 999
       containers:
+        # pgvector/pgvector:pg17 - plain postgres:17 plus the pgvector
+        # extension preinstalled. The migration chain (see
+        # 1704000000001-CreateResearchCacheTable.ts) runs `CREATE EXTENSION
+        # IF NOT EXISTS vector`, which the stock postgres image cannot satisfy.
         - name: postgres
-          image: pgvector/pgvector:pg16
+          image: pgvector/pgvector:pg17
           imagePullPolicy: IfNotPresent
           ports:
             - name: postgres
@@ -29,57 +35,45 @@ spec:
               protocol: TCP
           env:
             - name: POSTGRES_DB
-              valueFrom:
-                secretKeyRef:
-                  name: mcp-secrets
-                  key: DATABASE_NAME
+              value: mcp_everything
             - name: POSTGRES_USER
-              valueFrom:
-                secretKeyRef:
-                  name: mcp-secrets
-                  key: DATABASE_USER
+              value: mcp
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: mcp-secrets
+                  name: mcp-everything-secrets
                   key: DATABASE_PASSWORD
             - name: PGDATA
               value: /var/lib/postgresql/data/pgdata
-          resources:
-            requests:
-              memory: "256Mi"
-              cpu: "100m"
-            limits:
-              memory: "512Mi"
-              cpu: "500m"
           volumeMounts:
             - name: postgres-data
               mountPath: /var/lib/postgresql/data
           readinessProbe:
             exec:
-              command:
-                - pg_isready
-                - -U
-                - $(POSTGRES_USER)
-                - -d
-                - $(POSTGRES_DB)
+              command: ['pg_isready', '-U', 'mcp', '-d', 'mcp_everything']
             initialDelaySeconds: 10
             periodSeconds: 5
             timeoutSeconds: 3
             failureThreshold: 3
           livenessProbe:
             exec:
-              command:
-                - pg_isready
-                - -U
-                - $(POSTGRES_USER)
-                - -d
-                - $(POSTGRES_DB)
+              command: ['pg_isready', '-U', 'mcp', '-d', 'mcp_everything']
             initialDelaySeconds: 30
             periodSeconds: 10
             timeoutSeconds: 3
             failureThreshold: 3
-      volumes:
-        - name: postgres-data
-          persistentVolumeClaim:
-            claimName: postgres-pvc
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 999
+            allowPrivilegeEscalation: false
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 60
+  volumeClaimTemplates:
+    - metadata:
+        name: postgres-data
+      spec:
+        accessModes: ['ReadWriteOnce']
+        # storageClassName is set by overlays/homelab (longhorn-r2).
+        resources:
+          requests:
+            storage: 8Gi

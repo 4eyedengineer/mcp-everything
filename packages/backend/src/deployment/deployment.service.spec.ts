@@ -1,15 +1,20 @@
 /// <reference types="jest" />
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
+import { ConfigService } from '@nestjs/config';
 import { NotFoundException, NotImplementedException } from '@nestjs/common';
 import { DeploymentOrchestratorService } from './deployment.service';
 import { Deployment } from '../database/entities/deployment.entity';
 import { Conversation } from '../database/entities/conversation.entity';
+import { GitHubService } from '../github/github.service';
 import { GitHubRepoProvider } from './providers/github-repo.provider';
 import { GistProvider } from './providers/gist.provider';
 import { DevContainerProvider } from './providers/devcontainer.provider';
 import { GitignoreProvider } from './providers/gitignore.provider';
 import { CIWorkflowProvider } from './providers/ci-workflow.provider';
+import { DeploymentRetryService } from './services/retry.service';
+import { DeploymentRollbackService } from './services/rollback.service';
+import { ValidationService } from '../validation/validation.service';
 
 describe('DeploymentOrchestratorService', () => {
   let service: DeploymentOrchestratorService;
@@ -17,18 +22,21 @@ describe('DeploymentOrchestratorService', () => {
   let mockConversationRepository: any;
   let mockGitHubRepoProvider: any;
   let mockGistProvider: any;
+  let mockGithubService: any;
   let mockDevContainerProvider: any;
   let mockGitignoreProvider: any;
   let mockCIWorkflowProvider: any;
 
   const mockConversation = {
     id: 'conv-123',
+    userId: 'user-1',
     state: { serverName: 'test-mcp-server' },
   };
 
   const mockDeployment = {
     id: 'deploy-123',
     conversationId: 'conv-123',
+    userId: 'user-1',
     deploymentType: 'repo',
     status: 'pending',
     metadata: {},
@@ -82,6 +90,16 @@ describe('DeploymentOrchestratorService', () => {
       deleteGist: jest.fn().mockResolvedValue(true),
     };
 
+    // Default: mirrors the real GitHubService - a userId resolves to a
+    // connected user's token, no userId (or an explicit override) means no
+    // token. Individual tests override this to exercise the "not
+    // connected" fallback for a userId that IS present.
+    mockGithubService = {
+      getUserAccessToken: jest
+        .fn()
+        .mockImplementation(async (userId?: string) => (userId ? 'gho_usertoken' : undefined)),
+    };
+
     mockDevContainerProvider = {
       generateDevContainerFiles: jest.fn().mockReturnValue([
         { path: '.devcontainer/devcontainer.json', content: '{}' },
@@ -100,9 +118,21 @@ describe('DeploymentOrchestratorService', () => {
       ]),
     };
 
+    const mockRollbackService = {
+      rollback: jest.fn().mockResolvedValue({ success: true }),
+    };
+
+    const mockValidationService = {
+      validateDeployment: jest.fn().mockResolvedValue(undefined),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         DeploymentOrchestratorService,
+        // Real retry service: it has no injected dependencies of its own and
+        // deployment.service.ts relies on its actual error-classification
+        // logic (parseGitHubError/generateAlternativeNames/canRetry).
+        DeploymentRetryService,
         {
           provide: getRepositoryToken(Deployment),
           useValue: mockDeploymentRepository,
@@ -120,6 +150,10 @@ describe('DeploymentOrchestratorService', () => {
           useValue: mockGistProvider,
         },
         {
+          provide: GitHubService,
+          useValue: mockGithubService,
+        },
+        {
           provide: DevContainerProvider,
           useValue: mockDevContainerProvider,
         },
@@ -130,6 +164,18 @@ describe('DeploymentOrchestratorService', () => {
         {
           provide: CIWorkflowProvider,
           useValue: mockCIWorkflowProvider,
+        },
+        {
+          provide: DeploymentRollbackService,
+          useValue: mockRollbackService,
+        },
+        {
+          provide: ValidationService,
+          useValue: mockValidationService,
+        },
+        {
+          provide: ConfigService,
+          useValue: { get: jest.fn((_key: string, defaultValue?: unknown) => defaultValue) },
         },
       ],
     }).compile();
@@ -170,7 +216,9 @@ describe('DeploymentOrchestratorService', () => {
       const result = await service.deployToGitHub('conv-123', {});
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain('No generated files');
+      // Message comes from ERROR_USER_MESSAGES[NO_FILES_TO_DEPLOY]
+      expect(result.error).toContain('No files to deploy');
+      expect(result.errorCode).toBe('NO_FILES_TO_DEPLOY');
     });
 
     it('should add .gitignore files automatically', async () => {
@@ -187,16 +235,21 @@ describe('DeploymentOrchestratorService', () => {
       );
     });
 
-    it('should add devcontainer files when requested', async () => {
+    it('should always add devcontainer files (enables Codespace/Codespaces testing)', async () => {
+      // Devcontainer files are now unconditionally included for GitHub repo
+      // deployments, regardless of the includeDevContainer option.
+      await service.deployToGitHub('conv-123', {});
+
+      expect(mockDevContainerProvider.generateDevContainerFiles).toHaveBeenCalledWith(
+        'test-mcp-server',
+        'typescript',
+      );
+    });
+
+    it('should still add devcontainer files when includeDevContainer is explicitly set', async () => {
       await service.deployToGitHub('conv-123', { includeDevContainer: true });
 
       expect(mockDevContainerProvider.generateDevContainerFiles).toHaveBeenCalled();
-    });
-
-    it('should not add devcontainer files by default', async () => {
-      await service.deployToGitHub('conv-123', {});
-
-      expect(mockDevContainerProvider.generateDevContainerFiles).not.toHaveBeenCalled();
     });
 
     it('should default to private repositories', async () => {
@@ -207,6 +260,7 @@ describe('DeploymentOrchestratorService', () => {
         expect.any(Array),
         expect.any(String),
         true, // isPrivate should be true by default
+        undefined, // no envVars supplied
       );
     });
 
@@ -218,6 +272,7 @@ describe('DeploymentOrchestratorService', () => {
         expect.any(Array),
         expect.any(String),
         false,
+        undefined,
       );
     });
 
@@ -229,6 +284,7 @@ describe('DeploymentOrchestratorService', () => {
         expect.any(Array),
         'Custom description',
         expect.any(Boolean),
+        undefined,
       );
     });
 
@@ -252,11 +308,13 @@ describe('DeploymentOrchestratorService', () => {
 
       await service.deployToGitHub('conv-123', {});
 
+      // The persisted message combines the friendly, classified message with
+      // the raw underlying cause (never laundered away) — see buildErrorMessage.
       expect(mockDeploymentRepository.update).toHaveBeenCalledWith(
         'deploy-123',
         expect.objectContaining({
           status: 'failed',
-          errorMessage: 'Deployment failed',
+          errorMessage: expect.stringContaining('[cause: Deployment failed]'),
         }),
       );
     });
@@ -264,7 +322,7 @@ describe('DeploymentOrchestratorService', () => {
 
   describe('deployToGist', () => {
     it('should deploy to Gist successfully', async () => {
-      const result = await service.deployToGist('conv-123', {});
+      const result = await service.deployToGist('conv-123', {}, { userId: 'user-1' });
 
       expect(result.success).toBe(true);
       expect(result.type).toBe('gist');
@@ -275,6 +333,39 @@ describe('DeploymentOrchestratorService', () => {
       mockConversationRepository.findOneBy.mockResolvedValue(null);
 
       await expect(service.deployToGist('nonexistent', {})).rejects.toThrow(NotFoundException);
+    });
+
+    it("resolves the acting user's own GitHub token, not a server-wide credential", async () => {
+      await service.deployToGist('conv-123', {}, { userId: 'user-1' });
+
+      expect(mockGithubService.getUserAccessToken).toHaveBeenCalledWith('user-1');
+      expect(mockGistProvider.deploySingleFile).toHaveBeenCalledWith(
+        'gho_usertoken',
+        expect.any(String),
+        expect.any(Array),
+        expect.any(String),
+        expect.any(Array),
+        expect.any(Boolean),
+      );
+    });
+
+    it('fails clearly (not a 500, not a server-token fallback) when the user has no connected GitHub account', async () => {
+      mockGithubService.getUserAccessToken.mockResolvedValue(undefined);
+
+      const result = await service.deployToGist('conv-123', {}, { userId: 'user-1' });
+
+      expect(result.success).toBe(false);
+      expect(result.errorCode).toBe('GITHUB_NOT_CONNECTED');
+      expect(result.error).toContain('Connect your GitHub account');
+      expect(mockGistProvider.deploySingleFile).not.toHaveBeenCalled();
+    });
+
+    it('never falls back to deploying without a userId to resolve (no owner -> no token -> clear failure)', async () => {
+      const result = await service.deployToGist('conv-123', {});
+
+      expect(mockGithubService.getUserAccessToken).toHaveBeenCalledWith(undefined);
+      expect(result.success).toBe(false);
+      expect(result.errorCode).toBe('GITHUB_NOT_CONNECTED');
     });
   });
 
@@ -450,19 +541,22 @@ describe('DeploymentOrchestratorService', () => {
   });
 
   describe('updateGistDeployment', () => {
-    it('should update a Gist deployment', async () => {
+    it('should update a Gist deployment, using the acting user\'s own GitHub token', async () => {
       mockDeploymentRepository.findOneBy.mockResolvedValue({
         id: 'deploy-123',
         conversationId: 'conv-123',
+        userId: 'user-1',
         deploymentType: 'gist',
         status: 'success',
         metadata: { gistId: 'abc123' },
       });
 
-      const result = await service.updateGistDeployment('deploy-123', 'New description');
+      const result = await service.updateGistDeployment('deploy-123', 'New description', 'user-1');
 
       expect(result.success).toBe(true);
+      expect(mockGithubService.getUserAccessToken).toHaveBeenCalledWith('user-1');
       expect(mockGistProvider.updateGist).toHaveBeenCalledWith(
+        'gho_usertoken',
         'abc123',
         expect.any(Array),
         'New description',
@@ -498,21 +592,40 @@ describe('DeploymentOrchestratorService', () => {
         'Gist ID not found',
       );
     });
-  });
 
-  describe('deleteGistDeployment', () => {
-    it('should delete a Gist deployment', async () => {
+    it('fails clearly, without calling GistProvider, when the user has no connected GitHub account', async () => {
       mockDeploymentRepository.findOneBy.mockResolvedValue({
         id: 'deploy-123',
         conversationId: 'conv-123',
+        userId: 'user-1',
+        deploymentType: 'gist',
+        metadata: { gistId: 'abc123' },
+      });
+      mockGithubService.getUserAccessToken.mockResolvedValue(undefined);
+
+      const result = await service.updateGistDeployment('deploy-123', 'New description', 'user-1');
+
+      expect(result.success).toBe(false);
+      expect(result.errorCode).toBe('GITHUB_NOT_CONNECTED');
+      expect(mockGistProvider.updateGist).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('deleteGistDeployment', () => {
+    it('should delete a Gist deployment, using the acting user\'s own GitHub token', async () => {
+      mockDeploymentRepository.findOneBy.mockResolvedValue({
+        id: 'deploy-123',
+        conversationId: 'conv-123',
+        userId: 'user-1',
         deploymentType: 'gist',
         metadata: { gistId: 'abc123' },
       });
 
-      const result = await service.deleteGistDeployment('deploy-123');
+      const result = await service.deleteGistDeployment('deploy-123', 'user-1');
 
       expect(result.success).toBe(true);
-      expect(mockGistProvider.deleteGist).toHaveBeenCalledWith('abc123');
+      expect(mockGithubService.getUserAccessToken).toHaveBeenCalledWith('user-1');
+      expect(mockGistProvider.deleteGist).toHaveBeenCalledWith('gho_usertoken', 'abc123');
       expect(mockDeploymentRepository.delete).toHaveBeenCalledWith('deploy-123');
     });
 
@@ -533,7 +646,7 @@ describe('DeploymentOrchestratorService', () => {
       );
     });
 
-    it('should delete record even if no gistId', async () => {
+    it('should delete record even if no gistId (no GitHub token needed)', async () => {
       mockDeploymentRepository.findOneBy.mockResolvedValue({
         id: 'deploy-123',
         conversationId: 'conv-123',
@@ -546,6 +659,23 @@ describe('DeploymentOrchestratorService', () => {
       expect(result.success).toBe(true);
       expect(mockGistProvider.deleteGist).not.toHaveBeenCalled();
       expect(mockDeploymentRepository.delete).toHaveBeenCalledWith('deploy-123');
+    });
+
+    it('fails clearly, without calling GistProvider, when the user has no connected GitHub account', async () => {
+      mockDeploymentRepository.findOneBy.mockResolvedValue({
+        id: 'deploy-123',
+        conversationId: 'conv-123',
+        userId: 'user-1',
+        deploymentType: 'gist',
+        metadata: { gistId: 'abc123' },
+      });
+      mockGithubService.getUserAccessToken.mockResolvedValue(undefined);
+
+      const result = await service.deleteGistDeployment('deploy-123', 'user-1');
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('Connect your GitHub account');
+      expect(mockGistProvider.deleteGist).not.toHaveBeenCalled();
     });
   });
 
@@ -598,6 +728,120 @@ describe('DeploymentOrchestratorService', () => {
       expect(result.success).toBe(true);
       expect(mockGitHubRepoProvider.deleteRepository).not.toHaveBeenCalled();
       expect(mockDeploymentRepository.delete).toHaveBeenCalledWith('deploy-123');
+    });
+  });
+
+  describe('tool inputSchema propagation', () => {
+    const LIST_POSTS_SCHEMA = {
+      type: 'object',
+      properties: { userId: { type: 'string' } },
+      required: ['userId'],
+    };
+
+    /** The `tools` payload persisted by persistDeploymentServerMetadata. */
+    const persistedTools = () => {
+      const call = mockDeploymentRepository.update.mock.calls.find(
+        (args: any[]) => args[1] && 'tools' in args[1],
+      );
+      return call?.[1]?.tools;
+    };
+
+    it('persists the schema carried on conversation.state.tools', async () => {
+      mockConversationRepository.findOneBy.mockResolvedValue({
+        id: 'conv-123',
+        userId: 'user-1',
+        state: {
+          serverName: 'test-mcp-server',
+          tools: [
+            { name: 'list_posts', description: 'List posts', inputSchema: LIST_POSTS_SCHEMA },
+          ],
+        },
+      });
+
+      await service.deployToGist('conv-123', {}, { userId: 'user-1' });
+
+      expect(persistedTools()).toEqual([
+        { name: 'list_posts', description: 'List posts', inputSchema: LIST_POSTS_SCHEMA },
+      ]);
+    });
+
+    it('falls back to generatedCode.metadata.tools for conversations whose state.tools predates the fix', async () => {
+      mockConversationRepository.findOneBy.mockResolvedValue({
+        id: 'conv-123',
+        userId: 'user-1',
+        state: {
+          serverName: 'test-mcp-server',
+          // Exactly the shape the old projection wrote: no inputSchema at all.
+          tools: [{ name: 'list_posts', description: 'List posts' }],
+          generatedCode: {
+            metadata: {
+              tools: [{ name: 'list_posts', inputSchema: LIST_POSTS_SCHEMA }],
+            },
+          },
+        },
+      });
+
+      await service.deployToGist('conv-123', {}, { userId: 'user-1' });
+
+      expect(persistedTools()).toEqual([
+        { name: 'list_posts', description: 'List posts', inputSchema: LIST_POSTS_SCHEMA },
+      ]);
+    });
+
+    it('writes null - not a fabricated schema - when no schema exists anywhere', async () => {
+      mockConversationRepository.findOneBy.mockResolvedValue({
+        id: 'conv-123',
+        userId: 'user-1',
+        state: {
+          serverName: 'test-mcp-server',
+          tools: [{ name: 'list_posts', description: 'List posts' }],
+          generatedCode: { metadata: { tools: [{ name: 'a_different_tool', inputSchema: {} }] } },
+        },
+      });
+
+      await service.deployToGist('conv-123', {}, { userId: 'user-1' });
+
+      expect(persistedTools()).toEqual([
+        { name: 'list_posts', description: 'List posts', inputSchema: null },
+      ]);
+    });
+
+    it('tolerates a malformed generatedCode.metadata.tools (jsonb, so nothing guarantees the shape)', async () => {
+      mockConversationRepository.findOneBy.mockResolvedValue({
+        id: 'conv-123',
+        userId: 'user-1',
+        state: {
+          serverName: 'test-mcp-server',
+          tools: [{ name: 'list_posts', description: 'List posts' }],
+          generatedCode: { metadata: { tools: { not: 'an array' } } },
+        },
+      });
+
+      await service.deployToGist('conv-123', {}, { userId: 'user-1' });
+
+      expect(persistedTools()).toEqual([
+        { name: 'list_posts', description: 'List posts', inputSchema: null },
+      ]);
+    });
+
+    it('hands the schema to the Gist provider too, so the published server documents its arguments', async () => {
+      mockConversationRepository.findOneBy.mockResolvedValue({
+        id: 'conv-123',
+        userId: 'user-1',
+        state: {
+          serverName: 'test-mcp-server',
+          tools: [
+            { name: 'list_posts', description: 'List posts', inputSchema: LIST_POSTS_SCHEMA },
+          ],
+        },
+      });
+
+      await service.deployToGist('conv-123', {}, { userId: 'user-1' });
+
+      const tools = mockGistProvider.deploySingleFile.mock.calls[0][4];
+      expect(tools).toEqual([
+        { name: 'list_posts', description: 'List posts', inputSchema: LIST_POSTS_SCHEMA },
+      ]);
     });
   });
 

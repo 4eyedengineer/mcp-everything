@@ -1,0 +1,29 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: mcp-everything
+  annotations:
+    # Traefik handles SSE (used by /api/chat/stream) fine with its defaults -
+    # no extra timeout annotations needed.
+    kubernetes.io/ingress.class: traefik
+spec:
+  ingressClassName: traefik
+  rules:
+    # host is set by overlays/homelab (mcp.192.168.1.240.nip.io).
+    - host: mcp.example.com
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: mcp-backend
+                port:
+                  name: http
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: mcp-frontend
+                port:
+                  name: http

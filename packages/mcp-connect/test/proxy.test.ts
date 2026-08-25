@@ -1,6 +1,4 @@
 import * as fs from 'fs';
-import * as path from 'path';
-import * as os from 'os';
 
 // Mock fs module before importing config
 jest.mock('fs');
@@ -8,6 +6,17 @@ const mockFs = fs as jest.Mocked<typeof fs>;
 
 import { loadConfig, saveConfig, getConfigPath, Config } from '../src/config';
 import { getApiKey } from '../src/auth';
+import {
+  resolveServerBaseUrl,
+  mcpEndpoint,
+  healthEndpoint,
+  supportsHealthCheck,
+  DEFAULT_PLATFORM_URL,
+} from '../src/url';
+import { formatTransportError } from '../src/errors';
+import { McpProxy, ProxyLogger } from '../src/proxy';
+import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
+import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
 
 describe('Config Module', () => {
   beforeEach(() => {
@@ -106,9 +115,7 @@ describe('Auth Module', () => {
   it('should prefer environment variable over config', () => {
     process.env.MCPEVERYTHING_API_KEY = 'env-key';
     mockFs.existsSync.mockReturnValue(true);
-    mockFs.readFileSync.mockReturnValue(
-      JSON.stringify({ apiKeys: { default: 'config-key' } })
-    );
+    mockFs.readFileSync.mockReturnValue(JSON.stringify({ apiKeys: { default: 'config-key' } }));
 
     const apiKey = getApiKey('test-server');
 
@@ -123,7 +130,7 @@ describe('Auth Module', () => {
           default: 'default-key',
           'test-server': 'server-specific-key',
         },
-      })
+      }),
     );
 
     const apiKey = getApiKey('test-server');
@@ -133,9 +140,7 @@ describe('Auth Module', () => {
 
   it('should fall back to default key', () => {
     mockFs.existsSync.mockReturnValue(true);
-    mockFs.readFileSync.mockReturnValue(
-      JSON.stringify({ apiKeys: { default: 'default-key' } })
-    );
+    mockFs.readFileSync.mockReturnValue(JSON.stringify({ apiKeys: { default: 'default-key' } }));
 
     const apiKey = getApiKey('unknown-server');
 
@@ -151,11 +156,233 @@ describe('Auth Module', () => {
   });
 });
 
-describe('StdioTransport', () => {
-  // Transport tests would require more complex mocking of fetch and WebSocket
-  // For now, we test the basic structure
-  it('should be importable', () => {
-    const { StdioTransport } = require('../src/transport');
-    expect(StdioTransport).toBeDefined();
+describe('resolveServerBaseUrl', () => {
+  it('passes a full https:// URL through unchanged (minus trailing slash)', () => {
+    expect(resolveServerBaseUrl('https://my-server.mcp.example.com/')).toBe(
+      'https://my-server.mcp.example.com',
+    );
+  });
+
+  it('passes a full http:// URL through unchanged (e.g. docker-run localhost hosting)', () => {
+    expect(resolveServerBaseUrl('http://localhost:8080')).toBe('http://localhost:8080');
+  });
+
+  it('expands a bare server ID into a gateway PATH, not a subdomain', () => {
+    // The per-server subdomain shape was removed: nothing ever served it (no
+    // Ingress, no wildcard DNS, no certificate). See url.ts.
+    expect(resolveServerBaseUrl('stripe-abc123k9', 'https://api.example.com')).toBe(
+      'https://api.example.com/api/hosting/servers/stripe-abc123k9',
+    );
+  });
+
+  it('treats a legacy bare --domain value as an https platform origin', () => {
+    expect(resolveServerBaseUrl('stripe-abc123k9', 'mcp.example.com')).toBe(
+      'https://mcp.example.com/api/hosting/servers/stripe-abc123k9',
+    );
+  });
+
+  it('uses DEFAULT_PLATFORM_URL when no platform URL is supplied', () => {
+    expect(resolveServerBaseUrl('stripe-abc123k9')).toBe(
+      `${DEFAULT_PLATFORM_URL}/api/hosting/servers/stripe-abc123k9`,
+    );
+  });
+
+  it('leaves a full URL alone, so a directly-run server is still reachable', () => {
+    expect(resolveServerBaseUrl('http://localhost:20123')).toBe('http://localhost:20123');
+  });
+
+  it('rejects input that is neither a URL nor a valid server ID', () => {
+    expect(() => resolveServerBaseUrl('not a valid id!')).toThrow(/neither a URL/i);
+  });
+
+  it('rejects a server ID starting or ending with a hyphen', () => {
+    expect(() => resolveServerBaseUrl('-bad-id-')).toThrow();
+  });
+});
+
+describe('mcpEndpoint / healthEndpoint', () => {
+  it('appends /mcp and /health to the base URL', () => {
+    expect(mcpEndpoint('https://foo.mcp.example.com')).toBe('https://foo.mcp.example.com/mcp');
+    expect(healthEndpoint('https://foo.mcp.example.com')).toBe('https://foo.mcp.example.com/health');
+  });
+});
+
+describe('formatTransportError', () => {
+  it('explains ECONNREFUSED as a dead/unreachable server', () => {
+    const err = new Error('fetch failed') as NodeJS.ErrnoException;
+    (err as unknown as { cause: unknown }).cause = Object.assign(new Error('connect ECONNREFUSED'), {
+      code: 'ECONNREFUSED',
+    });
+    const message = formatTransportError(err, 'http://localhost:1');
+    expect(message).toMatch(/connection refused/i);
+    expect(message).toContain('http://localhost:1');
+  });
+
+  it('explains ENOTFOUND as a DNS problem', () => {
+    const err = Object.assign(new Error('getaddrinfo ENOTFOUND'), { code: 'ENOTFOUND' });
+    const message = formatTransportError(err, 'https://nope.example.com');
+    expect(message).toMatch(/resolve host|DNS/i);
+  });
+
+  it('explains HTTP 404 from StreamableHTTPError-shaped errors', () => {
+    const err = Object.assign(new Error('Streamable HTTP error: Error POSTing to endpoint: not found'), {
+      code: 404,
+    });
+    const message = formatTransportError(err, 'https://foo.mcp.example.com');
+    expect(message).toMatch(/404/);
+    expect(message).toMatch(/no mcp server found/i);
+  });
+
+  it('explains HTTP 406 as an Accept-header mismatch', () => {
+    const err = Object.assign(new Error('Streamable HTTP error: Not Acceptable'), { code: 406 });
+    const message = formatTransportError(err, 'https://foo.mcp.example.com');
+    expect(message).toMatch(/406/);
+    expect(message).toMatch(/accept header/i);
+  });
+
+  it('explains HTTP 401/403 as an auth failure', () => {
+    const err = Object.assign(new Error('Streamable HTTP error: unauthorized'), { code: 401 });
+    const message = formatTransportError(err, 'https://foo.mcp.example.com');
+    expect(message).toMatch(/authentication failed/i);
+    expect(message).toMatch(/MCPEVERYTHING_API_KEY/);
+  });
+});
+
+/** Minimal fake Transport for testing McpProxy's wiring without real I/O. */
+class FakeTransport implements Transport {
+  sent: JSONRPCMessage[] = [];
+  started = false;
+  closed = false;
+  onclose?: () => void;
+  onerror?: (error: Error) => void;
+  onmessage?: (message: JSONRPCMessage) => void;
+  setProtocolVersion = jest.fn();
+
+  async start(): Promise<void> {
+    this.started = true;
+  }
+
+  async send(message: JSONRPCMessage): Promise<void> {
+    this.sent.push(message);
+  }
+
+  async close(): Promise<void> {
+    this.closed = true;
+    this.onclose?.();
+  }
+}
+
+function silentLogger(): ProxyLogger {
+  return { info: jest.fn(), error: jest.fn() };
+}
+
+describe('McpProxy', () => {
+  it('starts both transports and forwards local -> remote', async () => {
+    const local = new FakeTransport();
+    const remote = new FakeTransport();
+    const proxy = new McpProxy(local, remote, silentLogger(), 'https://foo.mcp.example.com');
+
+    await proxy.start();
+    expect(local.started).toBe(true);
+    expect(remote.started).toBe(true);
+
+    const request: JSONRPCMessage = { jsonrpc: '2.0', method: 'tools/list', id: 1 };
+    local.onmessage?.(request);
+
+    expect(remote.sent).toEqual([request]);
+  });
+
+  it('forwards remote -> local (server responses reach Claude Desktop)', async () => {
+    const local = new FakeTransport();
+    const remote = new FakeTransport();
+    const proxy = new McpProxy(local, remote, silentLogger(), 'https://foo.mcp.example.com');
+    await proxy.start();
+
+    const response: JSONRPCMessage = { jsonrpc: '2.0', result: { tools: [] }, id: 1 };
+    remote.onmessage?.(response);
+
+    expect(local.sent).toEqual([response]);
+  });
+
+  it('captures the negotiated protocol version from the initialize response', async () => {
+    const local = new FakeTransport();
+    const remote = new FakeTransport();
+    const proxy = new McpProxy(local, remote, silentLogger(), 'https://foo.mcp.example.com');
+    await proxy.start();
+
+    const initRequest: JSONRPCMessage = {
+      jsonrpc: '2.0',
+      method: 'initialize',
+      params: { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'x', version: '1' } },
+      id: 'init-1',
+    };
+    local.onmessage?.(initRequest);
+
+    const initResponse: JSONRPCMessage = {
+      jsonrpc: '2.0',
+      result: { protocolVersion: '2025-11-25', capabilities: {}, serverInfo: { name: 's', version: '1' } },
+      id: 'init-1',
+    };
+    remote.onmessage?.(initResponse);
+
+    expect(remote.setProtocolVersion).toHaveBeenCalledWith('2025-11-25');
+  });
+
+  it('does not confuse an unrelated response with the initialize response', async () => {
+    const local = new FakeTransport();
+    const remote = new FakeTransport();
+    const proxy = new McpProxy(local, remote, silentLogger(), 'https://foo.mcp.example.com');
+    await proxy.start();
+
+    const unrelatedResponse: JSONRPCMessage = { jsonrpc: '2.0', result: { ok: true }, id: 'other' };
+    remote.onmessage?.(unrelatedResponse);
+
+    expect(remote.setProtocolVersion).not.toHaveBeenCalled();
+  });
+
+  it('logs a formatted error and does not throw when remote.send rejects', async () => {
+    const local = new FakeTransport();
+    const remote = new FakeTransport();
+    remote.send = jest.fn().mockRejectedValue(Object.assign(new Error('boom'), { code: 404 }));
+    const logger = silentLogger();
+    const proxy = new McpProxy(local, remote, logger, 'https://foo.mcp.example.com');
+    await proxy.start();
+
+    local.onmessage?.({ jsonrpc: '2.0', method: 'tools/call', id: 2 });
+    // allow the rejected promise's .catch handler to run
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(logger.error).toHaveBeenCalledWith(expect.stringMatching(/404/));
+  });
+
+  it('closes both transports exactly once when either side closes', async () => {
+    const local = new FakeTransport();
+    const remote = new FakeTransport();
+    const proxy = new McpProxy(local, remote, silentLogger(), 'https://foo.mcp.example.com');
+    await proxy.start();
+
+    await proxy.close();
+    expect(local.closed).toBe(true);
+    expect(remote.closed).toBe(true);
+
+    // A second close() (e.g. triggered by the other side's onclose firing
+    // after the first close() already tore both sides down) must be a no-op.
+    local.closed = false;
+    remote.closed = false;
+    await proxy.close();
+    expect(local.closed).toBe(false);
+    expect(remote.closed).toBe(false);
+  });
+});
+
+describe('supportsHealthCheck', () => {
+  it('is false for a gateway URL, which serves only /mcp per server', () => {
+    expect(
+      supportsHealthCheck('https://api.example.com/api/hosting/servers/stripe-abc123k9'),
+    ).toBe(false);
+  });
+
+  it('is true for a server addressed directly, which serves /health next to /mcp', () => {
+    expect(supportsHealthCheck('http://localhost:20123')).toBe(true);
   });
 });

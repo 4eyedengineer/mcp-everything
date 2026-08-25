@@ -60,15 +60,6 @@
         </div>
       </div>
 
-      <!-- Cost Estimate -->
-      <div class="cost-estimate">
-        <div class="cost-label">Estimated Cost:</div>
-        <div class="cost-value">
-          <strong>$3/month</strong>
-          <span class="cost-note">(scales to zero when idle)</span>
-        </div>
-      </div>
-
       <!-- Error Message -->
       <div class="error-message" *ngIf="error">
         <mat-icon>error</mat-icon>
@@ -91,7 +82,7 @@
       <mat-spinner *ngIf="isSubmitting" diameter="20"></mat-spinner>
       <ng-container *ngIf="!isSubmitting">
         <mat-icon>rocket_launch</mat-icon>
-        Deploy ($3/mo)
+        Deploy
       </ng-container>
     </button>
   </mat-dialog-actions>

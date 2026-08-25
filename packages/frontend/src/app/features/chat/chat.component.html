@@ -4,277 +4,339 @@
   <div class="messages-area" #messagesContainer>
     <div class="messages-wrapper">
       <!-- Welcome Screen -->
-      <div *ngIf="messages.length === 0" class="welcome-screen">
-        <h1 class="greeting">{{ getGreeting() }}</h1>
-        <p class="tagline">How can I help you with MCP servers today?</p>
+      @if (chatService.messages().length === 0) {
+        <div class="welcome-screen">
+          <h1 class="greeting">{{ getGreeting() }}</h1>
+          <p class="tagline">How can I help you with MCP servers today?</p>
 
-        <div class="suggestion-cards">
-          <button
-            class="suggestion-card"
-            (click)="useSuggestion('Generate an MCP server from the Express.js GitHub repository')">
-            <mat-icon>code</mat-icon>
-            <div class="suggestion-text">
-              <div class="suggestion-title">Analyze a GitHub repository</div>
-              <div class="suggestion-desc">Generate MCP server from any repo</div>
-            </div>
-          </button>
+          <div class="suggestion-cards">
+            <button
+              class="suggestion-card"
+              (click)="openRepoPickerModal()">
+              <mat-icon>code</mat-icon>
+              <div class="suggestion-text">
+                <div class="suggestion-title">Analyze a GitHub repository</div>
+                <div class="suggestion-desc">Generate MCP server from any repo</div>
+              </div>
+            </button>
 
-          <button
-            class="suggestion-card"
-            (click)="useSuggestion('Create an MCP server for a REST API based on OpenAPI specification')">
-            <mat-icon>api</mat-icon>
-            <div class="suggestion-text">
-              <div class="suggestion-title">Work with API specs</div>
-              <div class="suggestion-desc">OpenAPI, Swagger, GraphQL</div>
-            </div>
-          </button>
+            <!--
+              This chip used to read "Work with API specs / OpenAPI, Swagger,
+              GraphQL" and prefilled a prompt asking for a server "based on
+              OpenAPI specification". No spec parser exists anywhere in the
+              backend - research.service.ts routes to GitHub, docs pages or a
+              plain description - so it promised a capability the product does
+              not have, and forced the landing page to carry an explicit
+              denial. It now offers what research actually does.
+            -->
+            <button
+              class="suggestion-card"
+              (click)="useSuggestion('Create an MCP server from the documentation for ')">
+              <mat-icon>api</mat-icon>
+              <div class="suggestion-text">
+                <div class="suggestion-title">Point at a docs site</div>
+                <div class="suggestion-desc">Any developer portal or API reference</div>
+              </div>
+            </button>
 
-          <button
-            class="suggestion-card"
-            (click)="useSuggestion('Help me understand what MCP servers are and what they can do')">
-            <mat-icon>help_outline</mat-icon>
-            <div class="suggestion-text">
-              <div class="suggestion-title">Learn about MCP</div>
-              <div class="suggestion-desc">Understand Model Context Protocol</div>
-            </div>
-          </button>
+            <button
+              class="suggestion-card"
+              (click)="useSuggestion('Help me understand what MCP servers are and what they can do')">
+              <mat-icon>help_outline</mat-icon>
+              <div class="suggestion-text">
+                <div class="suggestion-title">Learn about MCP</div>
+                <div class="suggestion-desc">Understand Model Context Protocol</div>
+              </div>
+            </button>
+          </div>
         </div>
-      </div>
+      }
 
       <!-- Chat Messages -->
-      <div class="messages-list" *ngIf="messages.length > 0">
-        <div
-          *ngFor="let message of messages; let i = index"
-          class="message-wrapper"
-          [class.user-message]="message.type === 'user'"
-          [class.assistant-message]="message.type === 'assistant'"
-          [class.progress-message]="message.type === 'progress'"
-          [class.error-message]="message.type === 'error'">
+      @if (chatService.messages().length > 0) {
+        <div class="messages-list">
+          @for (message of chatService.messages(); track message) {
+            <div
+              class="message-wrapper"
+              [class.user-message]="message.type === 'user'"
+              [class.assistant-message]="message.type === 'assistant'"
+              [class.progress-message]="message.type === 'progress'"
+              [class.error-message]="message.type === 'error'"
+              [class.failed-message]="message.failed">
 
-          <!-- Avatar -->
-          <div class="message-avatar">
-            <div class="avatar-circle" [class.user-avatar]="message.type === 'user'">
-              <mat-icon *ngIf="message.type === 'user'">person</mat-icon>
-              <mat-icon *ngIf="message.type === 'assistant'">memory</mat-icon>
-              <mat-icon *ngIf="message.type === 'progress'" class="spinning">autorenew</mat-icon>
-              <mat-icon *ngIf="message.type === 'error'">error</mat-icon>
-            </div>
-          </div>
-
-          <!-- Message Content -->
-          <div class="message-content">
-            <div class="message-header">
-              <span class="message-sender">{{ message.type === 'user' ? 'You' : 'MCP Everything' }}</span>
-            </div>
-
-            <div class="message-body" [innerHTML]="message.content | safeMarkdown"></div>
-
-            <!-- Action Buttons -->
-            <div class="message-actions" *ngIf="message.type === 'assistant' && !message.generatedCode">
-              <button mat-icon-button matTooltip="Copy" class="action-button">
-                <mat-icon>content_copy</mat-icon>
-              </button>
-              <button mat-icon-button matTooltip="Like" class="action-button">
-                <mat-icon>thumb_up</mat-icon>
-              </button>
-              <button mat-icon-button matTooltip="Dislike" class="action-button">
-                <mat-icon>thumb_down</mat-icon>
-              </button>
-            </div>
-
-            <!-- Deployment Actions (when generatedCode exists and not yet deployed) -->
-            <div *ngIf="message.generatedCode && !message.deploymentResult" class="deployment-actions">
-              <button mat-raised-button color="primary"
-                      (click)="deployToGitHub(message)"
-                      [disabled]="isDeploying(message)"
-                      class="deploy-button">
-                <mat-icon>{{ isDeploying(message) ? 'hourglass_empty' : 'cloud_upload' }}</mat-icon>
-                {{ isDeploying(message) ? 'Deploying...' : 'Deploy as Repo' }}
-              </button>
-              <button mat-raised-button
-                      (click)="deployToGist(message)"
-                      [disabled]="isDeploying(message)"
-                      class="deploy-button gist-button">
-                <mat-icon>code</mat-icon>
-                Deploy as Gist
-              </button>
-              <button mat-button
-                      (click)="downloadAsZip(message)"
-                      class="download-zip-button">
-                <mat-icon>download</mat-icon>
-                Download ZIP
-              </button>
-              <button mat-raised-button
-                      (click)="openHostOnCloudModal(message)"
-                      [disabled]="isDeploying(message) || isCloudDeploying()"
-                      class="deploy-button cloud-button">
-                <mat-icon>cloud</mat-icon>
-                Host on Cloud ($3/mo)
-              </button>
-            </div>
-
-            <!-- Cloud Deployment Progress -->
-            <mcp-deploy-progress
-              *ngIf="cloudDeploymentState === 'deploying' && cloudServerId"
-              [serverId]="cloudServerId"
-              [serverName]="cloudServerName || 'MCP Server'"
-              [conversationId]="conversationId!"
-              (deploymentComplete)="onCloudDeploymentComplete($event)"
-              (retry)="retryCloudDeployment()">
-            </mcp-deploy-progress>
-
-            <!-- Deployment Result Card (when deployment succeeded) -->
-            <div *ngIf="message.deploymentResult?.success" class="deployment-result-card">
-              <div class="result-header">
-                <mat-icon class="success-icon">check_circle</mat-icon>
-                <span>MCP Server Deployed Successfully!</span>
+              <!-- Avatar -->
+              <div class="message-avatar">
+                <div class="avatar-circle" [class.user-avatar]="message.type === 'user'">
+                  @if (message.type === 'user') {
+                    <mat-icon>person</mat-icon>
+                  }
+                  @if (message.type === 'assistant') {
+                    <mat-icon>memory</mat-icon>
+                  }
+                  @if (message.type === 'progress') {
+                    <mat-icon class="spinning">autorenew</mat-icon>
+                  }
+                  @if (message.type === 'error') {
+                    <mat-icon>error</mat-icon>
+                  }
+                </div>
               </div>
 
-              <!-- Repository deployment result -->
-              <ng-container *ngIf="message.deploymentResult?.type === 'repo'">
-                <div class="deployment-url">
-                  <a [href]="message.deploymentResult?.urls?.repository" target="_blank" rel="noopener">
-                    {{ message.deploymentResult?.urls?.repository }}
-                  </a>
+              <!-- Message Content -->
+              <div class="message-content">
+                <div class="message-header">
+                  <span class="message-sender">{{ message.type === 'user' ? 'You' : 'MCP Everything' }}</span>
                 </div>
 
-                <div class="deployment-buttons">
-                  <a mat-raised-button color="primary"
-                     [href]="message.deploymentResult?.urls?.codespace"
-                     target="_blank" rel="noopener"
-                     class="action-link">
-                    <mat-icon>rocket_launch</mat-icon>
-                    Open in Codespace
-                  </a>
-                  <a mat-raised-button
-                     [href]="message.deploymentResult?.urls?.repository"
-                     target="_blank" rel="noopener"
-                     class="action-link">
-                    <mat-icon>visibility</mat-icon>
+                <div class="message-body" [innerHTML]="message.content | safeMarkdown"></div>
+
+                <!-- Progress Step Trail -->
+                @if (message.type === 'progress' && message.progressSteps?.length) {
+                  <ul class="progress-trail">
+                    @for (step of message.progressSteps; track step) {
+                      <li>{{ step }}</li>
+                    }
+                  </ul>
+                }
+
+                <!-- Failed Send Indicator -->
+                @if (message.type === 'user' && message.failed) {
+                  <div class="failed-indicator">
+                    <mat-icon class="failed-icon">error_outline</mat-icon>
+                    <span>Failed to send</span>
+                    <button mat-button class="retry-inline-button" (click)="retryMessage(message)">
+                      <mat-icon>refresh</mat-icon>
+                      Retry
+                    </button>
+                  </div>
+                }
+
+                <!-- Action Buttons -->
+                @if (message.type === 'assistant' && !message.generatedCode) {
+                  <div class="message-actions">
+                    <button mat-icon-button matTooltip="Copy" aria-label="Copy message" class="action-button" (click)="copyToClipboard(message.content)">
+                      <mat-icon>content_copy</mat-icon>
+                    </button>
+                  </div>
+                }
+
+                <!-- Deployment Actions - shown whenever generatedCode exists, EXCEPT
+                     after a successful deploy (which replaces this row with its own
+                     result-specific actions like "View on GitHub" below). A failed
+                     deploy must NOT hide these - the user needs to be able to retry
+                     via any of the options, not just the ones offered on the error
+                     card. -->
+                @if (message.generatedCode && !message.deploymentResult?.success) {
+                  <div class="deployment-actions">
+                    <button mat-raised-button color="primary"
+                            (click)="deployToGitHub(message)"
+                            [disabled]="isDeploying(message)"
+                            class="deploy-button">
+                      <mat-icon>{{ isDeploying(message) ? 'hourglass_empty' : 'cloud_upload' }}</mat-icon>
+                      {{ isDeploying(message) ? 'Deploying...' : 'Deploy as Repo' }}
+                    </button>
+                    <button mat-raised-button
+                            (click)="deployToGist(message)"
+                            [disabled]="isDeploying(message)"
+                            class="deploy-button gist-button">
+                      <mat-icon>code</mat-icon>
+                      Deploy as Gist
+                    </button>
+                    <button mat-button
+                            (click)="downloadAsZip(message)"
+                            class="download-zip-button">
+                      <mat-icon>download</mat-icon>
+                      Download ZIP
+                    </button>
+                    <button mat-raised-button
+                            (click)="openHostOnCloudModal(message)"
+                            [disabled]="isDeploying(message) || isCloudDeploying()"
+                            class="deploy-button cloud-button">
+                      <mat-icon>cloud</mat-icon>
+                      Host on Cloud
+                    </button>
+                  </div>
+                }
+
+                <!-- Cloud Deployment Progress -->
+                @if (cloudDeploymentState() === 'deploying' && cloudServerId()) {
+                  <mcp-deploy-progress
+                    [serverId]="cloudServerId()!"
+                    [serverName]="cloudServerName() || 'MCP Server'"
+                    [conversationId]="chatService.conversationId()!"
+                    (deploymentComplete)="onCloudDeploymentComplete($event)"
+                    (retry)="retryCloudDeployment()">
+                  </mcp-deploy-progress>
+                }
+
+                <!-- Deployment Result Card (when deployment succeeded) -->
+                @if (message.deploymentResult?.success) {
+                  <div class="deployment-result-card">
+                    <div class="result-header">
+                      <mat-icon class="success-icon">check_circle</mat-icon>
+                      <span>MCP Server Deployed Successfully!</span>
+                    </div>
+
+                    <!-- Repository deployment result -->
+                    @if (message.deploymentResult?.type === 'repo') {
+                      <div class="deployment-url">
+                        <a [href]="message.deploymentResult?.urls?.repository" target="_blank" rel="noopener">
+                          {{ message.deploymentResult?.urls?.repository }}
+                        </a>
+                      </div>
+
+                      <div class="deployment-buttons">
+                        <a mat-raised-button color="primary"
+                           [href]="message.deploymentResult?.urls?.codespace"
+                           target="_blank" rel="noopener"
+                           class="action-link">
+                          <mat-icon>rocket_launch</mat-icon>
+                          Open in Codespace
+                        </a>
+                        <a mat-raised-button
+                           [href]="message.deploymentResult?.urls?.repository"
+                           target="_blank" rel="noopener"
+                           class="action-link">
+                          <mat-icon>visibility</mat-icon>
+                          View on GitHub
+                        </a>
+                      </div>
+
+                      @if (message.deploymentResult?.urls?.clone) {
+                        <div class="clone-command">
+                          <code>git clone {{ message.deploymentResult?.urls?.clone }}</code>
+                          <button mat-icon-button
+                                  (click)="copyToClipboard('git clone ' + message.deploymentResult?.urls?.clone)"
+                                  matTooltip="Copy clone command"
+                                  aria-label="Copy clone command">
+                            <mat-icon>content_copy</mat-icon>
+                          </button>
+                        </div>
+                      }
+                    }
+
+                    <!-- Gist deployment result -->
+                    @if (message.deploymentResult?.type === 'gist') {
+                      <div class="deployment-url">
+                        <a [href]="message.deploymentResult?.urls?.gist" target="_blank" rel="noopener">
+                          {{ message.deploymentResult?.urls?.gist }}
+                        </a>
+                      </div>
+
+                      <div class="deployment-buttons">
+                        <a mat-raised-button color="primary"
+                           [href]="message.deploymentResult?.urls?.gist"
+                           target="_blank" rel="noopener"
+                           class="action-link">
+                          <mat-icon>visibility</mat-icon>
+                          View Gist
+                        </a>
+                      </div>
+                    }
+
+                    <!-- Validation Status Badge -->
+                    @if (message.deploymentResult?.deploymentId) {
+                      <div class="validation-status">
+                        <div class="validation-badge" [ngClass]="getValidationStatusClass(message.deploymentResult?.validationStatus)">
+                          <mat-icon>{{ getValidationIcon(message.deploymentResult?.validationStatus) }}</mat-icon>
+                          <span class="status-label">{{ getValidationLabel(message.deploymentResult?.validationStatus) }}</span>
+                          @if (message.deploymentResult?.toolsTestedCount) {
+                            <span class="tools-count">
+                              ({{ message.deploymentResult?.toolsPassedCount || 0 }}/{{ message.deploymentResult?.toolsTestedCount }} tools)
+                            </span>
+                          }
+                        </div>
+                        @if (message.deploymentResult?.validationStatus === 'failed' || message.deploymentResult?.validationStatus === 'pending') {
+                          <button mat-button
+                                  (click)="revalidateDeployment(message)"
+                                  class="revalidate-button">
+                            <mat-icon>refresh</mat-icon>
+                            {{ message.deploymentResult?.validationStatus === 'failed' ? 'Re-validate' : 'Validate Now' }}
+                          </button>
+                        }
+                      </div>
+                    }
+                  </div>
+                }
+
+                <!-- Deployment Error Card -->
+                @if (message.deploymentResult?.success === false) {
+                  <div class="deployment-error-card">
+                    <div class="error-header">
+                      <mat-icon class="error-icon">error</mat-icon>
+                      <span>Deployment Failed</span>
+                    </div>
+                    <p class="error-message">{{ message.deploymentResult?.error }}</p>
+                    <div class="error-actions">
+                      <button mat-button (click)="deployToGitHub(message)" class="retry-button">
+                        <mat-icon>refresh</mat-icon>
+                        Retry as Repo
+                      </button>
+                      <button mat-button (click)="deployToGist(message)" class="retry-button">
+                        <mat-icon>refresh</mat-icon>
+                        Retry as Gist
+                      </button>
+                    </div>
+                  </div>
+                }
+              </div>
+            </div>
+          }
+
+          <!-- Deployment Links -->
+          @if (chatService.latestDeployment()?.status === 'success') {
+            <div class="deployment-links">
+              <div class="deployment-header">
+                <mat-icon>cloud_done</mat-icon>
+                <span>Your MCP Server is deployed!</span>
+              </div>
+              <div class="deployment-actions">
+                @if (chatService.latestDeployment()?.repositoryUrl) {
+                  <a
+                    [href]="chatService.latestDeployment()?.repositoryUrl"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    mat-raised-button
+                    color="primary"
+                    class="deployment-link">
+                    <mat-icon>code</mat-icon>
                     View on GitHub
                   </a>
-                </div>
-
-                <div class="clone-command" *ngIf="message.deploymentResult?.urls?.clone">
-                  <code>git clone {{ message.deploymentResult?.urls?.clone }}</code>
-                  <button mat-icon-button
-                          (click)="copyToClipboard('git clone ' + message.deploymentResult?.urls?.clone)"
-                          matTooltip="Copy clone command">
-                    <mat-icon>content_copy</mat-icon>
-                  </button>
-                </div>
-              </ng-container>
-
-              <!-- Gist deployment result -->
-              <ng-container *ngIf="message.deploymentResult?.type === 'gist'">
-                <div class="deployment-url">
-                  <a [href]="message.deploymentResult?.urls?.gist" target="_blank" rel="noopener">
-                    {{ message.deploymentResult?.urls?.gist }}
-                  </a>
-                </div>
-
-                <div class="deployment-buttons">
-                  <a mat-raised-button color="primary"
-                     [href]="message.deploymentResult?.urls?.gist"
-                     target="_blank" rel="noopener"
-                     class="action-link">
-                    <mat-icon>visibility</mat-icon>
+                }
+                @if (chatService.latestDeployment()?.gistUrl) {
+                  <a
+                    [href]="chatService.latestDeployment()?.gistUrl"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    mat-raised-button
+                    class="deployment-link">
+                    <mat-icon>description</mat-icon>
                     View Gist
                   </a>
-                </div>
-              </ng-container>
-
-              <!-- Validation Status Badge -->
-              <div class="validation-status" *ngIf="message.deploymentResult?.deploymentId">
-                <div class="validation-badge" [ngClass]="getValidationStatusClass(message.deploymentResult?.validationStatus)">
-                  <mat-icon>{{ getValidationIcon(message.deploymentResult?.validationStatus) }}</mat-icon>
-                  <span class="status-label">{{ getValidationLabel(message.deploymentResult?.validationStatus) }}</span>
-                  <span *ngIf="message.deploymentResult?.toolsTestedCount" class="tools-count">
-                    ({{ message.deploymentResult?.toolsPassedCount || 0 }}/{{ message.deploymentResult?.toolsTestedCount }} tools)
-                  </span>
-                </div>
-                <button mat-button
-                        *ngIf="message.deploymentResult?.validationStatus === 'failed' || message.deploymentResult?.validationStatus === 'pending'"
-                        (click)="revalidateDeployment(message)"
-                        class="revalidate-button">
-                  <mat-icon>refresh</mat-icon>
-                  {{ message.deploymentResult?.validationStatus === 'failed' ? 'Re-validate' : 'Validate Now' }}
-                </button>
+                }
+                @if (chatService.latestDeployment()?.codespaceUrl) {
+                  <a
+                    [href]="chatService.latestDeployment()?.codespaceUrl"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    mat-raised-button
+                    color="accent"
+                    class="deployment-link">
+                    <mat-icon>cloud</mat-icon>
+                    Open in Codespace
+                  </a>
+                }
               </div>
             </div>
+          }
 
-            <!-- Deployment Error Card -->
-            <div *ngIf="message.deploymentResult?.success === false" class="deployment-error-card">
-              <div class="error-header">
-                <mat-icon class="error-icon">error</mat-icon>
-                <span>Deployment Failed</span>
-              </div>
-              <p class="error-message">{{ message.deploymentResult?.error }}</p>
-              <div class="error-actions">
-                <button mat-button (click)="deployToGitHub(message)" class="retry-button">
-                  <mat-icon>refresh</mat-icon>
-                  Retry as Repo
-                </button>
-                <button mat-button (click)="deployToGist(message)" class="retry-button">
-                  <mat-icon>refresh</mat-icon>
-                  Retry as Gist
-                </button>
-              </div>
-            </div>
-          </div>
+          <!-- Deployment failures are shown exactly once, via the per-message
+               deployment-error-card above (contextual, right next to the
+               retry actions). This global banner + the failure toast were
+               a triple-redundant repeat of the same text and have been
+               removed - see chat.component.ts deployToGitHub/deployToGist. -->
         </div>
-
-        <!-- Deployment Links -->
-        <div *ngIf="latestDeployment?.status === 'success'" class="deployment-links">
-          <div class="deployment-header">
-            <mat-icon>cloud_done</mat-icon>
-            <span>Your MCP Server is deployed!</span>
-          </div>
-          <div class="deployment-actions">
-            <a
-              *ngIf="latestDeployment?.repositoryUrl"
-              [href]="latestDeployment?.repositoryUrl"
-              target="_blank"
-              rel="noopener noreferrer"
-              mat-raised-button
-              color="primary"
-              class="deployment-link">
-              <mat-icon>code</mat-icon>
-              View on GitHub
-            </a>
-            <a
-              *ngIf="latestDeployment?.gistUrl"
-              [href]="latestDeployment?.gistUrl"
-              target="_blank"
-              rel="noopener noreferrer"
-              mat-raised-button
-              class="deployment-link">
-              <mat-icon>description</mat-icon>
-              View Gist
-            </a>
-            <a
-              *ngIf="latestDeployment?.codespaceUrl"
-              [href]="latestDeployment?.codespaceUrl"
-              target="_blank"
-              rel="noopener noreferrer"
-              mat-raised-button
-              color="accent"
-              class="deployment-link">
-              <mat-icon>cloud</mat-icon>
-              Open in Codespace
-            </a>
-          </div>
-        </div>
-
-        <!-- Deployment Error -->
-        <div *ngIf="latestDeployment?.status === 'failed'" class="deployment-error">
-          <div class="deployment-header">
-            <mat-icon>error_outline</mat-icon>
-            <span>Deployment failed</span>
-          </div>
-          <p class="error-message">{{ latestDeployment?.errorMessage }}</p>
-        </div>
-      </div>
+      }
     </div>
   </div>
 
@@ -282,21 +344,14 @@
   <div class="input-area">
     <div class="input-container">
       <div class="input-wrapper">
-        <!-- Attachment Button -->
-        <button
-          mat-icon-button
-          class="input-icon-button"
-          matTooltip="Attach file">
-          <mat-icon>attach_file</mat-icon>
-        </button>
-
         <!-- Text Input -->
         <textarea
           #messageInput
           class="message-input"
-          [(ngModel)]="currentMessage"
+          [ngModel]="currentMessage()"
+          (ngModelChange)="currentMessage.set($event)"
           (keydown)="onKeyPress($event)"
-          [disabled]="isLoading"
+          [disabled]="chatService.isLoading()"
           rows="1"
           placeholder="Message MCP Everything..."
           (input)="autoResize($event)">
@@ -306,10 +361,14 @@
         <button
           mat-icon-button
           class="send-button"
-          [disabled]="!currentMessage.trim() || isLoading"
+          [disabled]="!currentMessage().trim() || chatService.isLoading()"
           (click)="sendMessage()"
           aria-label="Send message">
-          <mat-icon>{{ isLoading ? 'stop_circle' : 'send' }}</mat-icon>
+          @if (chatService.isLoading()) {
+            <mat-spinner diameter="20"></mat-spinner>
+          } @else {
+            <mat-icon>send</mat-icon>
+          }
         </button>
       </div>
 

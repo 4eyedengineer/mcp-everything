@@ -1,0 +1,114 @@
+<!-- API Key Section -->
+<div class="settings-section api-key-section">
+  <div class="section-header">
+    <div class="section-icon">
+      <mat-icon>vpn_key</mat-icon>
+    </div>
+    <div class="section-title">
+      <h2>API Keys</h2>
+      <p>Create keys for programmatic access to your account via the API</p>
+    </div>
+  </div>
+
+  <div class="section-content">
+    <!-- Newly-created key: shown exactly once -->
+    <div class="new-key-banner" *ngIf="justCreatedKey() as created">
+      <div class="new-key-header">
+        <mat-icon>check_circle</mat-icon>
+        <span>API key created</span>
+      </div>
+      <p class="new-key-warning">
+        Copy this key now - for your security, you won't be able to see it again.
+      </p>
+      <div class="input-with-button">
+        <input type="text" class="form-input key-display" [value]="created.key" readonly (click)="$any($event.target).select()">
+        <button class="icon-button" matTooltip="Copy to clipboard" (click)="copyKey()">
+          <mat-icon>{{ copied() ? 'check' : 'content_copy' }}</mat-icon>
+        </button>
+      </div>
+      <div class="form-actions">
+        <button class="action-button secondary" (click)="dismissCreatedKey()">
+          <span>Done</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Create flow -->
+    <div class="create-key-form" *ngIf="isCreating()">
+      <div class="form-group">
+        <label class="form-label">Key name</label>
+        <input
+          type="text"
+          class="form-input"
+          [ngModel]="newKeyName()"
+          (ngModelChange)="newKeyName.set($event)"
+          placeholder="e.g. CI pipeline, local dev"
+          maxlength="100"
+          (keydown.enter)="submitCreate()">
+      </div>
+      <p class="field-error" *ngIf="createError()">{{ createError() }}</p>
+      <div class="form-actions">
+        <button class="mcp-btn-primary" (click)="submitCreate()">
+          <mat-icon>vpn_key</mat-icon>
+          <span>Create key</span>
+        </button>
+        <button class="action-button secondary" (click)="cancelCreating()">
+          <span>Cancel</span>
+        </button>
+      </div>
+    </div>
+
+    <div class="section-actions" *ngIf="!isCreating() && !justCreatedKey()">
+      <button
+        class="mcp-btn-primary"
+        [disabled]="hasReachedLimit()"
+        [matTooltip]="hasReachedLimit() ? 'Maximum of ' + MAX_ACTIVE_KEYS + ' active keys reached - revoke one to create another' : ''"
+        (click)="startCreating()">
+        <mat-icon>add</mat-icon>
+        <span>Create API key</span>
+      </button>
+      <span class="key-count" *ngIf="keys().length > 0">{{ activeKeyCount() }} / {{ MAX_ACTIVE_KEYS }} active</span>
+    </div>
+
+    <!-- Loading -->
+    <p class="coming-soon-note" *ngIf="loading()">Loading API keys...</p>
+
+    <!-- Error -->
+    <p class="field-error" *ngIf="error() && !loading()">{{ error() }}</p>
+
+    <!-- Empty state -->
+    <p class="coming-soon-note" *ngIf="!loading() && !error() && keys().length === 0">
+      You don't have any API keys yet. Create one to authenticate requests to the MCP Everything API without a login session.
+    </p>
+
+    <!-- Key list -->
+    <div class="api-key-list" *ngIf="!loading() && keys().length > 0">
+      <div class="api-key-row" *ngFor="let key of keys()" [class.revoked]="key.revokedAt">
+        <div class="api-key-info">
+          <div class="api-key-name">
+            {{ key.name }}
+            <span class="revoked-badge" *ngIf="key.revokedAt">Revoked</span>
+          </div>
+          <div class="api-key-meta">
+            <code class="api-key-prefix">{{ key.keyPrefix }}...</code>
+            <span class="meta-sep">&middot;</span>
+            <span>Created {{ key.createdAt | date:'mediumDate' }}</span>
+            <span class="meta-sep">&middot;</span>
+            <span>{{ key.lastUsedAt ? ('Last used ' + (key.lastUsedAt | date:'mediumDate')) : 'Never used' }}</span>
+          </div>
+        </div>
+        <div class="api-key-actions">
+          <button
+            class="action-button danger"
+            *ngIf="!key.revokedAt"
+            [disabled]="isRevoking(key.id)"
+            (click)="revokeKey(key)">
+            <mat-icon *ngIf="!isRevoking(key.id)">delete_forever</mat-icon>
+            <mat-icon *ngIf="isRevoking(key.id)" class="spinning">sync</mat-icon>
+            <span>{{ isRevoking(key.id) ? 'Revoking...' : 'Revoke' }}</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

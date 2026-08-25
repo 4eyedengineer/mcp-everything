@@ -7,7 +7,7 @@ module.exports = {
   },
   plugins: ['@typescript-eslint/eslint-plugin'],
   extends: [
-    '@typescript-eslint/recommended',
+    'plugin:@typescript-eslint/recommended',
     'plugin:prettier/recommended',
   ],
   root: true,
@@ -15,7 +15,17 @@ module.exports = {
     node: true,
     jest: true,
   },
-  ignorePatterns: ['.eslintrc.js'],
+  // test/**: e2e specs run under test/jest-e2e.json.
+  // *.spec.ts / *.test.ts / __tests__/**: unit test files. Both groups are
+  // excluded from tsconfig.json's "include", so typed linting (which needs
+  // parserOptions.project) can't parse them here.
+  ignorePatterns: [
+    '.eslintrc.js',
+    'test/**',
+    '**/*.spec.ts',
+    '**/*.test.ts',
+    '**/__tests__/**',
+  ],
   rules: {
     '@typescript-eslint/interface-name-prefix': 'off',
     '@typescript-eslint/explicit-function-return-type': 'off',

@@ -1,12 +1,4 @@
-import {
-  Controller,
-  Get,
-  Patch,
-  Delete,
-  Body,
-  HttpCode,
-  HttpStatus,
-} from '@nestjs/common';
+import { Controller, Get, Patch, Delete, Body, HttpCode, HttpStatus } from '@nestjs/common';
 import { UserService } from './user.service';
 import { UpdateAccountDto, AccountDto, UserProfileDto } from './dto/user.dto';
 import { User } from '../database/entities/user.entity';

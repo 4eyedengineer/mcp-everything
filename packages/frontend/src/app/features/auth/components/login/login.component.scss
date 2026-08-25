@@ -8,7 +8,7 @@
 }
 
 .auth-card {
-  background: #fff;
+  background: var(--surface-color);
   border-radius: 16px;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
   padding: 40px;
@@ -23,12 +23,12 @@
   h1 {
     font-size: 24px;
     font-weight: 600;
-    color: #1a1a2e;
+    color: var(--text-primary);
     margin: 0 0 8px 0;
   }
 
   p {
-    color: #666;
+    color: var(--text-secondary);
     margin: 0;
     font-size: 14px;
   }
@@ -52,12 +52,12 @@
   transition: all 0.2s ease;
 
   &.github {
-    border-color: #24292e;
-    color: #24292e;
+    border-color: var(--text-primary);
+    color: var(--text-primary);
 
     &:hover {
-      background: #24292e;
-      color: #fff;
+      background: var(--text-primary);
+      color: var(--text-inverse);
     }
   }
 
@@ -67,7 +67,7 @@
 
     &:hover {
       background: #4285f4;
-      color: #fff;
+      color: var(--text-inverse);
     }
   }
 
@@ -75,6 +75,22 @@
     font-size: 20px;
     width: 20px;
     height: 20px;
+  }
+
+  // Google's branding guidelines require the multicolor "G" mark to always
+  // sit on a light/white tile so its official colors stay legible
+  // regardless of the surrounding button/theme color - see
+  // src/assets/logos/google-logo.svg for source notes. Styled directly on
+  // the mat-icon (rather than a wrapping element) so it stays in Material's
+  // dedicated leading-icon projection slot and keeps the button's flex gap.
+  mat-icon.google-icon-tile {
+    box-sizing: border-box;
+    width: 20px;
+    height: 20px;
+    padding: 2px;
+    border-radius: 3px;
+    background: #ffffff;
+    flex-shrink: 0;
   }
 }
 
@@ -88,12 +104,12 @@
     content: '';
     flex: 1;
     height: 1px;
-    background: #e0e0e0;
+    background: var(--border-medium);
   }
 
   span {
     padding: 0 16px;
-    color: #999;
+    color: var(--text-tertiary);
     font-size: 13px;
     white-space: nowrap;
   }
@@ -114,7 +130,7 @@
   margin-bottom: 16px;
 
   a {
-    color: #0f3460;
+    color: var(--link-color);
     text-decoration: none;
     font-size: 13px;
     font-weight: 500;
@@ -130,9 +146,9 @@
   align-items: center;
   gap: 8px;
   padding: 12px 16px;
-  background: #ffebee;
+  background: var(--error-bg);
   border-radius: 8px;
-  color: #c62828;
+  color: var(--error-text);
   margin-bottom: 16px;
   font-size: 14px;
 
@@ -143,12 +159,11 @@
   }
 }
 
-.submit-button {
-  width: 100%;
-  padding: 12px 24px;
-  font-size: 16px;
-  font-weight: 500;
-  border-radius: 8px;
+// Submit CTA uses the shared .mcp-btn-primary (styles/_buttons.scss) + the
+// .full-width utility above rather than a bespoke block - this used to be
+// one of four near-identical `.submit-button` definitions duplicated across
+// login/register/forgot-password/reset-password.
+.mcp-btn-primary {
   margin-top: 8px;
 
   mat-spinner {
@@ -160,15 +175,15 @@
   text-align: center;
   margin-top: 24px;
   padding-top: 24px;
-  border-top: 1px solid #e0e0e0;
+  border-top: 1px solid var(--border-medium);
 
   span {
-    color: #666;
+    color: var(--text-secondary);
     font-size: 14px;
   }
 
   a {
-    color: #0f3460;
+    color: var(--link-color);
     text-decoration: none;
     font-weight: 500;
     margin-left: 4px;
@@ -182,30 +197,30 @@
 // Dark theme support
 :host-context(.dark-theme) {
   .auth-card {
-    background: #2a2a3e;
+    background: var(--surface-color);
 
     .auth-header h1 {
-      color: #fff;
+      color: var(--text-primary);
     }
 
     .auth-header p {
-      color: #aaa;
+      color: var(--text-secondary);
     }
 
     .divider span {
-      color: #888;
+      color: var(--text-secondary);
     }
 
     .divider::before,
     .divider::after {
-      background: #444;
+      background: var(--border-dark);
     }
 
     .auth-footer {
-      border-top-color: #444;
+      border-top-color: var(--border-dark);
 
       span {
-        color: #aaa;
+        color: var(--text-secondary);
       }
     }
   }

@@ -1,7 +1,18 @@
 import { Injectable } from '@angular/core';
-import { HttpClient, HttpErrorResponse } from '@angular/common/http';
+import { HttpClient, HttpErrorResponse, HttpHeaders } from '@angular/common/http';
 import { Observable, throwError } from 'rxjs';
 import { catchError, map } from 'rxjs/operators';
+import { API_BASE } from '../config/api.config';
+import { parseHttpError } from '../../shared/utils/http-error.util';
+
+/**
+ * These deployment/validation requests all have callers that render their
+ * own specific, business-aware error message (deploy success/failure cards,
+ * tier-limit upsell copy, validation status badges). Skip the global error
+ * interceptor's generic toast for them so a single failure doesn't produce
+ * two toasts.
+ */
+const SKIP_ERROR_NOTIFICATION_HEADERS = new HttpHeaders({ 'X-Skip-Error-Notification': 'true' });
 
 /**
  * Options for deployment requests
@@ -113,8 +124,8 @@ interface DeployRequest {
   providedIn: 'root'
 })
 export class DeploymentService {
-  private readonly baseUrl = 'http://localhost:3000/api/deploy';
-  private readonly validationUrl = 'http://localhost:3000/api/validation';
+  private readonly baseUrl = `${API_BASE}/deploy`;
+  private readonly validationUrl = `${API_BASE}/validation`;
 
   constructor(private http: HttpClient) {}
 
@@ -131,10 +142,12 @@ export class DeploymentService {
       }
     };
 
-    return this.http.post<DeploymentResponse>(`${this.baseUrl}/github`, request).pipe(
-      map(response => this.transformResponse(response)),
-      catchError(error => this.handleError(error, 'deployToGitHub'))
-    );
+    return this.http
+      .post<DeploymentResponse>(`${this.baseUrl}/github`, request, { headers: SKIP_ERROR_NOTIFICATION_HEADERS })
+      .pipe(
+        map(response => this.transformResponse(response)),
+        catchError(error => this.handleError(error, 'deployToGitHub'))
+      );
   }
 
   /**
@@ -149,10 +162,12 @@ export class DeploymentService {
       }
     };
 
-    return this.http.post<DeploymentResponse>(`${this.baseUrl}/gist`, request).pipe(
-      map(response => this.transformResponse(response)),
-      catchError(error => this.handleError(error, 'deployToGist'))
-    );
+    return this.http
+      .post<DeploymentResponse>(`${this.baseUrl}/gist`, request, { headers: SKIP_ERROR_NOTIFICATION_HEADERS })
+      .pipe(
+        map(response => this.transformResponse(response)),
+        catchError(error => this.handleError(error, 'deployToGist'))
+      );
   }
 
   /**
@@ -186,7 +201,8 @@ export class DeploymentService {
   validateDeployment(deploymentId: string, forceRevalidate = false): Observable<ValidationResponse> {
     return this.http.post<ValidationResponse>(
       `${this.validationUrl}/${deploymentId}/validate`,
-      { forceRevalidate }
+      { forceRevalidate },
+      { headers: SKIP_ERROR_NOTIFICATION_HEADERS }
     ).pipe(
       catchError(error => this.handleError(error, 'validateDeployment'))
     );
@@ -231,17 +247,14 @@ export class DeploymentService {
   private handleError(error: HttpErrorResponse, operation: string): Observable<never> {
     console.error(`${operation} failed:`, error);
 
-    let errorMessage = 'An unexpected error occurred';
+    let errorMessage: string;
     let errorCode: string | undefined;
     let tierErrorData: Partial<DeploymentResponse> = {};
 
-    if (error.error instanceof ErrorEvent) {
-      // Client-side error
-      errorMessage = error.error.message;
-    } else if (error.error?.errorCode) {
+    if (error.error?.errorCode) {
       // Tier/usage limit error from backend
       errorCode = error.error.errorCode;
-      errorMessage = error.error.error || error.error.message;
+      errorMessage = error.error.error || error.error.message || parseHttpError(error);
       tierErrorData = {
         currentUsage: error.error.currentUsage,
         limit: error.error.limit,
@@ -249,18 +262,12 @@ export class DeploymentService {
         requiredTier: error.error.requiredTier,
         upgradeUrl: error.error.upgradeUrl,
       };
-    } else if (error.error?.error) {
-      // Backend error with message
-      errorMessage = error.error.error;
-    } else if (error.error?.message) {
-      // Alternative backend error format
-      errorMessage = error.error.message;
     } else if (error.status === 404) {
       errorMessage = 'Conversation not found. Please ensure the MCP server was generated first.';
-    } else if (error.status === 429) {
-      errorMessage = 'Too many requests. Please wait a moment before trying again.';
     } else if (error.status === 500) {
       errorMessage = 'Server error during deployment. Please try again.';
+    } else {
+      errorMessage = parseHttpError(error);
     }
 
     return throwError(() => ({

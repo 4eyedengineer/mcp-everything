@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Deployment } from '../../database/entities/deployment.entity';
+import { GitHubService } from '../../github/github.service';
 import { GitHubRepoProvider } from '../providers/github-repo.provider';
 import { GistProvider } from '../providers/gist.provider';
 
@@ -23,6 +24,7 @@ export class DeploymentRollbackService {
     private readonly deploymentRepository: Repository<Deployment>,
     private readonly gitHubRepoProvider: GitHubRepoProvider,
     private readonly gistProvider: GistProvider,
+    private readonly githubService: GitHubService,
   ) {}
 
   /**
@@ -44,9 +46,7 @@ export class DeploymentRollbackService {
       return result;
     }
 
-    this.logger.log(
-      `Starting rollback for deployment ${deploymentId}: ${reason}`,
-    );
+    this.logger.log(`Starting rollback for deployment ${deploymentId}: ${reason}`);
 
     try {
       if (deployment.deploymentType === 'repo' && deployment.repositoryUrl) {
@@ -68,8 +68,7 @@ export class DeploymentRollbackService {
       });
     } catch (error) {
       result.success = false;
-      const errorMessage =
-        error instanceof Error ? error.message : 'Unknown error';
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       result.errors.push(`Rollback error: ${errorMessage}`);
       this.logger.error(`Rollback failed for ${deploymentId}: ${errorMessage}`);
     }
@@ -80,40 +79,23 @@ export class DeploymentRollbackService {
   /**
    * Rollback a repository deployment by deleting the repository
    */
-  private async rollbackRepository(
-    deployment: Deployment,
-    result: RollbackResult,
-  ): Promise<void> {
-    const parsed = this.gitHubRepoProvider.parseRepoUrl(
-      deployment.repositoryUrl!,
-    );
+  private async rollbackRepository(deployment: Deployment, result: RollbackResult): Promise<void> {
+    const parsed = this.gitHubRepoProvider.parseRepoUrl(deployment.repositoryUrl!);
     if (!parsed) {
-      result.errors.push(
-        `Could not parse repository URL: ${deployment.repositoryUrl}`,
-      );
+      result.errors.push(`Could not parse repository URL: ${deployment.repositoryUrl}`);
       return;
     }
 
     try {
-      const deleted = await this.gitHubRepoProvider.deleteRepository(
-        parsed.owner,
-        parsed.repo,
-      );
+      const deleted = await this.gitHubRepoProvider.deleteRepository(parsed.owner, parsed.repo);
       if (deleted) {
-        result.resourcesDeleted.push(
-          `Repository: ${parsed.owner}/${parsed.repo}`,
-        );
-        this.logger.log(
-          `Rolled back repository: ${parsed.owner}/${parsed.repo}`,
-        );
+        result.resourcesDeleted.push(`Repository: ${parsed.owner}/${parsed.repo}`);
+        this.logger.log(`Rolled back repository: ${parsed.owner}/${parsed.repo}`);
       } else {
-        result.errors.push(
-          `Failed to delete repository: ${parsed.owner}/${parsed.repo}`,
-        );
+        result.errors.push(`Failed to delete repository: ${parsed.owner}/${parsed.repo}`);
       }
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : 'Unknown error';
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       result.errors.push(`Repository deletion error: ${errorMessage}`);
     }
   }
@@ -121,18 +103,24 @@ export class DeploymentRollbackService {
   /**
    * Rollback a gist deployment by deleting the gist
    */
-  private async rollbackGist(
-    deployment: Deployment,
-    result: RollbackResult,
-  ): Promise<void> {
+  private async rollbackGist(deployment: Deployment, result: RollbackResult): Promise<void> {
     const gistId = deployment.metadata?.gistId as string | undefined;
     if (!gistId) {
       this.logger.debug('No gist ID found, nothing to rollback');
       return;
     }
 
+    // The Gist was created under the owning user's own GitHub account, so
+    // it can only be deleted with that same user's token - no server-wide
+    // credential to fall back to here.
+    const githubToken = await this.githubService.getUserAccessToken(deployment.userId);
+    if (!githubToken) {
+      result.errors.push(`Cannot roll back gist ${gistId}: owning user has no usable GitHub token`);
+      return;
+    }
+
     try {
-      const deleted = await this.gistProvider.deleteGist(gistId);
+      const deleted = await this.gistProvider.deleteGist(githubToken, gistId);
       if (deleted) {
         result.resourcesDeleted.push(`Gist: ${gistId}`);
         this.logger.log(`Rolled back gist: ${gistId}`);
@@ -140,8 +128,7 @@ export class DeploymentRollbackService {
         result.errors.push(`Failed to delete gist: ${gistId}`);
       }
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : 'Unknown error';
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       result.errors.push(`Gist deletion error: ${errorMessage}`);
     }
   }

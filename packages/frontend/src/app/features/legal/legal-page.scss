@@ -1,0 +1,177 @@
+/*
+ * Shared layout for the Terms of Service and Privacy Policy pages.
+ *
+ * Monochrome only, using the CSS custom properties from styles.scss so the
+ * page inverts correctly with the theme class ThemeService toggles on
+ * <html>. Dark-mode overrides use :host-context(.dark-theme), NOT a
+ * descendant selector like `.dark-theme .legal-page` - Angular's emulated
+ * encapsulation stamps a content attribute onto every compound of a
+ * descendant selector, so `.dark-theme .legal-page` would never match
+ * against a class ThemeService puts on <html> (see landing.component.scss
+ * for the fuller writeup of this trap - it silently broke dark mode there
+ * once already).
+ */
+
+.legal-page {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  background-color: var(--background-main);
+  color: var(--text-primary);
+}
+
+.legal-header {
+  border-bottom: 1px solid var(--border-light);
+  background-color: var(--background-main);
+}
+
+.legal-header-inner {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: var(--spacing-md) var(--spacing-lg);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-md);
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  color: var(--text-primary);
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 15px;
+
+  .brand-mark {
+    display: block;
+  }
+
+  &:hover {
+    color: var(--text-primary);
+  }
+}
+
+.back-link {
+  color: var(--text-secondary);
+  text-decoration: none;
+  font-size: 14px;
+  font-weight: 500;
+
+  &:hover {
+    color: var(--text-primary);
+    text-decoration: underline;
+  }
+}
+
+.legal-main {
+  flex: 1;
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
+  padding: var(--spacing-xl) var(--spacing-lg) calc(var(--spacing-xl) * 2);
+}
+
+.legal-title {
+  font-size: 32px;
+  font-weight: 700;
+  margin: 0 0 var(--spacing-xs);
+  color: var(--text-primary);
+}
+
+.legal-updated {
+  color: var(--text-tertiary);
+  font-size: 14px;
+  margin: 0 0 var(--spacing-xl);
+}
+
+.legal-intro {
+  color: var(--text-secondary);
+  font-size: 15px;
+  line-height: 1.6;
+  margin: 0 0 var(--spacing-xl);
+}
+
+.legal-section {
+  margin-bottom: var(--spacing-xl);
+
+  h2 {
+    font-size: 19px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0 0 var(--spacing-sm);
+  }
+
+  p {
+    color: var(--text-secondary);
+    font-size: 15px;
+    line-height: 1.65;
+    margin: 0 0 var(--spacing-sm);
+
+    &:last-child {
+      margin-bottom: 0;
+    }
+  }
+
+  ul {
+    margin: 0 0 var(--spacing-sm);
+    padding-left: 1.25em;
+    color: var(--text-secondary);
+    font-size: 15px;
+    line-height: 1.65;
+
+    li {
+      margin-bottom: var(--spacing-xs);
+    }
+  }
+
+  a {
+    color: var(--link-color);
+
+    &:hover {
+      color: var(--link-hover);
+    }
+  }
+}
+
+.legal-footer {
+  border-top: 1px solid var(--border-light);
+  padding: var(--spacing-lg);
+  text-align: center;
+
+  a {
+    color: var(--text-secondary);
+    text-decoration: none;
+    font-size: 14px;
+
+    &:hover {
+      color: var(--text-primary);
+      text-decoration: underline;
+    }
+  }
+}
+
+@media (max-width: 768px) {
+  .legal-title {
+    font-size: 26px;
+  }
+}
+
+@media (max-width: 375px) {
+  .legal-header-inner,
+  .legal-main {
+    padding-left: var(--spacing-md);
+    padding-right: var(--spacing-md);
+  }
+}
+
+:host-context(.dark-theme) {
+  .legal-header {
+    border-bottom-color: var(--border-medium);
+  }
+
+  .legal-footer {
+    border-top-color: var(--border-medium);
+  }
+}

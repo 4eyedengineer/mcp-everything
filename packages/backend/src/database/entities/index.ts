@@ -1,10 +1,13 @@
 export { Conversation } from './conversation.entity';
-export { ConversationMemory } from './conversation-memory.entity';
-export { ResearchCache } from './research-cache.entity';
+export { PipelineRun } from './pipeline-run.entity';
 export { Deployment } from './deployment.entity';
 export { User } from './user.entity';
 export { Subscription } from './subscription.entity';
 export { UsageRecord } from './usage.entity';
 export { HostedServer } from './hosted-server.entity';
+export { HostedServerApiKey } from './hosted-server-api-key.entity';
+export { HostedServerSourceToken } from './hosted-server-source-token.entity';
 export { ErrorLog } from './error-log.entity';
 export { McpServer } from './mcp-server.entity';
+export { ApiKey } from './api-key.entity';
+export { StripeEvent } from './stripe-event.entity';

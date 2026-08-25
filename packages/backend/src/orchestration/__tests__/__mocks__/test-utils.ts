@@ -5,19 +5,19 @@
  * test states and mock data.
  */
 
-import { GraphState } from '../../types';
+import { PipelineState } from '../../types';
 
 /**
  * Create a minimal test state for graph execution
  */
-export function createTestState(overrides: Partial<GraphState> = {}): GraphState {
+export function createTestState(overrides: Partial<PipelineState> = {}): PipelineState {
   return {
     sessionId: 'test-session-123',
     conversationId: 'test-conv-456',
     messages: [],
     userInput: 'Generate MCP server for test API',
-    currentNode: 'analyzeIntent',
-    executedNodes: [],
+    currentStep: 'analyzeIntent',
+    executedSteps: [],
     needsUserInput: false,
     isComplete: false,
     streamingUpdates: [],
@@ -28,7 +28,7 @@ export function createTestState(overrides: Partial<GraphState> = {}): GraphState
 /**
  * Create state with research phase data
  */
-export function createResearchedState(overrides: Partial<GraphState> = {}): GraphState {
+export function createResearchedState(overrides: Partial<PipelineState> = {}): PipelineState {
   return createTestState({
     intent: {
       type: 'generate_mcp',
@@ -87,61 +87,10 @@ export function createResearchedState(overrides: Partial<GraphState> = {}): Grap
 }
 
 /**
- * Create state with ensemble results
+ * Create state with a planned tool set (post-planTools)
  */
-export function createEnsembledState(overrides: Partial<GraphState> = {}): GraphState {
+export function createPlannedState(overrides: Partial<PipelineState> = {}): PipelineState {
   return createResearchedState({
-    ensembleResults: {
-      agentPerspectives: [
-        {
-          agentName: 'architect',
-          recommendations: {
-            tools: [
-              {
-                name: 'get_users',
-                description: 'Get list of users',
-                inputSchema: { type: 'object', properties: {} },
-                outputFormat: 'JSON array',
-                priority: 'high',
-                estimatedComplexity: 'simple',
-              },
-            ],
-            reasoning: 'Standard CRUD operations',
-            concerns: [],
-          },
-          confidence: 0.9,
-          weight: 1.0,
-          timestamp: new Date(),
-        },
-        {
-          agentName: 'mcpSpecialist',
-          recommendations: {
-            tools: [
-              {
-                name: 'get_users',
-                description: 'Get list of users',
-                inputSchema: { type: 'object', properties: {} },
-                outputFormat: 'JSON array',
-                priority: 'high',
-                estimatedComplexity: 'simple',
-              },
-            ],
-            reasoning: 'MCP compliant tools',
-            concerns: [],
-          },
-          confidence: 0.95,
-          weight: 1.2,
-          timestamp: new Date(),
-        },
-      ],
-      consensusScore: 0.85,
-      conflictsResolved: false,
-      votingDetails: {
-        totalVotes: 2,
-        toolVotes: new Map(),
-        consensusReached: true,
-      },
-    },
     generationPlan: {
       steps: ['Setup project', 'Implement tools', 'Test', 'Validate'],
       toolsToGenerate: [
@@ -164,6 +113,9 @@ export function createEnsembledState(overrides: Partial<GraphState> = {}): Graph
         },
       ],
       estimatedComplexity: 'moderate',
+      serverName: 'test-mcp-server',
+      rationale: 'Covers the operations the user asked about and nothing else',
+      scopeNotes: 'no scope constraint stated',
     },
     ...overrides,
   });
@@ -172,8 +124,8 @@ export function createEnsembledState(overrides: Partial<GraphState> = {}): Graph
 /**
  * Create state with generated code
  */
-export function createGeneratedState(overrides: Partial<GraphState> = {}): GraphState {
-  return createEnsembledState({
+export function createGeneratedState(overrides: Partial<PipelineState> = {}): PipelineState {
+  return createPlannedState({
     generatedCode: {
       mainFile: `
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";

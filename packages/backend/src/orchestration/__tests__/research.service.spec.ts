@@ -14,10 +14,12 @@ import {
   mockApiUsagePatterns,
 } from './__mocks__/github.mock';
 import {
+  createMockAnthropicService,
   mockInputClassificationResponse,
   mockResearchSynthesisResponse,
   mockServiceIdentificationResponse,
 } from './__mocks__/anthropic.mock';
+import { AnthropicService } from '../../ai/anthropic.service';
 
 // Mock axios for Tavily API calls
 jest.mock('axios', () => ({
@@ -50,15 +52,30 @@ jest.mock('axios', () => ({
   }),
 }));
 
-// Mock @langchain/anthropic module
+// Stand-in for the single AI seam (AnthropicService): every completion routes
+// through mockLlmInvoke(prompt) -> { content }.
 const mockLlmInvoke = jest.fn().mockResolvedValue({
   content: mockResearchSynthesisResponse(),
 });
+const mockAnthropicService = createMockAnthropicService(mockLlmInvoke);
 
-jest.mock('@langchain/anthropic', () => ({
-  ChatAnthropic: jest.fn().mockImplementation(() => ({
-    invoke: mockLlmInvoke,
-  })),
+// Mock dns.lookup so the SSRF guard in url-safety.ts (which every
+// scrapeApiDocumentation/researchFromWebsite call now goes through) resolves
+// deterministically without depending on live network access in tests.
+// Any hostname containing "invalid" fails to resolve (mirrors real DNS
+// behavior for the "invalid.url" fixture used below); everything else
+// resolves to a public IP.
+jest.mock('dns', () => ({
+  promises: {
+    lookup: jest.fn((hostname: string) => {
+      if (typeof hostname === 'string' && hostname.includes('invalid')) {
+        const err: any = new Error(`getaddrinfo ENOTFOUND ${hostname}`);
+        err.code = 'ENOTFOUND';
+        return Promise.reject(err);
+      }
+      return Promise.resolve([{ address: '1.1.1.1', family: 4 }]);
+    }),
+  },
 }));
 
 // Mock @octokit/rest
@@ -111,6 +128,10 @@ describe('ResearchService', () => {
         {
           provide: GitHubAnalysisService,
           useValue: mockGitHubAnalysisService,
+        },
+        {
+          provide: AnthropicService,
+          useValue: mockAnthropicService,
         },
       ],
     }).compile();

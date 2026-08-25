@@ -39,7 +39,10 @@ export interface DeploymentResult {
   deploymentId: string;
   type: DeploymentType;
   urls: DeploymentUrls;
+  /** User-facing message; also includes the underlying cause when available */
   error?: string;
+  /** Raw underlying error message (never laundered away) */
+  errorCause?: string;
   /** Structured error code for programmatic handling */
   errorCode?: DeploymentErrorCode;
   /** Recommended retry strategy for this error */
@@ -114,6 +117,8 @@ export interface DeploymentFilters {
   status?: DeploymentStatus;
   limit?: number;
   offset?: number;
+  /** Restrict results to deployments owned by this user */
+  userId?: string;
 }
 
 /**

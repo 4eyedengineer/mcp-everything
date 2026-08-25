@@ -15,7 +15,6 @@ import {
   McpServerCategory,
   McpServerVisibility,
   McpServerLanguage,
-  VALID_CATEGORIES,
   MCP_SERVER_VISIBILITIES,
   MCP_SERVER_LANGUAGES,
 } from '../types/categories';

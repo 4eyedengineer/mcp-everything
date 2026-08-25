@@ -10,8 +10,9 @@ import {
   HttpException,
   HttpStatus,
 } from '@nestjs/common';
-import { Observable, Subject, interval, takeUntil } from 'rxjs';
+import { Observable, Subject, takeUntil } from 'rxjs';
 import { map, finalize } from 'rxjs/operators';
+import { IsOptional, IsString, IsNumber, IsBoolean, Min } from 'class-validator';
 
 import { ValidationService } from './validation.service';
 import {
@@ -25,10 +26,26 @@ import {
  * DTO for validation request
  */
 class ValidateDeploymentDto {
+  @IsOptional()
+  @IsString()
   cpuLimit?: string;
+
+  @IsOptional()
+  @IsString()
   memoryLimit?: string;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
   timeout?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
   toolTimeout?: number;
+
+  @IsOptional()
+  @IsBoolean()
   forceRevalidate?: boolean;
 }
 
@@ -60,10 +77,7 @@ export class ValidationController {
         forceRevalidate: options.forceRevalidate,
       };
 
-      return await this.validationService.validateDeployment(
-        deploymentId,
-        validationOptions,
-      );
+      return await this.validationService.validateDeployment(deploymentId, validationOptions);
     } catch (error) {
       this.logger.error(`Validation failed: ${error.message}`);
       throw new HttpException(
@@ -106,9 +120,7 @@ export class ValidationController {
    * Stream validation progress via SSE
    */
   @Sse(':deploymentId/stream')
-  streamValidationProgress(
-    @Param('deploymentId') deploymentId: string,
-  ): Observable<MessageEvent> {
+  streamValidationProgress(@Param('deploymentId') deploymentId: string): Observable<MessageEvent> {
     this.logger.log(`Starting validation stream for deployment: ${deploymentId}`);
 
     const subject = new Subject<ValidationProgressUpdate>();

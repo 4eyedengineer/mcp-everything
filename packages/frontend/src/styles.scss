@@ -1,12 +1,49 @@
 /* Global Styles for MCP Everything */
 @use '@angular/material' as mat;
+@use 'styles/buttons';
 
 // Include core Material styles - required for Angular 18
 @include mat.core();
 
-// Custom theme colors for Angular 18
-$mcp-primary: mat.m2-define-palette(mat.$m2-indigo-palette, 600);
-$mcp-accent: mat.m2-define-palette(mat.$m2-cyan-palette, 500);
+// Custom theme colors. The app's design language is monochromatic
+// (LibreChat-inspired, near-black primary --primary-color: #2d2d2d); Material's
+// palette must agree with it or `color="primary"` buttons render stock indigo
+// next to the hand-rolled near-black ones (the app's single biggest visual
+// inconsistency, per the 2026-07 design audit).
+$mcp-neutral-palette: (
+  50: #f7f7f7,
+  100: #e3e3e3,
+  200: #c8c8c8,
+  300: #a4a4a4,
+  400: #4a4a4a, // dark-theme primary - matches the hand-rolled --primary-color there
+  500: #2d2d2d,
+  600: #262626,
+  700: #171717,
+  800: #101010,
+  900: #050505,
+  A100: #e3e3e3,
+  A200: #c8c8c8,
+  A400: #818181,
+  A700: #171717,
+  contrast: (
+    50: rgba(0, 0, 0, 0.87),
+    100: rgba(0, 0, 0, 0.87),
+    200: rgba(0, 0, 0, 0.87),
+    300: rgba(0, 0, 0, 0.87),
+    400: #ffffff,
+    500: #ffffff,
+    600: #ffffff,
+    700: #ffffff,
+    800: #ffffff,
+    900: #ffffff,
+    A100: rgba(0, 0, 0, 0.87),
+    A200: rgba(0, 0, 0, 0.87),
+    A400: #ffffff,
+    A700: #ffffff,
+  ),
+);
+$mcp-primary: mat.m2-define-palette($mcp-neutral-palette, 500);
+$mcp-accent: mat.m2-define-palette($mcp-neutral-palette, 700);
 $mcp-warn: mat.m2-define-palette(mat.$m2-red-palette, 500);
 
 $mcp-theme: mat.m2-define-light-theme((
@@ -21,6 +58,27 @@ $mcp-theme: mat.m2-define-light-theme((
 
 @include mat.all-component-themes($mcp-theme);
 
+// Dark variant of the same palettes - typography/density are already
+// applied above via all-component-themes, so the dark theme only needs to
+// re-apply *colors*, scoped under the `.dark-theme` class that ThemeService
+// toggles on <html>. Because that class lives on documentElement, this also
+// covers Material CDK overlays (dialogs, menus, snackbars, autocomplete
+// panes) which are appended as descendants of <body>.
+// Dark theme: mid-gray primary with white text (hue 400 = #4a4a4a),
+// matching the hand-rolled buttons' --primary-color in .dark-theme.
+$mcp-dark-primary: mat.m2-define-palette($mcp-neutral-palette, 400);
+$mcp-dark-theme: mat.m2-define-dark-theme((
+  color: (
+    primary: $mcp-dark-primary,
+    accent: $mcp-dark-primary,
+    warn: $mcp-warn,
+  ),
+));
+
+.dark-theme {
+  @include mat.all-component-colors($mcp-dark-theme);
+}
+
 /* Global Typography */
 * {
   box-sizing: border-box;
@@ -31,13 +89,14 @@ html, body {
   margin: 0;
   padding: 0;
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', sans-serif;
-  background-color: #ffffff;
-  color: #1f1f1f;
+  background-color: var(--background-main);
+  color: var(--text-primary);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  transition: background-color var(--transition-normal), color var(--transition-normal);
 }
 
-/* Monochromatic Variables */
+/* Monochromatic Variables (light theme - default) */
 :root {
   // Colors - Monochromatic palette (blacks, grays, whites only)
   --primary-color: #2d2d2d;
@@ -46,18 +105,54 @@ html, body {
   --accent-hover: #171717;
   --warn-color: #404040;
 
+  // Fixed - text placed on top of colored/gradient surfaces (buttons,
+  // gradient cards) that don't invert between themes.
+  --text-inverse: #ffffff;
+
   --background-main: #ffffff;
   --background-alt: #fafafa;
+  --background-hover: #f5f5f5;
   --surface-color: #ffffff;
+  --surface-alt: #f9f9f9;
+  --overlay-color: rgba(0, 0, 0, 0.5);
 
   --text-primary: #1f1f1f;
   --text-secondary: #6b6b6b;
-  --text-tertiary: #8e8e8e;
+  // Was #8e8e8e (3.28:1 on white - fails WCAG AA 4.5:1 for normal text).
+  // Darkened to clear 4.5:1; dark-theme value below is unchanged since it
+  // already passes against the dark background.
+  --text-tertiary: #757575;
   --text-disabled: #b0b0b0;
 
   --border-light: #f0f0f0;
   --border-medium: #e5e5e5;
   --border-dark: #d1d1d1;
+
+  --scrollbar-thumb: #d1d1d1;
+  --scrollbar-thumb-hover: #b8b8b8;
+
+  // Auth pages use a navy brand accent for links/icons (on the auth-card
+  // surface) and a light red error banner - these need theme-aware
+  // variants since the literal navy/pink values are unreadable on a dark
+  // card surface.
+  --link-color: #0f3460;
+  --link-hover: #16213e;
+  --error-bg: #ffebee;
+  --error-text: #c62828;
+
+  // Pale status-card washes (success/warning banners) - only the light
+  // background/border wash flips between themes; the semantic
+  // green/amber/red accent text and status-dot fills stay fixed.
+  --success-bg: #e8f5e9;
+  --success-bg-alt: #f1f8e9;
+  --success-border: #c8e6c9;
+  --success-text: #15803d;
+  --warning-bg: #fffbeb;
+  --warning-bg-alt: #fff3e0;
+  --warning-border: #fef3c7;
+  --error-border: #f0d5d5;
+  --error-border-hover: #e8b4b4;
+  --error-bg-alt: #fce4ec;
 
   // Layout
   --sidebar-width: 280px;
@@ -87,6 +182,60 @@ html, body {
   --transition-fast: 0.15s ease;
   --transition-normal: 0.2s ease;
   --transition-slow: 0.3s ease;
+}
+
+/* Dark theme overrides - applied via .dark-theme class on <html>,
+   toggled by ThemeService. Only palette values change; layout, spacing,
+   radius, and transition tokens are shared. */
+.dark-theme {
+  --primary-color: #4a4a4a;
+  --primary-hover: #5e5e5e;
+  --accent-color: #4a4a4a;
+  --accent-hover: #5e5e5e;
+  --warn-color: #8a8a8a;
+
+  --text-inverse: #ffffff;
+
+  --background-main: #121212;
+  --background-alt: #1a1a1a;
+  --background-hover: #262626;
+  --surface-color: #1e1e1e;
+  --surface-alt: #242424;
+  --overlay-color: rgba(0, 0, 0, 0.7);
+
+  --text-primary: #f0f0f0;
+  --text-secondary: #a8a8a8;
+  --text-tertiary: #8a8a8a;
+  --text-disabled: #5c5c5c;
+
+  --border-light: #2a2a2a;
+  --border-medium: #363636;
+  --border-dark: #4a4a4a;
+
+  --scrollbar-thumb: #4a4a4a;
+  --scrollbar-thumb-hover: #5e5e5e;
+
+  --link-color: #64b5f6;
+  --link-hover: #90caf9;
+  --error-bg: #3f1d1d;
+  --error-text: #f87171;
+
+  --success-bg: #1b3a1f;
+  --success-bg-alt: #1f4024;
+  --success-border: #2d5233;
+  --success-text: #4ade80;
+  --warning-bg: #3a2f14;
+  --warning-bg-alt: #3a2c14;
+  --warning-border: #4a3a1a;
+  --error-border: #5a2e2e;
+  --error-border-hover: #6e3838;
+  --error-bg-alt: #2a1616;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 4px 16px rgba(0, 0, 0, 0.5);
+
+  color-scheme: dark;
 }
 
 /* Utility Classes */
@@ -219,27 +368,28 @@ html, body {
   letter-spacing: 0.5px;
 
   &.status-active {
-    background-color: #e5e5e5;
-    color: #1f1f1f;
+    background-color: var(--border-medium);
+    color: var(--text-primary);
   }
 
   &.status-building {
-    background-color: #fafafa;
-    color: #6b6b6b;
+    background-color: var(--background-alt);
+    color: var(--text-secondary);
   }
 
   &.status-error {
-    background-color: #f0f0f0;
-    color: #404040;
+    background-color: var(--border-light);
+    color: var(--warn-color);
   }
 
   &.status-draft {
-    background-color: #f5f5f5;
-    color: #8e8e8e;
+    background-color: var(--background-hover);
+    color: var(--text-tertiary);
   }
 }
 
-/* Code Syntax Highlighting */
+/* Code Syntax Highlighting - intentionally fixed dark regardless of theme
+   (matches typical code-block conventions), so no variable swap here. */
 .code-block {
   background-color: #2d3748;
   color: #e2e8f0;
@@ -262,7 +412,7 @@ html, body {
 }
 
 .loading-skeleton {
-  background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+  background: linear-gradient(90deg, var(--border-light) 25%, var(--border-medium) 50%, var(--border-light) 75%);
   background-size: 200% 100%;
   animation: loading 1.5s infinite;
   border-radius: var(--border-radius-sm);
@@ -289,19 +439,19 @@ html, body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #d1d1d1;
+  background: var(--scrollbar-thumb);
   border-radius: 4px;
   transition: background var(--transition-fast);
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #b8b8b8;
+  background: var(--scrollbar-thumb-hover);
 }
 
 // Firefox scrollbar
 * {
   scrollbar-width: thin;
-  scrollbar-color: #d1d1d1 transparent;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
 }
 
 /* Material Design Overrides - LibreChat Style */
@@ -375,6 +525,93 @@ html, body {
   .error-message {
     color: var(--text-secondary);
     margin-bottom: var(--spacing-lg);
+  }
+}
+
+/* Visible keyboard-focus indicators (WCAG 2.4.7).
+   Material's ripple/state-layer doesn't leave a visible indicator once the
+   mouse-only affordances are accounted for, so keyboard users tabbing
+   through nav links, icon buttons, sidebar rows, and suggestion cards had
+   no indication of where focus was. :focus-visible only fires for
+   keyboard/programmatic focus (not mouse clicks), so this doesn't add a
+   ring on every click.
+   Uses --text-primary rather than --primary-color/--accent-color: this is
+   a monochromatic palette where primary/accent are identical grays, and in
+   the dark theme that gray only clears ~2.1:1 against the dark surfaces
+   (fails the 3:1 WCAG 1.4.11 minimum for non-text UI indicators). Text
+   colors are guaranteed high-contrast against the background by
+   definition, so --text-primary reliably clears 3:1 in both themes. */
+.mat-mdc-button,
+.mat-mdc-raised-button,
+.mat-mdc-outlined-button,
+.mat-mdc-unelevated-button,
+.mat-mdc-icon-button,
+.mat-mdc-fab,
+.mat-mdc-mini-fab,
+.mat-mdc-menu-item,
+a.brand-link,
+a[routerLink],
+.nav-button,
+.nav-icon-button,
+.suggestion-card,
+.conversation-item,
+.footer-button {
+  &:focus-visible {
+    outline: 2px solid var(--text-primary) !important;
+    outline-offset: 2px;
+    box-shadow: none !important;
+  }
+}
+
+/* Dark-mode snackbar surface.
+   The MatSnackBar panel (a CDK overlay appended to <body>) wasn't picking
+   up the app's dark palette, so toasts rendered as the only bright white
+   surface on screen in dark mode. Pin the surface/text colors explicitly
+   using the theme variables; light mode is untouched (normal Material
+   look). Visual only - does not touch NotificationService's logic. */
+.dark-theme .mat-mdc-snack-bar-container {
+  .mdc-snackbar__surface {
+    background-color: var(--surface-alt) !important;
+  }
+
+  .mdc-snackbar__label {
+    color: var(--text-primary) !important;
+  }
+
+  .mat-mdc-button {
+    color: var(--text-primary) !important;
+
+    .mdc-button__label {
+      color: var(--text-primary) !important;
+    }
+  }
+}
+
+/* Respect prefers-reduced-motion: kill decorative CSS transitions/animations
+   (hover transitions, shimmer skeletons, sidebar shadow, etc.) while keeping
+   essential progress indicators (spinners/progress bars) actually moving -
+   a "frozen" spinner reads as broken, not accessible. Angular's animations
+   package (used for the sidebar slide/fade) doesn't read this media query
+   on its own; that's gated separately via an `[@.disabled]` binding driven
+   by matchMedia (see AppComponent). */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .mat-mdc-progress-spinner,
+  .mat-mdc-progress-spinner *,
+  .mat-mdc-progress-bar,
+  .mat-mdc-progress-bar *,
+  .spinning {
+    animation-duration: revert !important;
+    animation-iteration-count: revert !important;
+    transition-duration: revert !important;
   }
 }
 

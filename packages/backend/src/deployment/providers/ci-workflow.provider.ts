@@ -6,7 +6,7 @@ export class CIWorkflowProvider {
   /**
    * Generate a GitHub Actions workflow file for testing MCP servers
    */
-  generateTestWorkflow(serverName: string): DeploymentFile {
+  generateTestWorkflow(_serverName: string): DeploymentFile {
     const content = `name: Test MCP Server
 
 on:

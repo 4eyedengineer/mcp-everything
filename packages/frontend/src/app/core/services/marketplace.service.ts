@@ -1,7 +1,7 @@
 import { Injectable } from '@angular/core';
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { Observable } from 'rxjs';
-import { environment } from '../../../environments/environment';
+import { API_V1_BASE } from '../config/api.config';
 
 // Types matching backend DTOs
 export type McpServerCategory =
@@ -47,6 +47,9 @@ export interface ServerSummaryResponse {
   category: McpServerCategory;
   tags?: string[];
   author?: AuthorResponse;
+  /** Real source link, if any - used to power the "View Source" action (no fabricated downloadUrl exists at list-summary granularity). */
+  repositoryUrl?: string;
+  gistUrl?: string;
   downloadCount: number;
   rating: number;
   ratingCount: number;
@@ -102,20 +105,53 @@ export interface SearchParams {
   featured?: boolean;
 }
 
-export interface PublishServerRequest {
+export interface McpToolRequest {
+  name: string;
+  description: string;
+  inputSchema?: Record<string, unknown>;
+}
+
+export interface McpResourceRequest {
+  uri: string;
+  name: string;
+  description: string;
+}
+
+/**
+ * Body for POST /servers (create). Matches backend CreateServerDto.
+ *
+ * Note: the backend does NOT accept a body on the publish/unpublish
+ * endpoints - those act on an already-created server by :id only. The
+ * create -> publish flow is: createServer(dto) then publishServer(id).
+ */
+export interface CreateServerRequest {
   name: string;
   description: string;
   longDescription?: string;
   category: McpServerCategory;
   tags?: string[];
-  visibility: 'public' | 'private' | 'unlisted';
+  visibility?: 'public' | 'private' | 'unlisted';
+  repositoryUrl?: string;
+  gistUrl?: string;
+  downloadUrl?: string;
+  tools?: McpToolRequest[];
+  resources?: McpResourceRequest[];
+  envVars?: string[];
+  language?: McpServerLanguage;
+  sourceConversationId?: string;
+  metadata?: Record<string, unknown>;
 }
+
+/** Body for PATCH /servers/:id. Matches backend UpdateServerDto. */
+export type UpdateServerRequest = Partial<Omit<CreateServerRequest, 'sourceConversationId'>> & {
+  featured?: boolean;
+};
 
 @Injectable({
   providedIn: 'root',
 })
 export class MarketplaceService {
-  private readonly apiUrl = `${environment.apiUrl}/api/v1/marketplace`;
+  private readonly apiUrl = `${API_V1_BASE}/marketplace`;
 
   constructor(private http: HttpClient) {}
 
@@ -178,25 +214,35 @@ export class MarketplaceService {
   }
 
   /**
-   * Publish a generated MCP server from a conversation to the marketplace
+   * Create a new MCP server listing (status starts as 'pending', not yet
+   * visible in the public marketplace). Call publishServer(id) afterward to
+   * make it public - the backend has no single combined create+publish call.
    */
-  publishFromConversation(
-    conversationId: string,
-    publishData: PublishServerRequest
-  ): Observable<ServerResponse> {
-    return this.http.post<ServerResponse>(
-      `${this.apiUrl}/servers/publish/${conversationId}`,
-      publishData
-    );
+  createServer(dto: CreateServerRequest): Observable<ServerResponse> {
+    return this.http.post<ServerResponse>(`${this.apiUrl}/servers`, dto);
+  }
+
+  /**
+   * Publish a server the current user owns (status -> 'approved', visible in
+   * the marketplace). Takes no body - the backend identifies the server by
+   * :id and the caller by their auth token only.
+   */
+  publishServer(id: string): Observable<ServerResponse> {
+    return this.http.post<ServerResponse>(`${this.apiUrl}/servers/${id}/publish`, {});
+  }
+
+  /**
+   * Unpublish a server the current user owns (status -> 'pending', hidden
+   * from the public marketplace). Takes no body.
+   */
+  unpublishServer(id: string): Observable<ServerResponse> {
+    return this.http.post<ServerResponse>(`${this.apiUrl}/servers/${id}/unpublish`, {});
   }
 
   /**
    * Update an existing server's metadata
    */
-  updateServer(
-    id: string,
-    updateData: Partial<PublishServerRequest>
-  ): Observable<ServerResponse> {
+  updateServer(id: string, updateData: UpdateServerRequest): Observable<ServerResponse> {
     return this.http.patch<ServerResponse>(`${this.apiUrl}/servers/${id}`, updateData);
   }
 
@@ -208,13 +254,11 @@ export class MarketplaceService {
   }
 
   /**
-   * Get servers owned by the current user
+   * Get servers owned by the current user. The backend returns a flat list
+   * (no pagination/query params on this endpoint).
    */
-  getMyServers(params: SearchParams = {}): Observable<PaginatedResponse<ServerSummaryResponse>> {
-    const httpParams = this.buildParams(params);
-    return this.http.get<PaginatedResponse<ServerSummaryResponse>>(`${this.apiUrl}/servers/mine`, {
-      params: httpParams,
-    });
+  getMyServers(): Observable<ServerSummaryResponse[]> {
+    return this.http.get<ServerSummaryResponse[]>(`${this.apiUrl}/my-servers`);
   }
 
   /**

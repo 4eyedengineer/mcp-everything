@@ -1,12 +1,7 @@
 /**
  * Validation status for deployed MCP servers
  */
-export type ValidationStatus =
-  | 'pending'
-  | 'running'
-  | 'passed'
-  | 'failed'
-  | 'skipped';
+export type ValidationStatus = 'pending' | 'running' | 'passed' | 'failed' | 'skipped';
 
 /**
  * Source of validation (how the validation was performed)
@@ -89,14 +84,7 @@ export interface ValidationStatusResponse {
  * Progress update for streaming validation
  */
 export interface ValidationProgressUpdate {
-  type:
-    | 'starting'
-    | 'building'
-    | 'testing'
-    | 'testing_tool'
-    | 'complete'
-    | 'error'
-    | 'cleanup';
+  type: 'starting' | 'building' | 'testing' | 'testing_tool' | 'complete' | 'error' | 'cleanup';
   message: string;
   phase?: string;
   progress?: number;
@@ -112,7 +100,14 @@ export interface ValidationProgressUpdate {
 export interface WorkflowRunInfo {
   id: number;
   status: 'queued' | 'in_progress' | 'completed';
-  conclusion?: 'success' | 'failure' | 'neutral' | 'cancelled' | 'skipped' | 'timed_out' | 'action_required';
+  conclusion?:
+    | 'success'
+    | 'failure'
+    | 'neutral'
+    | 'cancelled'
+    | 'skipped'
+    | 'timed_out'
+    | 'action_required';
   htmlUrl: string;
   createdAt: Date;
   updatedAt: Date;

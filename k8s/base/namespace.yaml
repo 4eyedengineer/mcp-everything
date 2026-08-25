@@ -3,5 +3,4 @@ kind: Namespace
 metadata:
   name: mcp-everything
   labels:
-    app.kubernetes.io/name: mcp-everything
-    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/part-of: mcp-everything

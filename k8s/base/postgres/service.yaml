@@ -7,11 +7,11 @@ metadata:
     app.kubernetes.io/name: mcp-postgres
     app.kubernetes.io/component: database
 spec:
-  type: ClusterIP
+  clusterIP: None
+  selector:
+    app: mcp-postgres
   ports:
     - name: postgres
       port: 5432
-      targetPort: 5432
+      targetPort: postgres
       protocol: TCP
-  selector:
-    app: mcp-postgres

@@ -1,12 +1,6 @@
-import {
-  Controller,
-  Get,
-  Query,
-  ParseIntPipe,
-  DefaultValuePipe,
-} from '@nestjs/common';
+import { Controller, Get, Query, ParseIntPipe, DefaultValuePipe } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Between, Like, In } from 'typeorm';
+import { Repository } from 'typeorm';
 import { ErrorLog } from '../database/entities';
 
 /**
@@ -148,10 +142,7 @@ export class LogViewerController {
     const total = await queryBuilder.getCount();
 
     // Apply pagination and ordering
-    queryBuilder
-      .orderBy('log.timestamp', 'DESC')
-      .skip(offset)
-      .take(cappedLimit);
+    queryBuilder.orderBy('log.timestamp', 'DESC').skip(offset).take(cappedLimit);
 
     // Execute query
     const logs = await queryBuilder.getMany();
@@ -233,11 +224,12 @@ export class LogViewerController {
     @Query('level') level?: string,
   ): Promise<{ interval: string; buckets: Array<{ time: string; count: number }> }> {
     // Determine date truncation based on interval
-    const truncFn = {
-      hour: "date_trunc('hour', log.timestamp)",
-      day: "date_trunc('day', log.timestamp)",
-      week: "date_trunc('week', log.timestamp)",
-    }[interval] || "date_trunc('hour', log.timestamp)";
+    const truncFn =
+      {
+        hour: "date_trunc('hour', log.timestamp)",
+        day: "date_trunc('day', log.timestamp)",
+        week: "date_trunc('week', log.timestamp)",
+      }[interval] || "date_trunc('hour', log.timestamp)";
 
     const queryBuilder = this.logRepository
       .createQueryBuilder('log')

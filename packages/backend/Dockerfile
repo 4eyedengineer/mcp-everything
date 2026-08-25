@@ -1,79 +1,70 @@
-# Multi-stage build for production optimization
-FROM node:18-alpine AS base
+# Production image for the NestJS backend.
+#
+# Build context is THIS directory (packages/backend), not the monorepo root -
+# the package has no dependency on @mcp-everything/shared (verified: no
+# `@mcp-everything/shared` import anywhere in src/), so it is fully
+# self-contained. Build from here:
+#   cd packages/backend && docker build -t mcp-everything/backend:local .
+#
+# There is no package-lock.json inside this directory (only the monorepo
+# root has one, via npm workspaces), so `npm install` is used rather than
+# `npm ci`. If a package-lock.json is added here later, switch to `npm ci`
+# for reproducible installs.
 
-# Install system dependencies
-RUN apk add --no-cache \
-    python3 \
-    make \
-    g++ \
-    docker-cli \
-    curl
-
-# Set working directory
+# ---- deps: full install (incl. devDependencies) for the build stage -------
+FROM node:22-alpine AS deps
+# python3/make/g++ are required to compile native addons at install time:
+# bcrypt and isolated-vm both ship native code and have no prebuilt musl/alpine
+# binaries, so they build from source here.
+RUN apk add --no-cache python3 make g++
 WORKDIR /app
-
-# Copy package files
 COPY package*.json ./
-COPY packages/backend/package*.json ./packages/backend/
-COPY packages/shared/package*.json ./packages/shared/
+RUN npm install
 
-# Install dependencies (using npm install as fallback when no package-lock.json)
+# ---- build: compile TypeScript -> dist/ ------------------------------------
+FROM deps AS build
+COPY . .
+RUN npm run build
+
+# ---- prod-deps: production-only install (own stage so build tools and ------
+# devDependencies never reach the final image) --------------------------------
+FROM node:22-alpine AS prod-deps
+RUN apk add --no-cache python3 make g++
+WORKDIR /app
+COPY package*.json ./
 RUN npm install --omit=dev && npm cache clean --force
 
-# Development stage
-FROM base AS development
-RUN npm install
-COPY . .
-EXPOSE 3000
-CMD ["npm", "run", "start:dev", "--workspace=@mcp-everything/backend"]
+# ---- runtime ----------------------------------------------------------------
+FROM node:22-alpine AS runtime
 
-# Build stage
-FROM base AS build
-RUN npm install
-COPY . .
-RUN npm run build --workspace=@mcp-everything/shared
-RUN npm run build --workspace=@mcp-everything/backend
+# curl: container HEALTHCHECK + k8s exec-free debugging.
+# dumb-init: reap zombies / forward signals correctly as PID 1.
+# libstdc++ + libgcc: runtime shared libs for the native addons (bcrypt,
+# isolated-vm) compiled against g++ in the deps stages above - alpine does not
+# include them by default and the addons segfault/fail to load without them.
+RUN apk add --no-cache curl dumb-init libstdc++ libgcc
 
-# Production stage
-FROM node:18-alpine AS production
+RUN addgroup -g 1001 -S nestjs && adduser -S nestjs -u 1001 -G nestjs
 
-# Install system dependencies for runtime
-RUN apk add --no-cache \
-    docker-cli \
-    curl \
-    dumb-init
-
-# Create app user
-RUN addgroup -g 1001 -S nodejs
-RUN adduser -S nestjs -u 1001
-
-# Set working directory
 WORKDIR /app
 
-# Copy package files and install production dependencies
-COPY package*.json ./
-COPY packages/backend/package*.json ./packages/backend/
-COPY packages/shared/package*.json ./packages/shared/
-RUN npm install --omit=dev && npm cache clean --force
+COPY --from=prod-deps --chown=nestjs:nestjs /app/node_modules ./node_modules
+COPY --from=build --chown=nestjs:nestjs /app/dist ./dist
+COPY --chown=nestjs:nestjs package*.json ./
 
-# Copy built application
-COPY --from=build --chown=nestjs:nodejs /app/packages/backend/dist ./packages/backend/dist
-COPY --from=build --chown=nestjs:nodejs /app/packages/shared/dist ./packages/shared/dist
+# Fallback location for GENERATED_SERVERS_DIR when it is not overridden onto
+# a mounted volume (e.g. plain `docker run` outside of k8s). In the homelab
+# deployment this is overridden to /data/generated-servers, backed by an
+# emptyDir - see k8s/base/backend/deployment.yaml.
+RUN mkdir -p /app/generated-servers /data/generated-servers && \
+    chown -R nestjs:nestjs /app/generated-servers /data/generated-servers
 
-# Create directories for generated servers
-RUN mkdir -p /app/generated-servers && chown nestjs:nodejs /app/generated-servers
-RUN mkdir -p /app/logs && chown nestjs:nodejs /app/logs
-
-# Switch to non-root user
 USER nestjs
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:3000/api/v1/health || exit 1
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+    CMD curl -f http://localhost:3000/api/v1/health/live || exit 1
 
-# Expose port
 EXPOSE 3000
 
-# Use dumb-init to handle signals properly
 ENTRYPOINT ["dumb-init", "--"]
-CMD ["node", "packages/backend/dist/main.js"]
+CMD ["node", "dist/main.js"]

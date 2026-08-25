@@ -1,15 +1,24 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { ChatAnthropic } from '@langchain/anthropic';
-import {
-  GraphState,
-  KnowledgeGap,
-  ClarificationQuestion,
-  RequiredEnvVar,
-} from './types';
+import * as z from 'zod/v4';
+import { PipelineState, KnowledgeGap, ClarificationQuestion, RequiredEnvVar } from './types';
 import { getPlatformContextPrompt, getClarificationThresholdPrompt } from './platform-context';
 import { EnvVariableService } from '../env-variable.service';
 import { CollectedEnvVar } from '../types/env-variable.types';
-import { safeParseJSON } from './json-utils';
+import { AnthropicService } from '../ai/anthropic.service';
+
+/**
+ * Gap detection output contract (enforced by the API's structured outputs).
+ */
+const GapDetectionSchema = z.object({
+  gaps: z.array(
+    z.object({
+      issue: z.string(),
+      priority: z.enum(['HIGH', 'MEDIUM', 'LOW']),
+      suggestedQuestion: z.string(),
+      context: z.string(),
+    }),
+  ),
+});
 
 /**
  * Clarification Service
@@ -23,7 +32,7 @@ import { safeParseJSON } from './json-utils';
  * - Determine when enough information is gathered
  *
  * Flow:
- * 1. Analyze user input, research, and ensemble results
+ * 1. Analyze user input, research findings, and the planned tool set
  * 2. AI detects gaps (HIGH, MEDIUM, LOW priority)
  * 3. Formulate 1-2 specific questions
  * 4. Pause execution (needsUserInput = true)
@@ -41,20 +50,11 @@ import { safeParseJSON } from './json-utils';
 @Injectable()
 export class ClarificationService {
   private readonly logger = new Logger(ClarificationService.name);
-  private readonly llm: ChatAnthropic;
 
-  constructor(private readonly envVariableService: EnvVariableService) {
-    // Initialize Claude Haiku for gap detection and question formulation
-    // streaming: true is required by the Anthropic API configuration (Issue #142)
-    this.llm = new ChatAnthropic({
-      modelName: 'claude-haiku-4-5-20251001',
-      temperature: 0.7,
-      topP: undefined, // Fix for @langchain/anthropic bug sending top_p: -1
-      maxTokens: 8000, // Generous limit for clarification questions
-      anthropicApiKey: process.env.ANTHROPIC_API_KEY,
-      streaming: true,
-    });
-  }
+  constructor(
+    private readonly envVariableService: EnvVariableService,
+    private readonly anthropic: AnthropicService,
+  ) {}
 
   /**
    * Orchestrate Clarification
@@ -65,7 +65,7 @@ export class ClarificationService {
    * @param state - Current graph state
    * @returns Clarification result with questions or completion status
    */
-  async orchestrateClarification(state: GraphState): Promise<{
+  async orchestrateClarification(state: PipelineState): Promise<{
     complete: boolean;
     gaps: KnowledgeGap[];
     questions?: ClarificationQuestion[];
@@ -112,31 +112,27 @@ export class ClarificationService {
    * Analysis considers:
    * - User input clarity
    * - Research completeness
-   * - Ensemble consensus quality
+   * - The planned tool set
    * - Technical detail availability
    *
-   * @param state - Current graph state
+   * @param state - Current pipeline state
    * @returns Array of knowledge gaps with priority
    */
-  private async detectGaps(state: GraphState): Promise<KnowledgeGap[]> {
+  private async detectGaps(state: PipelineState): Promise<KnowledgeGap[]> {
     const prompt = this.buildGapDetectionPrompt(state);
 
     try {
-      const response = await this.llm.invoke(prompt);
-      const content = response.content.toString();
-
-      // Extract JSON from response using safe bracket-balanced parsing
-      const parsed = safeParseJSON<{ gaps: KnowledgeGap[] }>(content, this.logger);
-
-      // Validate response structure
-      if (!parsed.gaps || !Array.isArray(parsed.gaps)) {
-        this.logger.warn('Invalid gap detection response structure');
-        return [];
-      }
+      const parsed = await this.anthropic.completeStructured({
+        prompt,
+        schema: GapDetectionSchema,
+        schemaName: 'GapDetection',
+        maxTokens: 8000,
+        caller: 'clarification.detectGaps',
+      });
 
       // Filter to HIGH and MEDIUM priority gaps only
       const criticalGaps = parsed.gaps.filter(
-        (gap: KnowledgeGap) => gap.priority === 'HIGH' || gap.priority === 'MEDIUM'
+        (gap: KnowledgeGap) => gap.priority === 'HIGH' || gap.priority === 'MEDIUM',
       );
 
       this.logger.log(`Found ${criticalGaps.length} critical gaps (${parsed.gaps.length} total)`);
@@ -156,11 +152,10 @@ export class ClarificationService {
    * @param state - Graph state
    * @returns Formatted prompt
    */
-  private buildGapDetectionPrompt(state: GraphState): string {
+  private buildGapDetectionPrompt(state: PipelineState): string {
     const userInput = state.userInput;
     const research = state.researchPhase;
-    const ensemble = state.ensembleResults;
-    const consensusScore = ensemble?.consensusScore || 0;
+    const plan = state.generationPlan;
 
     return `${getPlatformContextPrompt()}
 
@@ -172,6 +167,13 @@ ${getClarificationThresholdPrompt()}
 
 **User Request**:
 "${userInput}"
+
+**Target the user actually named**: ${
+      state.extractedData?.targetService ||
+      state.extractedData?.githubUrl ||
+      'NONE - the user named no service, API or repository. Anything the research or plan ' +
+        'below is "about" was inferred, so confirming it with the user is a HIGH gap.'
+    }
 
 **Research Summary**:
 ${research?.synthesizedPlan?.summary || 'No research available'}
@@ -185,10 +187,11 @@ ${research?.webSearchFindings?.results?.map((r: any) => `- ${r.title}: ${r.snipp
 **Best Practices from Research**:
 ${research?.webSearchFindings?.bestPractices?.join('\n- ') || 'None'}
 
-**Ensemble Results**:
-- Consensus Score: ${consensusScore.toFixed(2)}
-- Tools Recommended: ${ensemble?.agentPerspectives?.[0]?.recommendations?.tools?.length || 0}
-- Agent Concerns: ${ensemble?.agentPerspectives?.flatMap(a => a.recommendations.concerns).join(', ') || 'None'}
+**Planned Tools** (${plan?.toolsToGenerate?.length || 0}):
+${plan?.toolsToGenerate?.map((t) => `- ${t.name}: ${t.description}`).join('\n') || '- None planned yet'}
+
+**Planner Rationale**: ${plan?.rationale || 'None'}
+**Scope Notes**: ${plan?.scopeNotes || 'None'}
 
 **Previous Clarifications**: ${state.clarificationHistory?.length || 0} rounds completed
 
@@ -204,11 +207,26 @@ ${research?.webSearchFindings?.bestPractices?.join('\n- ') || 'None'}
 **What IS a Gap (ONLY report these)**:
 ✅ API base URL is completely unknown AND service name provides no clues (EXTREMELY RARE)
 ✅ User explicitly said "I don't know" or asked for help deciding
+✅ **The target system was INFERRED, not stated by the user.** Compare the user request
+   above against the service the research and planned tools are actually about. If the
+   user never named that service - if research or planning picked it because the request
+   was vague ("my stuff", "my files", "our data") and something plausible had to be
+   chosen - that is a HIGH gap, no matter how confident the research looks. Say which
+   service the plan assumes and ask the user to confirm or correct it.
+   Example: user said "an MCP server for my stuff", the plan is five AWS S3 tools
+   including s3_delete_object -> HIGH gap: nobody mentioned S3. High research confidence
+   in an invented target is exactly the failure this check exists to catch, because
+   everything downstream will confidently generate and test tools for the wrong system.
 
 **Research Already Provided** (from above):
 - Base URL: ${research?.webSearchFindings?.bestPractices?.find((p: string) => p.includes('Base URL'))?.split(': ')[1] || 'Found in research'}
 - Authentication: ${research?.webSearchFindings?.bestPractices?.find((p: string) => p.includes('Authentication'))?.split(': ')[1] || 'Found in research'}
-- Endpoints: ${research?.webSearchFindings?.results?.filter((r: any) => r.url.includes('/v1/')).map((r: any) => r.title).join(', ') || 'Found in research'}
+- Endpoints: ${
+      research?.webSearchFindings?.results
+        ?.filter((r: any) => r.url.includes('/v1/'))
+        .map((r: any) => r.title)
+        .join(', ') || 'Found in research'
+    }
 
 **If ANY of the above are present in research → DO NOT raise a gap for them.**
 
@@ -223,6 +241,10 @@ ${research?.webSearchFindings?.bestPractices?.join('\n- ') || 'None'}
 3. If user says "all endpoints" → DO NOT ask which specific ones, use all from research
 4. If research found base URL or can infer from service name → DO NOT raise gap
 5. Only raise HIGH gaps if literally impossible to generate without info
+6. EXCEPTION to rules 1-5: if the target system itself was inferred rather than stated
+   by the user, raise it as a HIGH gap. Research finding a base URL, auth method and
+   endpoints for a service the user never named is not evidence the gap is closed - it
+   is evidence the pipeline is about to build the wrong server.
 
 **IMPORTANT**: Only raise HIGH-priority gaps if generation is LITERALLY IMPOSSIBLE. If research provides ANY information, use it with reasonable defaults.
 
@@ -278,7 +300,9 @@ ${research?.webSearchFindings?.bestPractices?.join('\n- ') || 'None'}
   "context": "To generate better tools"
 }
 
-**REMINDER**: If research found base URL, authentication, or endpoints → Return {"gaps": []}
+**REMINDER**: If the user named the target service AND research found base URL,
+authentication, or endpoints → Return {"gaps": []}. If the user never named the target
+service, raise the inferred-target gap even when research found all of those.
 
 Return ONLY valid JSON with detected gaps.`;
   }
@@ -342,69 +366,6 @@ Return ONLY valid JSON with detected gaps.`;
     return questions;
   }
 
-  /**
-   * Validate User Response
-   *
-   * Checks if user response adequately addresses the gap.
-   * (Future enhancement for intelligent validation)
-   *
-   * @param gap - Original knowledge gap
-   * @param response - User's response
-   * @returns Validation result
-   */
-  private async validateResponse(
-    gap: KnowledgeGap,
-    response: string
-  ): Promise<{ valid: boolean; reason?: string }> {
-    // Basic validation: non-empty response
-    if (!response || response.trim().length < 5) {
-      return { valid: false, reason: 'Response too short' };
-    }
-
-    // TODO: Use AI to validate response quality
-    // For now, accept any reasonable response
-    return { valid: true };
-  }
-
-  /**
-   * Extract Information from Response
-   *
-   * Parses user response to extract structured information.
-   * (Future enhancement for automatic information extraction)
-   *
-   * @param response - User's response
-   * @returns Extracted structured data
-   */
-  private async extractInformation(response: string): Promise<Record<string, any>> {
-    // TODO: Use AI to extract structured information from free-text response
-    // For MVP, return raw response
-    return { rawResponse: response };
-  }
-
-  /**
-   * Calculate Clarification Confidence
-   *
-   * Estimates how much the clarification improved generation readiness.
-   *
-   * @param before - State before clarification
-   * @param after - State after clarification
-   * @returns Confidence improvement score 0-1
-   */
-  private calculateConfidenceImprovement(
-    before: GraphState,
-    after: GraphState
-  ): number {
-    // Simple heuristic: if gaps reduced, confidence improved
-    const gapsBefore = before.clarificationHistory?.length || 0;
-    const gapsAfter = after.clarificationHistory?.length || 0;
-
-    if (gapsAfter <= gapsBefore) {
-      return 0.2; // Some improvement
-    }
-
-    return 0; // No improvement
-  }
-
   // ===== ENVIRONMENT VARIABLE COLLECTION =====
 
   /**
@@ -416,15 +377,15 @@ Return ONLY valid JSON with detected gaps.`;
    * @param state - Current graph state with detected env vars
    * @returns Whether env var collection is needed
    */
-  needsEnvVarCollection(state: GraphState): boolean {
+  needsEnvVarCollection(state: PipelineState): boolean {
     const detectedVars = state.detectedEnvVars || [];
     const collectedVars = state.collectedEnvVars || [];
 
     // Check if there are required env vars that haven't been collected
-    const requiredVars = detectedVars.filter(v => v.required);
-    const collectedNames = new Set(collectedVars.map(v => v.name));
+    const requiredVars = detectedVars.filter((v) => v.required);
+    const collectedNames = new Set(collectedVars.map((v) => v.name));
 
-    const uncollected = requiredVars.filter(v => !collectedNames.has(v.name));
+    const uncollected = requiredVars.filter((v) => !collectedNames.has(v.name));
 
     return uncollected.length > 0;
   }
@@ -438,7 +399,7 @@ Return ONLY valid JSON with detected gaps.`;
    * @param state - Current graph state
    * @returns Clarification result with env var questions
    */
-  async generateEnvVarQuestions(state: GraphState): Promise<{
+  async generateEnvVarQuestions(state: PipelineState): Promise<{
     complete: boolean;
     questions: ClarificationQuestion[];
     needsUserInput: boolean;
@@ -446,10 +407,10 @@ Return ONLY valid JSON with detected gaps.`;
   }> {
     const detectedVars = state.detectedEnvVars || [];
     const collectedVars = state.collectedEnvVars || [];
-    const collectedNames = new Set(collectedVars.map(v => v.name));
+    const collectedNames = new Set(collectedVars.map((v) => v.name));
 
     // Find vars that still need to be collected
-    const uncollectedVars = detectedVars.filter(v => !collectedNames.has(v.name));
+    const uncollectedVars = detectedVars.filter((v) => !collectedNames.has(v.name));
 
     if (uncollectedVars.length === 0) {
       this.logger.log('All environment variables have been collected');
@@ -462,14 +423,14 @@ Return ONLY valid JSON with detected gaps.`;
     const envVarQuestions = this.envVariableService.generateClarificationQuestions(uncollectedVars);
 
     // Convert to ClarificationQuestion format (max 2 at a time)
-    const questions: ClarificationQuestion[] = envVarQuestions.slice(0, 2).map(q => ({
+    const questions: ClarificationQuestion[] = envVarQuestions.slice(0, 2).map((q) => ({
       question: q.question,
       context: q.context,
       options: q.options,
-      required: uncollectedVars.find(v => v.name === q.envVarName)?.required ?? true,
+      required: uncollectedVars.find((v) => v.name === q.envVarName)?.required ?? true,
     }));
 
-    const envVarNames = envVarQuestions.slice(0, 2).map(q => q.envVarName);
+    const envVarNames = envVarQuestions.slice(0, 2).map((q) => q.envVarName);
 
     return {
       complete: false,
@@ -492,7 +453,7 @@ Return ONLY valid JSON with detected gaps.`;
   processEnvVarResponse(
     envVarName: string,
     value: string,
-    state: GraphState,
+    state: PipelineState,
   ): {
     collectedEnvVars: CollectedEnvVar[];
     validationResult: { isValid: boolean; errorMessage?: string };
@@ -531,11 +492,13 @@ Return ONLY valid JSON with detected gaps.`;
    * @returns Knowledge gaps for env vars
    */
   createEnvVarGaps(envVars: RequiredEnvVar[]): KnowledgeGap[] {
-    return envVars.filter(v => v.required).map(envVar => ({
-      issue: `Missing ${envVar.description}`,
-      priority: 'HIGH' as const,
-      suggestedQuestion: `Please provide your ${envVar.description}${envVar.documentationUrl ? `. You can get it from: ${envVar.documentationUrl}` : ''}`,
-      context: `Required for the MCP server to function properly. ${envVar.sensitive ? 'This value will be securely stored.' : ''}`,
-    }));
+    return envVars
+      .filter((v) => v.required)
+      .map((envVar) => ({
+        issue: `Missing ${envVar.description}`,
+        priority: 'HIGH' as const,
+        suggestedQuestion: `Please provide your ${envVar.description}${envVar.documentationUrl ? `. You can get it from: ${envVar.documentationUrl}` : ''}`,
+        context: `Required for the MCP server to function properly. ${envVar.sensitive ? 'This value will be securely stored.' : ''}`,
+      }));
   }
 }

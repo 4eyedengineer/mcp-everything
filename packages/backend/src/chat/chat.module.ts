@@ -2,52 +2,55 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ChatController } from './chat.controller';
 import { ConversationController } from './conversation.controller';
-import { GraphOrchestrationService } from '../orchestration/graph.service';
+import { ConversationService } from './conversation.service';
+import { StreamTicketService } from './stream-ticket.service';
+import { PipelineStatusService } from './pipeline-status.service';
+import { GenerationPipeline } from '../orchestration/pipeline.service';
 import { CodeExecutionService } from '../orchestration/code-execution.service';
 import { GitHubAnalysisService } from '../github-analysis.service';
-import { ToolDiscoveryService } from '../tool-discovery.service';
-import { McpGenerationService } from '../mcp-generation.service';
-import { ConversationService } from '../conversation.service';
 import { EnvVariableService } from '../env-variable.service';
-import { Conversation, ConversationMemory, ResearchCache, Deployment } from '../database/entities';
-// Ensemble architecture services
+import { Conversation, PipelineRun, Deployment } from '../database/entities';
+// Generation pipeline steps
 import { ResearchService } from '../orchestration/research.service';
-import { EnsembleService } from '../orchestration/ensemble.service';
 import { ClarificationService } from '../orchestration/clarification.service';
 import { RefinementService } from '../orchestration/refinement.service';
-import { ResearchCacheService } from '../database/services/research-cache.service';
 import { DeploymentService } from '../database/services/deployment.service';
-import { McpTestingService } from '../testing/mcp-testing.service';
+import { TestingModule } from '../testing/testing.module';
+import { UserModule } from '../user/user.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Conversation, ConversationMemory, ResearchCache, Deployment]),
+    TypeOrmModule.forFeature([Conversation, PipelineRun, Deployment]),
+    // McpTestingService owns Docker container lifecycle/state (running
+    // containers map); it must be a single shared instance, not
+    // independently provided per module. See TestingModule.
+    TestingModule,
+    // UserService: quota enforcement/recording at the generation entry
+    // (GenerationPipeline.checkGenerationQuota / recordSuccessfulGeneration)
+    UserModule,
   ],
   controllers: [ChatController, ConversationController],
   providers: [
-    // Core orchestration
-    GraphOrchestrationService,
+    // The single generation pipeline
+    GenerationPipeline,
     CodeExecutionService,
-    // GitHub and code generation services
+    // SSE stream authorization tickets
+    StreamTicketService,
+    // Per-conversation "is a pipeline run executing right now" flag, shared
+    // between ChatController (sets it) and ConversationController (reads it)
+    PipelineStatusService,
+    // Research inputs
     GitHubAnalysisService,
-    ToolDiscoveryService,
-    McpGenerationService,
+    // Conversation CRUD for the REST API
     ConversationService,
     // Environment variable management
     EnvVariableService,
-    // Ensemble architecture services
+    // Pipeline steps
     ResearchService,
-    EnsembleService,
     ClarificationService,
     RefinementService,
-    ResearchCacheService,
-    DeploymentService,
-    McpTestingService,
-  ],
-  exports: [
-    GraphOrchestrationService,
-    CodeExecutionService,
     DeploymentService,
   ],
+  exports: [GenerationPipeline, CodeExecutionService, DeploymentService],
 })
 export class ChatModule {}

@@ -1,7 +1,6 @@
-import { Component, OnInit, OnDestroy, NgZone } from '@angular/core';
+import { Component, OnInit, OnDestroy, effect, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { HttpClient } from '@angular/common/http';
 import { ActivatedRoute, Router } from '@angular/router';
 import { MatCardModule } from '@angular/material/card';
 import { MatButtonModule } from '@angular/material/button';
@@ -14,29 +13,19 @@ import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { MatDialog, MatDialogModule } from '@angular/material/dialog';
 import { ChatService, ChatMessage } from '../../core/services/chat.service';
-import { ConversationService, Deployment } from '../../core/services/conversation.service';
-import { DeploymentService, DeploymentResponse, ValidationResponse } from '../../core/services/deployment.service';
+import { ConversationService } from '../../core/services/conversation.service';
+import { DeploymentService, DeploymentResponse } from '../../core/services/deployment.service';
 import { HostingApiService } from '../../core/services/hosting-api.service';
+import { SessionService } from '../../core/services/session.service';
 import { SafeMarkdownPipe } from '../../shared/pipes/safe-markdown.pipe';
 import { DeployModalComponent, DeployModalResult } from './components/deploy-modal/deploy-modal.component';
 import { DeployProgressComponent, DeploymentCompleteEvent } from './components/deploy-progress/deploy-progress.component';
-import { v4 as uuidv4 } from 'uuid';
+import { RepoPickerModalComponent, RepoPickerResult } from './components/repo-picker-modal/repo-picker-modal.component';
+import { downloadServerZip } from '../../shared/utils/server-zip.util';
 import { Subscription } from 'rxjs';
-import * as JSZip from 'jszip';
 
-interface StreamUpdate {
-  type: 'progress' | 'result' | 'complete' | 'error';
-  node?: string;
-  message?: string;
-  data?: any;
-  timestamp: Date;
-}
-
-interface ExtendedChatMessage extends ChatMessage {
-  type?: 'user' | 'assistant' | 'progress' | 'error';
-  generatedCode?: any;
-  deploymentResult?: DeploymentResponse;
-}
+type DeploymentState = 'idle' | 'deploying' | 'success' | 'failed';
+type CloudDeploymentState = 'idle' | 'configuring' | 'deploying' | 'success' | 'failed';
 
 @Component({
   selector: 'mcp-chat',
@@ -61,284 +50,131 @@ interface ExtendedChatMessage extends ChatMessage {
   styleUrls: ['./chat.component.scss']
 })
 export class ChatComponent implements OnInit, OnDestroy {
-  messages: ExtendedChatMessage[] = [];
-  currentMessage = '';
-  isLoading = false;
-  isLoadingHistory = false;
+  currentMessage = signal('');
+  isLoadingHistory = signal(false);
   sessionId: string;
-  conversationId?: string;
-  latestDeployment?: Deployment | null;
-  private eventSource?: EventSource;
-  currentProgressMessage?: ExtendedChatMessage;
   private routeSubscription?: Subscription;
-  private messagesSubscription?: Subscription;
 
   // Deployment state
-  deploymentState: 'idle' | 'deploying' | 'success' | 'failed' = 'idle';
-  deployingMessageIndex?: number;
+  deploymentState = signal<DeploymentState>('idle');
+  deployingMessageIndex = signal<number | undefined>(undefined);
 
   // Cloud hosting state
-  cloudDeploymentState: 'idle' | 'configuring' | 'deploying' | 'success' | 'failed' = 'idle';
-  cloudServerId?: string;
-  cloudServerName?: string;
-  cloudEndpointUrl?: string;
+  cloudDeploymentState = signal<CloudDeploymentState>('idle');
+  cloudServerId = signal<string | undefined>(undefined);
+  cloudServerName = signal<string | undefined>(undefined);
+  cloudEndpointUrl = signal<string | undefined>(undefined);
 
   constructor(
-    private chatService: ChatService,
+    protected chatService: ChatService,
     private conversationService: ConversationService,
     private deploymentService: DeploymentService,
     private hostingApiService: HostingApiService,
-    private http: HttpClient,
+    private sessionService: SessionService,
     private route: ActivatedRoute,
     private router: Router,
-    private zone: NgZone,
     private snackBar: MatSnackBar,
     private dialog: MatDialog
   ) {
     // Generate or restore session ID
-    this.sessionId = this.getOrCreateSessionId();
+    this.sessionId = this.sessionService.getOrCreateSessionId();
+
+    // Keep the URL in sync with the active conversation. This fires the
+    // moment ChatService learns the real conversation id - either from the
+    // POST /chat/message response (as soon as the backend creates a brand
+    // new conversation) or from the SSE 'complete' event - and reflects it as
+    // /chat/:id via replaceUrl so the back button and refresh both keep
+    // working without triggering a component reload or wiping in-flight
+    // messages. Guarded so it never re-navigates when the route already
+    // matches (e.g. after the route-param subscription below reacts to a
+    // navigation that originated here).
+    effect(() => {
+      const conversationId = this.chatService.conversationId();
+      const routeConversationId = this.route.snapshot.params['conversationId'];
+      if (conversationId && conversationId !== routeConversationId) {
+        this.router.navigate(['/chat', conversationId], { replaceUrl: true });
+      }
+    });
   }
 
   ngOnInit(): void {
-    this.connectToSSE();
+    this.chatService.connect(this.sessionId);
 
     // Subscribe to route params to get conversationId
     this.routeSubscription = this.route.params.subscribe(params => {
       const conversationId = params['conversationId'];
-      if (conversationId && conversationId !== this.conversationId) {
-        this.conversationId = conversationId;
+      if (conversationId && conversationId !== this.chatService.conversationId()) {
         this.loadConversationHistory(conversationId);
       } else if (!conversationId) {
         // No conversationId in route - clear messages for new conversation
-        this.conversationId = undefined;
-        this.messages = [];
+        this.chatService.setConversationId(undefined);
         this.chatService.clearMessages();
-      }
-    });
-
-    // Subscribe to chat service messages
-    this.messagesSubscription = this.chatService.messages$.subscribe(messages => {
-      if (messages.length > 0) {
-        this.messages = messages as ExtendedChatMessage[];
       }
     });
   }
 
   ngOnDestroy(): void {
-    this.disconnectFromSSE();
+    this.chatService.disconnect();
     this.routeSubscription?.unsubscribe();
-    this.messagesSubscription?.unsubscribe();
   }
 
   /**
-   * Load conversation history from backend
+   * Load conversation history (and latest deployment info) from the backend.
    */
   private loadConversationHistory(conversationId: string): void {
-    this.isLoadingHistory = true;
-    this.latestDeployment = null;
+    this.isLoadingHistory.set(true);
 
     this.chatService.loadConversationHistory(conversationId).subscribe({
-      next: (messages) => {
-        this.messages = messages as ExtendedChatMessage[];
-        this.isLoadingHistory = false;
+      next: messages => {
+        this.isLoadingHistory.set(false);
         console.log(`Loaded ${messages.length} messages for conversation ${conversationId}`);
       },
-      error: (error) => {
+      error: error => {
         console.error('Error loading conversation history:', error);
-        this.isLoadingHistory = false;
-        this.messages = [];
+        this.isLoadingHistory.set(false);
+
+        // The conversationId in the URL doesn't correspond to a real
+        // conversation (e.g. a bad/stale UUID). Rather than silently
+        // leaving the bogus URL in place while showing the normal empty
+        // new-chat screen, bounce back to /chat and let the user know why.
+        this.router.navigate(['/chat'], { replaceUrl: true });
+        this.snackBar.open('Conversation not found', 'Close', { duration: 4000 });
       }
-    });
-
-    // Load deployment info
-    this.conversationService.getLatestDeployment(conversationId).subscribe({
-      next: (deployment) => {
-        this.latestDeployment = deployment;
-        console.log('Loaded deployment:', deployment);
-      },
-      error: (error) => {
-        console.error('Error loading deployment:', error);
-      }
-    });
-  }
-
-  private getOrCreateSessionId(): string {
-    const stored = localStorage.getItem('mcp-session-id');
-    if (stored) {
-      return stored;
-    }
-    const newId = uuidv4();
-    localStorage.setItem('mcp-session-id', newId);
-    return newId;
-  }
-
-  private connectToSSE(): void {
-    const apiUrl = 'http://localhost:3000';
-    this.eventSource = new EventSource(`${apiUrl}/api/chat/stream/${this.sessionId}`);
-
-    this.eventSource.onmessage = (event) => {
-      this.zone.run(() => {
-        try {
-          console.log('SSE message received:', event.data);
-          const update: StreamUpdate = JSON.parse(event.data);
-          console.log('Parsed SSE update:', update);
-          this.handleStreamUpdate(update);
-        } catch (error) {
-          console.error('Error parsing SSE message:', error);
-        }
-      });
-    };
-
-    this.eventSource.onerror = (error) => {
-      this.zone.run(() => {
-        console.error('SSE connection error:', error);
-        // Attempt to reconnect after 5 seconds
-        setTimeout(() => {
-          if (this.eventSource?.readyState === EventSource.CLOSED) {
-            this.connectToSSE();
-          }
-        }, 5000);
-      });
-    };
-
-    console.log('SSE connection established for session:', this.sessionId);
-  }
-
-  private disconnectFromSSE(): void {
-    if (this.eventSource) {
-      this.eventSource.close();
-      this.eventSource = undefined;
-    }
-  }
-
-  private handleStreamUpdate(update: StreamUpdate): void {
-    switch (update.type) {
-      case 'progress':
-        this.handleProgressUpdate(update);
-        break;
-      case 'result':
-        this.handleResultUpdate(update);
-        break;
-      case 'complete':
-        this.handleCompleteUpdate(update);
-        break;
-      case 'error':
-        this.handleErrorUpdate(update);
-        break;
-    }
-  }
-
-  private handleProgressUpdate(update: StreamUpdate): void {
-    // Update or create progress message
-    if (this.currentProgressMessage) {
-      this.currentProgressMessage.content = update.message || 'Processing...';
-    } else {
-      this.currentProgressMessage = {
-        content: update.message || 'Processing...',
-        isUser: false,
-        timestamp: new Date(update.timestamp),
-        type: 'progress'
-      };
-      this.messages.push(this.currentProgressMessage);
-    }
-  }
-
-  private handleResultUpdate(update: StreamUpdate): void {
-    // Clear progress message
-    this.currentProgressMessage = undefined;
-
-    // Add result message
-    this.messages.push({
-      content: update.message || '',
-      isUser: false,
-      timestamp: new Date(update.timestamp),
-      type: 'assistant'
-    });
-  }
-
-  private handleCompleteUpdate(update: StreamUpdate): void {
-    // Clear progress message
-    this.currentProgressMessage = undefined;
-    this.isLoading = false;
-
-    // Add completion message
-    this.messages.push({
-      content: update.message || 'Completed!',
-      isUser: false,
-      timestamp: new Date(update.timestamp),
-      type: 'assistant',
-      generatedCode: update.data?.generatedCode
-    });
-
-    // Store conversation ID
-    if (update.data?.conversationId) {
-      this.conversationId = update.data.conversationId;
-
-      // Load deployment info after completion
-      this.conversationService.getLatestDeployment(this.conversationId!).subscribe({
-        next: (deployment) => {
-          this.latestDeployment = deployment;
-          console.log('Loaded deployment after completion:', deployment);
-        },
-        error: (error) => {
-          console.error('Error loading deployment:', error);
-        }
-      });
-    }
-  }
-
-  private handleErrorUpdate(update: StreamUpdate): void {
-    // Clear progress message
-    this.currentProgressMessage = undefined;
-    this.isLoading = false;
-
-    // Add error message
-    this.messages.push({
-      content: update.message || 'An error occurred',
-      isUser: false,
-      timestamp: new Date(update.timestamp),
-      type: 'error'
     });
   }
 
   sendMessage(): void {
-    if (!this.currentMessage.trim() || this.isLoading) {
+    const text = this.currentMessage().trim();
+    if (!text || this.chatService.isLoading()) {
       return;
     }
 
-    // Add user message
-    const userMessage: ExtendedChatMessage = {
-      content: this.currentMessage,
-      isUser: true,
-      timestamp: new Date(),
-      type: 'user'
-    };
-    this.messages.push(userMessage);
+    this.currentMessage.set('');
+    this.dispatchMessage(text);
+  }
 
-    const messageToSend = this.currentMessage;
-    this.currentMessage = '';
-    this.isLoading = true;
+  /**
+   * Re-send a message whose original send failed. Discards the failed user
+   * bubble first so retrying doesn't leave a duplicate/stale copy behind.
+   */
+  retryMessage(message: ChatMessage): void {
+    if (this.chatService.isLoading()) {
+      return;
+    }
+    const text = message.content;
+    this.chatService.removeMessage(message);
+    this.dispatchMessage(text);
+  }
 
-    // Send to new LangGraph API
-    const apiUrl = 'http://localhost:3000';
-    this.http.post(`${apiUrl}/api/chat/message`, {
-      message: messageToSend,
-      sessionId: this.sessionId,
-      conversationId: this.conversationId
-    }).subscribe({
-      next: (response: any) => {
-        console.log('Message sent successfully', response);
-        // Response will come through SSE stream
-      },
-      error: (error) => {
-        console.error('Error sending message:', error);
-        this.isLoading = false;
-        this.messages.push({
-          content: 'Failed to send message. Please try again.',
-          isUser: false,
-          timestamp: new Date(),
-          type: 'error'
-        });
+  private dispatchMessage(text: string): void {
+    this.chatService.sendMessage(text, this.sessionId).subscribe({
+      next: response => console.log('Message sent successfully', response),
+      error: () => {
+        // Restore the draft so the user's text isn't lost on failure. The
+        // failed user bubble itself is marked (with a retry affordance in
+        // the template) and the placeholder progress bubble is cleaned up
+        // by ChatService.
+        this.currentMessage.set(text);
       }
     });
   }
@@ -346,39 +182,41 @@ export class ChatComponent implements OnInit, OnDestroy {
   /**
    * Deploy generated MCP server to GitHub repository
    */
-  deployToGitHub(message: ExtendedChatMessage): void {
-    if (!message.generatedCode || !this.conversationId) {
+  deployToGitHub(message: ChatMessage): void {
+    const conversationId = this.chatService.conversationId();
+    if (!message.generatedCode || !conversationId) {
       this.snackBar.open('No generated code or conversation available', 'Close', { duration: 3000 });
       return;
     }
 
-    const messageIndex = this.messages.indexOf(message);
-    this.deploymentState = 'deploying';
-    this.deployingMessageIndex = messageIndex;
+    const messageIndex = this.chatService.messages().indexOf(message);
+    this.deploymentState.set('deploying');
+    this.deployingMessageIndex.set(messageIndex);
 
-    this.deploymentService.deployToGitHub(this.conversationId).subscribe({
+    this.deploymentService.deployToGitHub(conversationId).subscribe({
       next: (response) => {
-        this.deploymentState = response.success ? 'success' : 'failed';
+        this.deploymentState.set(response.success ? 'success' : 'failed');
         message.deploymentResult = response;
-        this.deployingMessageIndex = undefined;
+        this.deployingMessageIndex.set(undefined);
 
         if (response.success) {
           this.snackBar.open('Successfully deployed to GitHub!', 'Close', { duration: 3000 });
           // Reload deployment info
-          this.conversationService.getLatestDeployment(this.conversationId!).subscribe({
+          this.conversationService.getLatestDeployment(conversationId).subscribe({
             next: (deployment) => {
-              this.latestDeployment = deployment;
+              this.chatService.setLatestDeployment(deployment);
             }
           });
-        } else {
-          this.snackBar.open(response.error || 'Deployment failed', 'Close', { duration: 5000 });
         }
+        // No toast on failure - the per-message deployment-error-card below
+        // already shows this same error, contextually, with retry actions.
+        // A toast here duplicated it a third time alongside the (now-removed)
+        // global banner.
       },
       error: (error: DeploymentResponse) => {
-        this.deploymentState = 'failed';
+        this.deploymentState.set('failed');
         message.deploymentResult = error;
-        this.deployingMessageIndex = undefined;
-        this.snackBar.open(error.error || 'Deployment failed', 'Close', { duration: 5000 });
+        this.deployingMessageIndex.set(undefined);
       }
     });
   }
@@ -386,106 +224,55 @@ export class ChatComponent implements OnInit, OnDestroy {
   /**
    * Deploy generated MCP server to GitHub Gist
    */
-  deployToGist(message: ExtendedChatMessage): void {
-    if (!message.generatedCode || !this.conversationId) {
+  deployToGist(message: ChatMessage): void {
+    const conversationId = this.chatService.conversationId();
+    if (!message.generatedCode || !conversationId) {
       this.snackBar.open('No generated code or conversation available', 'Close', { duration: 3000 });
       return;
     }
 
-    const messageIndex = this.messages.indexOf(message);
-    this.deploymentState = 'deploying';
-    this.deployingMessageIndex = messageIndex;
+    const messageIndex = this.chatService.messages().indexOf(message);
+    this.deploymentState.set('deploying');
+    this.deployingMessageIndex.set(messageIndex);
 
-    this.deploymentService.deployToGist(this.conversationId).subscribe({
+    this.deploymentService.deployToGist(conversationId).subscribe({
       next: (response) => {
-        this.deploymentState = response.success ? 'success' : 'failed';
+        this.deploymentState.set(response.success ? 'success' : 'failed');
         message.deploymentResult = response;
-        this.deployingMessageIndex = undefined;
+        this.deployingMessageIndex.set(undefined);
 
         if (response.success) {
           this.snackBar.open('Successfully deployed to Gist!', 'Close', { duration: 3000 });
           // Reload deployment info
-          this.conversationService.getLatestDeployment(this.conversationId!).subscribe({
+          this.conversationService.getLatestDeployment(conversationId).subscribe({
             next: (deployment) => {
-              this.latestDeployment = deployment;
+              this.chatService.setLatestDeployment(deployment);
             }
           });
-        } else {
-          this.snackBar.open(response.error || 'Deployment failed', 'Close', { duration: 5000 });
         }
+        // No toast on failure - see the comment in deployToGitHub() above.
       },
       error: (error: DeploymentResponse) => {
-        this.deploymentState = 'failed';
+        this.deploymentState.set('failed');
         message.deploymentResult = error;
-        this.deployingMessageIndex = undefined;
-        this.snackBar.open(error.error || 'Deployment failed', 'Close', { duration: 5000 });
+        this.deployingMessageIndex.set(undefined);
       }
     });
   }
 
   /**
-   * Download generated MCP server as ZIP file
+   * Download generated MCP server as ZIP file. Delegates to the shared
+   * server-zip util (also used by the My Servers page) so root-level files
+   * like Dockerfile/.dockerignore land at the zip root instead of being
+   * force-nested under src/, which broke `docker build .` on the extracted
+   * zip.
    */
-  async downloadAsZip(message: ExtendedChatMessage): Promise<void> {
+  async downloadAsZip(message: ChatMessage): Promise<void> {
     if (!message.generatedCode) {
       return;
     }
 
-    const zip = new JSZip();
-    const files = message.generatedCode.supportingFiles || {};
-    const mainFile = message.generatedCode.mainFile || '';
-    const documentation = message.generatedCode.documentation || '';
-
-    // Add main file (usually index.ts)
-    if (mainFile) {
-      zip.file('src/index.ts', mainFile);
-    }
-
-    // Add supporting files
-    for (const [filename, content] of Object.entries(files)) {
-      if (typeof content === 'string') {
-        // Preserve file paths or put in src directory
-        const filePath = filename.startsWith('src/') ? filename : `src/${filename}`;
-        zip.file(filePath, content);
-      }
-    }
-
-    // Add documentation as README
-    if (documentation) {
-      zip.file('README.md', documentation);
-    }
-
-    // Add package.json if not present
-    if (!files['package.json']) {
-      const packageJson = {
-        name: 'mcp-server',
-        version: '1.0.0',
-        type: 'module',
-        main: 'dist/index.js',
-        scripts: {
-          build: 'tsc',
-          start: 'node dist/index.js'
-        },
-        dependencies: {
-          '@modelcontextprotocol/sdk': '^1.0.0'
-        },
-        devDependencies: {
-          typescript: '^5.0.0',
-          '@types/node': '^20.0.0'
-        }
-      };
-      zip.file('package.json', JSON.stringify(packageJson, null, 2));
-    }
-
-    // Generate and download ZIP
-    const content = await zip.generateAsync({ type: 'blob' });
-    const url = URL.createObjectURL(content);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = 'mcp-server.zip';
-    link.click();
-    URL.revokeObjectURL(url);
-
+    await downloadServerZip(message.generatedCode);
     this.snackBar.open('ZIP file downloaded', 'Close', { duration: 2000 });
   }
 
@@ -503,20 +290,19 @@ export class ChatComponent implements OnInit, OnDestroy {
   /**
    * Check if a specific message is currently deploying
    */
-  isDeploying(message: ExtendedChatMessage): boolean {
-    const messageIndex = this.messages.indexOf(message);
-    return this.deploymentState === 'deploying' && this.deployingMessageIndex === messageIndex;
+  isDeploying(message: ChatMessage): boolean {
+    const messageIndex = this.chatService.messages().indexOf(message);
+    return this.deploymentState() === 'deploying' && this.deployingMessageIndex() === messageIndex;
   }
 
   clearSession(): void {
-    localStorage.removeItem('mcp-session-id');
-    this.sessionId = this.getOrCreateSessionId();
-    this.conversationId = undefined;
-    this.latestDeployment = null;
-    this.messages = [];
+    this.sessionService.clearSessionId();
+    this.sessionId = this.sessionService.getOrCreateSessionId();
+    this.chatService.setConversationId(undefined);
+    this.chatService.setLatestDeployment(null);
     this.chatService.clearMessages();
-    this.disconnectFromSSE();
-    this.connectToSSE();
+    this.chatService.disconnect();
+    this.chatService.connect(this.sessionId);
 
     // Navigate to chat without conversationId
     this.router.navigate(['/chat']);
@@ -537,8 +323,27 @@ export class ChatComponent implements OnInit, OnDestroy {
   }
 
   useSuggestion(suggestion: string): void {
-    this.currentMessage = suggestion;
+    this.currentMessage.set(suggestion);
     this.sendMessage();
+  }
+
+  /**
+   * Open the repo-picker modal from the "Analyze a GitHub repository"
+   * suggestion card, instead of silently auto-sending a hardcoded repo.
+   * On selection (search result, "your repos" entry, or a pasted URL),
+   * sends the same message the pipeline already expects.
+   */
+  openRepoPickerModal(): void {
+    const dialogRef = this.dialog.open(RepoPickerModalComponent, {
+      width: '560px',
+      panelClass: 'repo-picker-modal-panel'
+    });
+
+    dialogRef.afterClosed().subscribe((result: RepoPickerResult | undefined) => {
+      if (result?.repoUrl) {
+        this.useSuggestion(`Generate an MCP server from ${result.repoUrl}`);
+      }
+    });
   }
 
   /**
@@ -583,7 +388,7 @@ export class ChatComponent implements OnInit, OnDestroy {
   /**
    * Re-validate a deployment
    */
-  revalidateDeployment(message: ExtendedChatMessage): void {
+  revalidateDeployment(message: ChatMessage): void {
     if (!message.deploymentResult?.deploymentId) {
       this.snackBar.open('No deployment to validate', 'Close', { duration: 3000 });
       return;
@@ -608,7 +413,7 @@ export class ChatComponent implements OnInit, OnDestroy {
           this.snackBar.open(`Validation failed: ${response.message}`, 'Close', { duration: 5000 });
         }
       },
-      error: (error) => {
+      error: () => {
         if (message.deploymentResult) {
           message.deploymentResult.validationStatus = 'failed';
         }
@@ -627,8 +432,10 @@ export class ChatComponent implements OnInit, OnDestroy {
   /**
    * Open the Host on Cloud modal
    */
-  openHostOnCloudModal(message: ExtendedChatMessage): void {
-    if (!this.conversationId || !this.latestDeployment) {
+  openHostOnCloudModal(message: ChatMessage): void {
+    const conversationId = this.chatService.conversationId();
+    const latestDeployment = this.chatService.latestDeployment();
+    if (!conversationId || !latestDeployment) {
       this.snackBar.open('No deployment available for hosting', 'Close', { duration: 3000 });
       return;
     }
@@ -637,19 +444,19 @@ export class ChatComponent implements OnInit, OnDestroy {
       width: '500px',
       panelClass: 'deploy-modal-panel',
       data: {
-        conversationId: this.conversationId,
-        serverName: this.latestDeployment.serverName || 'My MCP Server',
-        description: this.latestDeployment.description || '',
-        tools: this.latestDeployment.tools || [],
-        envVars: this.latestDeployment.envVars || []
+        conversationId,
+        serverName: latestDeployment.serverName || 'My MCP Server',
+        description: latestDeployment.description || '',
+        tools: latestDeployment.tools || [],
+        envVars: latestDeployment.envVars || []
       }
     });
 
     dialogRef.afterClosed().subscribe((result: DeployModalResult | undefined) => {
       if (result?.success && result.serverId) {
-        this.cloudDeploymentState = 'deploying';
-        this.cloudServerId = result.serverId;
-        this.cloudServerName = this.latestDeployment?.serverName || 'MCP Server';
+        this.cloudDeploymentState.set('deploying');
+        this.cloudServerId.set(result.serverId);
+        this.cloudServerName.set(this.chatService.latestDeployment()?.serverName || 'MCP Server');
         this.snackBar.open('Deployment started...', 'Close', { duration: 2000 });
       }
     });
@@ -660,11 +467,11 @@ export class ChatComponent implements OnInit, OnDestroy {
    */
   onCloudDeploymentComplete(event: DeploymentCompleteEvent): void {
     if (event.success) {
-      this.cloudDeploymentState = 'success';
-      this.cloudEndpointUrl = event.endpointUrl;
+      this.cloudDeploymentState.set('success');
+      this.cloudEndpointUrl.set(event.endpointUrl);
       this.snackBar.open('Successfully deployed to cloud!', 'Close', { duration: 3000 });
     } else {
-      this.cloudDeploymentState = 'failed';
+      this.cloudDeploymentState.set('failed');
       this.snackBar.open(event.error || 'Cloud deployment failed', 'Close', { duration: 5000 });
     }
   }
@@ -673,16 +480,16 @@ export class ChatComponent implements OnInit, OnDestroy {
    * Retry cloud deployment
    */
   retryCloudDeployment(): void {
-    this.cloudDeploymentState = 'idle';
-    this.cloudServerId = undefined;
-    this.cloudServerName = undefined;
-    this.cloudEndpointUrl = undefined;
+    this.cloudDeploymentState.set('idle');
+    this.cloudServerId.set(undefined);
+    this.cloudServerName.set(undefined);
+    this.cloudEndpointUrl.set(undefined);
   }
 
   /**
    * Check if cloud deployment is in progress
    */
   isCloudDeploying(): boolean {
-    return this.cloudDeploymentState === 'deploying';
+    return this.cloudDeploymentState() === 'deploying';
   }
 }

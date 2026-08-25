@@ -1,0 +1,131 @@
+# ArgoCD Application for the homelab (k3s) deployment of MCP Everything.
+#
+# Apply directly to the cluster's argocd namespace (this file is not part of
+# any kustomize build in this repo - it's the GitOps entry point that points
+# AT k8s/overlays/homelab, it isn't included BY it):
+#
+#   kubectl --context <homelab> apply -f k8s/argocd/application.yaml
+#
+# House pattern reference: the only pre-existing Application in this cluster
+# is `dangus-cloud` (namespace argocd, source repo dangus_cloud). Investigated
+# 2026-07-31 before writing this file:
+#
+#   - dangus-cloud's Application carries argocd-image-updater.argoproj.io/*
+#     annotations (image-list, per-image update-strategy, write-back-method:
+#     git, git-branch). These are almost certainly VESTIGIAL: the installed
+#     controller is quay.io/argoprojlabs/argocd-image-updater:v1.0.1, and
+#     `argocd-image-updater run --help` on that image states in its own
+#     words: "This controller monitors ImageUpdater CRs and reconciles
+#     them" - i.e. this build is fully CRD-driven and does not consume
+#     Application annotations at all (that was the old pre-1.0 annotation
+#     mechanism). What ACTUALLY drives dangus-cloud's updates is a separate
+#     `ImageUpdater` custom resource (argocd-image-updater.argoproj.io/v1alpha1,
+#     also named dangus-cloud, in namespace argocd) with:
+#       spec.applicationRefs[0].images: backend/frontend at Harbor, alias'd
+#       spec.commonUpdateSettings.updateStrategy: digest   (tracks the
+#         ":latest" tag's digest - works because dangus's own CI re-pushes
+#         a "latest" tag on every build)
+#       spec.writeBackConfig.method: argocd   (NOT git - see below)
+#
+#   - The annotations below are kept anyway, purely for documentation/parity
+#     with dangus-cloud and in case a future controller version restores
+#     annotation support. They are inert today. The mcp-everything
+#     ImageUpdater CR that actually drives updates is applied directly to
+#     the cluster (kubectl, not kustomize/git - same as dangus-cloud's is
+#     not checked into dangus_cloud either) and is reproduced in full in
+#     DEPLOYMENT.md's "Homelab (k3s + ArgoCD)" section so it's still
+#     versioned and reviewable even though it isn't rendered from this repo.
+#
+#   - update-strategy: this repo's CI (.github/workflows/deploy-homelab.yml)
+#     pushes ONLY <full-git-sha> tags (e.g. e3600879c2f62895a9f4307526141f495b2fbae9)
+#     - there is no ":latest" tag for a digest strategy to track. Confirmed
+#     via `argocd-image-updater test <image>:<sha> --update-strategy
+#     newest-build --allow-tags 'regexp:^[0-9a-f]{40}$' --platforms
+#     linux/amd64` against the live Harbor registry: newest-build correctly
+#     orders arbitrary (non-semver) tags by registry push/build time and
+#     picks the newest, which is exactly what sha tags need. So this app
+#     uses newest-build, not dangus's digest/latest strategy.
+#
+#     IMPORTANT gotcha found during that same test: the CLI/controller
+#     defaults to filtering discovered tags by ITS OWN pod's runtime
+#     platform. This cluster's image-updater pod is arm64, but our images
+#     are amd64-only (see the amd64 nodeSelector patches in
+#     k8s/overlays/homelab/patches/{backend,frontend}.yaml) - without an
+#     explicit `platforms: [linux/amd64]` override the tag search silently
+#     returns 0 eligible tags and the updater never fires. The cluster-side
+#     ImageUpdater CR sets this explicitly; see DEPLOYMENT.md.
+#
+#   - write-back method: dangus-cloud's Application annotation claims "git",
+#     but its live ImageUpdater CR actually uses `method: argocd` (an
+#     in-cluster parameter override of spec.source.kustomize.images on the
+#     Application itself - no git commit, no push credential needed). No
+#     repository credential secret exists in namespace argocd for either
+#     repo (checked: no argocd.argoproj.io/secret-type=repository or
+#     repo-creds secrets), which is consistent with "argocd" write-back
+#     being what's actually in effect - it needs none. This repo's
+#     ImageUpdater CR follows the SAME real mechanism: method: argocd.
+#     Tradeoff (documented per the task): the resolved image tag/digest
+#     lives only in the live Application's spec.source.kustomize.images
+#     override, not committed back to git - `git log` on
+#     k8s/overlays/homelab/kustomization.yaml will NOT reflect what's
+#     actually running after the first bump. Source of truth for "what's
+#     deployed" becomes `kubectl -n argocd get application mcp-everything
+#     -o jsonpath='{.spec.source.kustomize.images}'`, not this repo.
+#
+# One deliberate improvement over the dangus-cloud CR: this repo's
+# ImageUpdater CR sets manifestTargets.kustomize.name per image (matching
+# the `images[].name` entries in k8s/overlays/homelab/kustomization.yaml).
+# dangus-cloud's CR omits this, and its live Application spec.source.kustomize.images
+# has visibly accumulated 16 duplicate/stale override entries over time
+# (observed 2026-07-31) because without a manifestTarget the updater can't
+# tell which existing override entry to replace and just appends. Setting
+# manifestTargets.kustomize.name avoids repeating that bug here.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: mcp-everything
+  namespace: argocd
+  annotations:
+    # See the long comment above: inert under the installed v1.0.1
+    # controller (which is CRD-driven), kept for parity/documentation only.
+    # The functioning config is the cluster-side ImageUpdater CR (see
+    # DEPLOYMENT.md).
+    argocd-image-updater.argoproj.io/image-list: |
+      backend=harbor.192.168.1.240.nip.io/mcp-everything/backend,
+      frontend=harbor.192.168.1.240.nip.io/mcp-everything/frontend
+    argocd-image-updater.argoproj.io/backend.update-strategy: newest-build
+    argocd-image-updater.argoproj.io/frontend.update-strategy: newest-build
+    argocd-image-updater.argoproj.io/backend.allow-tags: "regexp:^[0-9a-f]{40}$"
+    argocd-image-updater.argoproj.io/frontend.allow-tags: "regexp:^[0-9a-f]{40}$"
+    argocd-image-updater.argoproj.io/write-back-method: argocd
+    argocd-image-updater.argoproj.io/git-branch: rework/2026-07-review
+  finalizers:
+    # Ensures ArgoCD cleans up cluster resources on `kubectl delete
+    # application mcp-everything` instead of orphaning them. Matches
+    # dangus-cloud.
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/4eyedengineer/mcp-everything.git
+    # TODO: flip to `main` once rework/2026-07-review is merged.
+    targetRevision: rework/2026-07-review
+    path: k8s/overlays/homelab
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: mcp-everything
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - PruneLast=true # matches dangus-cloud; avoid deleting live resources before their replacements are up
+    retry:
+      # Matches dangus-cloud's retry/backoff so a transient repo-server or
+      # apply hiccup doesn't need a manual re-sync.
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m

@@ -1,0 +1,95 @@
+# RBAC for the backend's direct Kubernetes control plane
+# (packages/backend/src/hosting/services/k8s-control-plane.service.ts).
+#
+# Deliberately a Role + RoleBinding scoped to the `mcp-servers` namespace, NOT
+# a ClusterRole: the backend has no business touching workloads anywhere else
+# in the cluster, and a compromised backend pod should not be able to read
+# Secrets in `mcp-everything` (its own DB/API credentials) or any other
+# namespace through this binding.
+#
+# The subject ServiceAccount itself lives in the backend's namespace
+# (`mcp-everything`, see k8s/base/backend/serviceaccount.yaml) - a RoleBinding
+# in namespace A may name a subject from namespace B; it grants that subject
+# the Role's permissions only within namespace A.
+#
+# These same verbs also cover the generate-test-refine loop's Kubernetes test
+# sandbox (packages/backend/src/testing/k8s-test-sandbox.service.ts), which
+# runs untrusted generated code in a throwaway pod when the backend has no
+# Docker daemon. It ships source in a Secret, runs it as a short-lived
+# replicas:1 Deployment behind a ClusterIP Service, polls readiness via pods,
+# and reads pods/log on failure - all within the create/get/list/watch/patch/
+# delete on secrets/deployments/services and get/list/watch on pods (+ get on
+# pods/log) granted below. No ConfigMaps, Jobs, or pods/exec are used or needed,
+# so nothing here changes for it.
+---
+# Permissions the backend needs inside mcp-servers.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: mcp-server-manager
+  namespace: mcp-servers
+  labels:
+    app.kubernetes.io/part-of: mcp-everything
+rules:
+  # Deployment lifecycle: create on deploy, patch to scale (stop/start) and to
+  # roll a new image, delete on server deletion, get/list/watch to reconcile
+  # observed state.
+  - apiGroups: ['apps']
+    resources: ['deployments']
+    verbs: ['create', 'get', 'list', 'watch', 'patch', 'delete']
+  # ClusterIP Service per hosted server. No Ingress permission on purpose:
+  # per-server Ingress is deferred in favour of routing through a backend
+  # gateway on one public origin, so the control plane never creates one and
+  # must not be able to.
+  - apiGroups: ['']
+    resources: ['services']
+    verbs: ['create', 'get', 'list', 'watch', 'patch', 'delete']
+  # User-supplied env vars are written to a per-server Secret and consumed via
+  # envFrom.secretRef - this is what lets the K8s path accept envVars at all
+  # without writing credentials into a Deployment as literal `value:` entries.
+  - apiGroups: ['']
+    resources: ['secrets']
+    verbs: ['create', 'get', 'list', 'watch', 'patch', 'delete']
+  # Read-only: the reconciler reads pod status/conditions to derive real
+  # observed state (ImagePullBackOff / CrashLoopBackOff / OOMKilled).
+  - apiGroups: ['']
+    resources: ['pods']
+    verbs: ['get', 'list', 'watch']
+  # Real log retrieval for GET /api/hosting/servers/:serverId/logs.
+  - apiGroups: ['']
+    resources: ['pods/log']
+    verbs: ['get']
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: mcp-backend-manages-mcp-servers
+  namespace: mcp-servers
+  labels:
+    app.kubernetes.io/part-of: mcp-everything
+subjects:
+  - kind: ServiceAccount
+    name: mcp-backend
+    namespace: mcp-everything
+roleRef:
+  kind: Role
+  name: mcp-server-manager
+  apiGroup: rbac.authorization.k8s.io
+---
+# The identity hosted MCP server pods run as. It exists purely so those pods
+# are NOT running as the namespace `default` ServiceAccount, and it is bound to
+# nothing - a hosted server is arbitrary AI-generated third-party code and has
+# no legitimate reason to talk to the Kubernetes API at all.
+#
+# automountServiceAccountToken: false here (and again on the pod spec the
+# control plane builds, since the pod-level setting is the one that actually
+# wins if they ever disagree) means no API token is projected into the
+# container in the first place.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: mcp-server-runtime
+  namespace: mcp-servers
+  labels:
+    app.kubernetes.io/part-of: mcp-everything
+automountServiceAccountToken: false

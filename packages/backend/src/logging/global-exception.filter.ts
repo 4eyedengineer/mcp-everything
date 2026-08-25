@@ -27,14 +27,11 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     const request = ctx.getRequest<Request>();
 
     // Convert to Error if needed
-    const error =
-      exception instanceof Error ? exception : new Error(String(exception));
+    const error = exception instanceof Error ? exception : new Error(String(exception));
 
     // Determine HTTP status
     const status =
-      exception instanceof HttpException
-        ? exception.getStatus()
-        : HttpStatus.INTERNAL_SERVER_ERROR;
+      exception instanceof HttpException ? exception.getStatus() : HttpStatus.INTERNAL_SERVER_ERROR;
 
     // Extract conversation ID from various sources
     const conversationId = this.extractConversationId(request);
@@ -51,14 +48,14 @@ export class GlobalExceptionFilter implements ExceptionFilter {
         error,
         level,
         service: 'HTTP',
-        method: `${request.method} ${request.url}`,
+        method: `${request.method} ${this.redactUrl(request.url)}`,
         conversationId,
         userId,
         context: {
           statusCode: status,
-          path: request.url,
+          path: this.redactUrl(request.url),
           method: request.method,
-          query: request.query,
+          query: this.sanitizeQuery(request.query as Record<string, any>),
           params: request.params,
           body: this.sanitizeBody(request.body),
           headers: this.sanitizeHeaders(request.headers),
@@ -81,17 +78,13 @@ export class GlobalExceptionFilter implements ExceptionFilter {
   /**
    * Build a consistent error response
    */
-  private buildErrorResponse(
-    error: Error,
-    status: number,
-    request: Request,
-  ): Record<string, any> {
+  private buildErrorResponse(error: Error, status: number, request: Request): Record<string, any> {
     const isDevelopment = process.env.NODE_ENV === 'development';
 
     const response: Record<string, any> = {
       statusCode: status,
       timestamp: new Date().toISOString(),
-      path: request.url,
+      path: this.redactUrl(request.url),
       message: this.getErrorMessage(error, status),
     };
 
@@ -107,10 +100,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     }
 
     // Include validation errors if present (class-validator)
-    if (
-      status === HttpStatus.BAD_REQUEST &&
-      (error as any).response?.message
-    ) {
+    if (status === HttpStatus.BAD_REQUEST && (error as any).response?.message) {
       response.details = (error as any).response.message;
     }
 
@@ -164,9 +154,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     }
 
     // Check URL path for conversation ID pattern
-    const urlMatch = request.url.match(
-      /\/conversation[s]?\/([0-9a-f-]{36})/i,
-    );
+    const urlMatch = request.url.match(/\/conversation[s]?\/([0-9a-f-]{36})/i);
     if (urlMatch) {
       return urlMatch[1];
     }
@@ -194,11 +182,43 @@ export class GlobalExceptionFilter implements ExceptionFilter {
   }
 
   /**
+   * Redact credential-looking values out of a URL before it is logged.
+   *
+   * `sanitizeHeaders` already redacts `Authorization`, so a credential sent the
+   * correct way never reaches a log. A credential sent the WRONG way - in the
+   * query string - was landing in `method`, `context.path`, `context.query` and
+   * the error response body in full, and error logs are persisted to the
+   * database and readable through the log-viewer endpoints.
+   *
+   * That matters most for hosted-server source tokens (`mcpsrc_`), which grant
+   * read access to a user's generated source and are held by a pod rather than
+   * a human, so a misconfigured deployment could quietly log one on every
+   * failed request. `HostedServerSourceGuard` deliberately refuses a token in
+   * the query string - this makes sure the rejected request does not preserve
+   * it either. The other two platform credential prefixes are covered too,
+   * since they had exactly the same exposure.
+   */
+  private redactUrl(url: string): string {
+    return url
+      .replace(/\b(mcpsrc_|mcps_|mcpe_)[A-Za-z0-9_-]+/g, '$1[REDACTED]')
+      .replace(/([?&](?:token|ticket|api_?key|access_?token|password)=)[^&#]*/gi, '$1[REDACTED]');
+  }
+
+  /** Same redaction, applied to a parsed query object. */
+  private sanitizeQuery(query: Record<string, any>): Record<string, any> {
+    const sanitized: Record<string, any> = {};
+
+    for (const [key, value] of Object.entries(query ?? {})) {
+      sanitized[key] = typeof value === 'string' ? this.redactUrl(value) : value;
+    }
+
+    return sanitized;
+  }
+
+  /**
    * Sanitize request headers to remove sensitive information
    */
-  private sanitizeHeaders(
-    headers: Record<string, any>,
-  ): Record<string, string> {
+  private sanitizeHeaders(headers: Record<string, any>): Record<string, string> {
     const sensitiveHeaders = [
       'authorization',
       'cookie',

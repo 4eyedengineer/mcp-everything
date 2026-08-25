@@ -1,0 +1,26 @@
+<div class="rename-dialog">
+  <h2 mat-dialog-title>{{ data.title }}</h2>
+
+  <mat-dialog-content>
+    <mat-form-field appearance="outline" class="full-width">
+      <mat-label>{{ data.label || 'Title' }}</mat-label>
+      <input
+        matInput
+        [(ngModel)]="value"
+        (keydown.enter)="onSave()"
+        maxlength="200" />
+    </mat-form-field>
+  </mat-dialog-content>
+
+  <mat-dialog-actions align="end">
+    <button mat-button (click)="onCancel()" class="cancel-button">Cancel</button>
+    <button
+      mat-raised-button
+      color="primary"
+      [disabled]="!value.trim()"
+      (click)="onSave()"
+      class="save-button">
+      Save
+    </button>
+  </mat-dialog-actions>
+</div>

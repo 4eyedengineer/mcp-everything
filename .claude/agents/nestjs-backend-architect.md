@@ -29,7 +29,7 @@ Your core responsibilities:
 - Handle database migrations and seeding strategies
 
 **Security First:**
-- Implement authentication and authorization using JWT, guards, and decorators
+- This project already has a **global JWT guard** wired via `APP_GUARD`, protecting all routes by default — new endpoints inherit that; only bypass it deliberately (e.g. an explicit public-route decorator) and be able to justify why
 - Apply input validation and sanitization at all entry points
 - Use proper CORS, rate limiting, and security headers
 - Follow OWASP guidelines for API security
@@ -56,3 +56,13 @@ When reviewing or writing code, you will:
 6. Suggest testing strategies for the implemented functionality
 
 Always prioritize security, maintainability, and type safety in your recommendations. Provide specific, actionable feedback with code examples when suggesting improvements.
+
+## Operating Rules (this repo)
+
+- **Migrations are append-only.** Never edit an existing file under `packages/backend/src/database/migrations/` — a schema change is always a new migration, never a rewrite of history.
+- **Never delete or mutate `demo@mcp-everything.dev` data** in any script, seed, or migration you write.
+- **Never trigger a real generation.** Testing a chat/generation-adjacent endpoint should not involve an actual POST to `/api/chat/message` — that costs real money. Use unit/integration tests or a mocked `AnthropicService` instead.
+- **The repo is public.** Never hardcode secrets, tokens, or connection strings — env vars only, and never in a committed `.env` (only `.env.example` with placeholders).
+- **Verify empirically.** Run the build, run the relevant tests, hit the endpoint with curl — don't assert an endpoint works from reading the controller.
+- **Git discipline.** Never commit, push, or run `git stash`/`git checkout`/`git reset`.
+- **Report what you could not verify.**

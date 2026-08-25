@@ -3,7 +3,21 @@ import * as path from 'path';
 import * as os from 'os';
 
 export interface Config {
+  /** Full base URL of a hosted MCP server, e.g. "https://my-server.mcp.example.com". */
   baseUrl?: string;
+  /**
+   * Origin of the MCP Everything backend, whose gateway fronts every hosted
+   * server: server ID "stripe-abc123k9" becomes
+   * "<platformUrl>/api/hosting/servers/stripe-abc123k9". Mirrors
+   * MCP_GATEWAY_PUBLIC_URL in packages/backend/src/hosting/hosting.service.ts.
+   */
+  platformUrl?: string;
+  /**
+   * @deprecated Legacy wildcard-domain suffix from when each server had its own
+   * subdomain. Still read (and interpreted as a platform origin) so existing
+   * config files keep working; prefer `platformUrl`.
+   */
+  domain?: string;
   apiKeys?: Record<string, string>;
 }
 

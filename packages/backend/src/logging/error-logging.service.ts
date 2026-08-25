@@ -74,9 +74,7 @@ export class ErrorLoggingService {
       return saved;
     } catch (dbError) {
       // If database logging fails, at least log to console
-      this.logger.error(
-        `Failed to persist error to database: ${dbError.message}`,
-      );
+      this.logger.error(`Failed to persist error to database: ${dbError.message}`);
       this.logger.error(
         `Original error: [${params.service}::${params.method}] ${params.error.message}`,
         params.error.stack,
@@ -318,9 +316,7 @@ export class ErrorLoggingService {
   /**
    * Sanitize context to remove sensitive data
    */
-  private sanitizeContext(
-    context?: Record<string, any>,
-  ): Record<string, any> | undefined {
+  private sanitizeContext(context?: Record<string, any>): Record<string, any> | undefined {
     if (!context) {
       return undefined;
     }

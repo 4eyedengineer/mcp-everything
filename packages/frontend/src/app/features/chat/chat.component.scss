@@ -3,7 +3,7 @@
   display: flex;
   flex-direction: column;
   height: 100%;
-  background-color: white;
+  background-color: var(--surface-color);
   position: relative;
 }
 
@@ -36,21 +36,26 @@
   .greeting {
     font-size: 32px;
     font-weight: 600;
-    color: #1f1f1f;
+    color: var(--text-primary);
     margin: 0 0 8px 0;
     text-align: center;
   }
 
   .tagline {
     font-size: 16px;
-    color: #6b6b6b;
+    color: var(--text-secondary);
     margin: 0 0 48px 0;
     text-align: center;
   }
 
   .suggestion-cards {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    // Fixed 3-column grid (matching the fixed count of 3 suggestion cards)
+    // rather than auto-fit minmax(280px, 1fr): the welcome-screen container
+    // caps out at 800px wide, so 3 * 280px + 2 * 16px gap (872px) never fit
+    // and the third card wrapped onto its own lopsided row. Tablet/mobile
+    // breakpoints below override this back to auto-fit/1-column.
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 16px;
     width: 100%;
     max-width: 900px;
@@ -61,16 +66,16 @@
     align-items: flex-start;
     gap: 16px;
     padding: 20px;
-    background-color: white;
-    border: 1px solid #e5e5e5;
+    background-color: var(--surface-color);
+    border: 1px solid var(--border-medium);
     border-radius: 12px;
     cursor: pointer;
     transition: all 0.2s ease;
     text-align: left;
 
     &:hover {
-      background-color: #f9f9f9;
-      border-color: #d1d1d1;
+      background-color: var(--surface-alt);
+      border-color: var(--border-dark);
       box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
     }
 
@@ -78,7 +83,7 @@
       font-size: 24px;
       width: 24px;
       height: 24px;
-      color: #6b6b6b;
+      color: var(--text-secondary);
       flex-shrink: 0;
       margin-top: 2px;
     }
@@ -89,13 +94,13 @@
       .suggestion-title {
         font-size: 15px;
         font-weight: 600;
-        color: #1f1f1f;
+        color: var(--text-primary);
         margin-bottom: 4px;
       }
 
       .suggestion-desc {
         font-size: 13px;
-        color: #6b6b6b;
+        color: var(--text-secondary);
       }
     }
   }
@@ -114,8 +119,8 @@
   max-width: 800px;
   margin: 16px auto;
   padding: 20px;
-  background: linear-gradient(135deg, #e8f5e9 0%, #f1f8e9 100%);
-  border: 1px solid #c8e6c9;
+  background: linear-gradient(135deg, var(--success-bg) 0%, var(--success-bg-alt) 100%);
+  border: 1px solid var(--success-border);
   border-radius: 12px;
   width: calc(100% - 32px);
 
@@ -126,13 +131,13 @@
     margin-bottom: 16px;
     font-weight: 600;
     font-size: 16px;
-    color: #2e7d32;
+    color: var(--success-text);
 
     mat-icon {
       font-size: 24px;
       width: 24px;
       height: 24px;
-      color: #4caf50;
+      color: var(--success-text);
     }
   }
 
@@ -156,43 +161,6 @@
   }
 }
 
-// Deployment Error Section
-.deployment-error {
-  max-width: 800px;
-  margin: 16px auto;
-  padding: 20px;
-  background: linear-gradient(135deg, #ffebee 0%, #fce4ec 100%);
-  border: 1px solid #ffcdd2;
-  border-radius: 12px;
-  width: calc(100% - 32px);
-
-  .deployment-header {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    margin-bottom: 12px;
-    font-weight: 600;
-    font-size: 16px;
-    color: #c62828;
-
-    mat-icon {
-      font-size: 24px;
-      width: 24px;
-      height: 24px;
-      color: #ef5350;
-    }
-  }
-
-  .error-message {
-    margin: 0;
-    font-size: 14px;
-    color: #b71c1c;
-    background-color: rgba(255, 255, 255, 0.5);
-    padding: 12px;
-    border-radius: 6px;
-  }
-}
-
 .message-wrapper {
   display: flex;
   gap: 16px;
@@ -200,27 +168,34 @@
   max-width: 800px;
   margin: 0 auto;
   width: 100%;
-  border-bottom: 1px solid #f0f0f0;
+  border-bottom: 1px solid var(--border-light);
 
   &:last-child {
     border-bottom: none;
   }
 
   &.user-message {
-    background-color: white;
+    background-color: var(--surface-color);
   }
 
   &.assistant-message {
-    background-color: #f9f9f9;
+    background-color: var(--surface-alt);
   }
 
   &.progress-message {
-    background-color: #fffbeb;
-    border-bottom-color: #fef3c7;
+    background-color: var(--warning-bg);
+    border-bottom-color: var(--warning-border);
 
     .avatar-circle {
+      // Intentionally NOT tokenized: styles.scss has no vivid "warning
+      // accent" color (--warning-bg/-bg-alt/-border are pale card-fill
+      // tones, not designed to sit behind a white icon), and reusing
+      // --warn-color here would make this read identically to the
+      // "pending" gray state below, losing the running-vs-pending
+      // distinction. This amber reads fine unchanged on both themes'
+      // --warning-bg card background.
       background-color: #fbbf24;
-      color: white;
+      color: var(--text-inverse);
     }
 
     .spinning {
@@ -229,12 +204,24 @@
   }
 
   &.error-message {
-    background-color: #fef2f2;
-    border-bottom-color: #fecaca;
+    background-color: var(--error-bg);
+    border-bottom-color: var(--error-border);
 
     .avatar-circle {
-      background-color: #ef4444;
-      color: white;
+      background-color: var(--error-text);
+      color: var(--text-inverse);
+    }
+  }
+
+  // A user bubble whose send failed - dimmed to read as "not actually
+  // delivered" rather than a normal sent message.
+  &.failed-message {
+    .message-body {
+      opacity: 0.6;
+    }
+
+    .avatar-circle {
+      opacity: 0.6;
     }
   }
 }
@@ -249,11 +236,11 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    background-color: #6b6b6b;
+    background-color: var(--text-secondary);
     color: white;
 
     &.user-avatar {
-      background-color: #2d2d2d;
+      background-color: var(--primary-color);
     }
 
     mat-icon {
@@ -279,15 +266,22 @@
     .message-sender {
       font-size: 14px;
       font-weight: 600;
-      color: #1f1f1f;
+      color: var(--text-primary);
     }
   }
 
   .message-body {
     font-size: 15px;
     line-height: 1.6;
-    color: #1f1f1f;
-    white-space: pre-wrap;
+    color: var(--text-primary);
+    // NOTE: deliberately no `white-space: pre-wrap` here. Content is always
+    // rendered through the safeMarkdown pipe (marked), which already turns
+    // literal newlines into <br>/paragraph breaks per its `breaks: true`
+    // option. `pre-wrap` on this container additionally preserved marked's
+    // own formatting whitespace between block-level tags (e.g. "</p>\n<ul>")
+    // as visible blank space, roughly doubling the gap between blocks on
+    // every structured reply. Code blocks keep correct whitespace handling
+    // via the `<pre>` element's UA-default `white-space: pre` below.
     word-wrap: break-word;
 
     p {
@@ -299,7 +293,7 @@
     }
 
     code {
-      background-color: #f5f5f5;
+      background-color: var(--background-hover);
       padding: 2px 6px;
       border-radius: 4px;
       font-family: 'Monaco', 'Menlo', monospace;
@@ -307,6 +301,11 @@
     }
 
     pre {
+      // Intentionally NOT tokenized to --surface-color/--text-primary: code
+      // blocks are deliberately dark regardless of app theme (the common
+      // "terminal" convention, matched by deploy-progress's .config-code) -
+      // in light mode, tokenizing this would make code blocks a nearly
+      // invisible white-on-white box instead of a clearly delineated one.
       background-color: #1f1f1f;
       color: #e5e5e5;
       padding: 16px;
@@ -328,7 +327,7 @@
     margin-top: 4px;
 
     .action-button {
-      color: #6b6b6b;
+      color: var(--text-secondary);
       transition: all 0.2s ease;
 
       mat-icon {
@@ -338,8 +337,61 @@
       }
 
       &:hover {
-        background-color: #e5e5e5;
-        color: #1f1f1f;
+        background-color: var(--background-hover);
+        color: var(--text-primary);
+      }
+    }
+  }
+
+  // Compact progress step trail - prior step messages, muted, below the
+  // current (bold, in message-body) step.
+  .progress-trail {
+    margin: 4px 0 0 0;
+    padding-left: 20px;
+    list-style: disc;
+
+    li {
+      font-size: 13px;
+      color: var(--text-secondary);
+      line-height: 1.5;
+    }
+  }
+
+  // Failed-send indicator + inline retry, shown under a user bubble whose
+  // send failed.
+  .failed-indicator {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 4px;
+    font-size: 13px;
+    color: var(--error-text);
+
+    .failed-icon {
+      font-size: 16px;
+      width: 16px;
+      height: 16px;
+      color: var(--error-text);
+    }
+
+    .retry-inline-button {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 13px;
+      min-width: 0;
+      padding: 0 8px;
+      line-height: 28px;
+      color: var(--error-text);
+
+      mat-icon {
+        font-size: 16px;
+        width: 16px;
+        height: 16px;
+      }
+
+      &:hover {
+        background-color: color-mix(in srgb, var(--error-text) 10%, transparent);
       }
     }
   }
@@ -372,17 +424,23 @@
       }
     }
 
+    // Outlined per the canonical .mcp-btn-secondary spec (styles/_buttons.scss)
+    // - previously an ad hoc solid near-black, indistinguishable from the
+    // primary "Deploy as Repo" action. "Deploy as Repo" stays the one solid
+    // primary action in this row.
     .gist-button {
-      background-color: #2d2d2d;
-      color: white;
+      background-color: transparent;
+      color: var(--text-primary);
+      border: 1px solid var(--border-medium);
 
       &:hover:not(:disabled) {
-        background-color: #171717;
+        background-color: var(--background-hover);
+        border-color: var(--border-dark);
       }
     }
 
     .download-zip-button {
-      color: #6b6b6b;
+      color: var(--text-secondary);
 
       mat-icon {
         font-size: 18px;
@@ -392,8 +450,8 @@
       }
 
       &:hover {
-        background-color: #f5f5f5;
-        color: #1f1f1f;
+        background-color: var(--background-hover);
+        color: var(--text-primary);
       }
     }
 
@@ -419,8 +477,8 @@
   .deployment-result-card {
     margin-top: 16px;
     padding: 20px;
-    background: linear-gradient(135deg, #e8f5e9 0%, #f1f8e9 100%);
-    border: 1px solid #c8e6c9;
+    background: linear-gradient(135deg, var(--success-bg) 0%, var(--success-bg-alt) 100%);
+    border: 1px solid var(--success-border);
     border-radius: 12px;
 
     .result-header {
@@ -430,13 +488,13 @@
       margin-bottom: 16px;
       font-weight: 600;
       font-size: 16px;
-      color: #2e7d32;
+      color: var(--success-text);
 
       .success-icon {
         font-size: 24px;
         width: 24px;
         height: 24px;
-        color: #4caf50;
+        color: var(--success-text);
       }
     }
 
@@ -444,7 +502,7 @@
       margin-bottom: 16px;
 
       a {
-        color: #1565c0;
+        color: var(--link-color);
         font-size: 14px;
         word-break: break-all;
         text-decoration: none;
@@ -479,25 +537,30 @@
       display: flex;
       align-items: center;
       gap: 8px;
-      background-color: rgba(255, 255, 255, 0.7);
+      // Was a flat rgba(255,255,255,0.7) - a translucent white card-on-card
+      // that looked correct against the light-mode success gradient but
+      // turned into a washed-out pale box against the dark-mode gradient.
+      // Mixing with --surface-color keeps it a translucent "surface" panel
+      // in either theme.
+      background-color: color-mix(in srgb, var(--surface-color) 70%, transparent);
       padding: 12px 16px;
       border-radius: 8px;
-      border: 1px solid #c8e6c9;
+      border: 1px solid var(--success-border);
 
       code {
         flex: 1;
         font-family: 'Monaco', 'Menlo', monospace;
         font-size: 13px;
-        color: #1f1f1f;
+        color: var(--text-primary);
         word-break: break-all;
       }
 
       button {
         flex-shrink: 0;
-        color: #6b6b6b;
+        color: var(--text-secondary);
 
         &:hover {
-          color: #1f1f1f;
+          color: var(--text-primary);
           background-color: rgba(0, 0, 0, 0.05);
         }
 
@@ -518,9 +581,9 @@
       gap: 12px;
       margin-top: 16px;
       padding: 12px 16px;
-      background-color: rgba(255, 255, 255, 0.7);
+      background-color: color-mix(in srgb, var(--surface-color) 70%, transparent);
       border-radius: 8px;
-      border: 1px solid #c8e6c9;
+      border: 1px solid var(--success-border);
 
       .validation-badge {
         display: flex;
@@ -542,25 +605,29 @@
         .tools-count {
           font-size: 12px;
           font-weight: 400;
-          color: #666;
+          color: var(--text-secondary);
         }
 
         &.validation-passed {
-          color: #2e7d32;
+          color: var(--success-text);
 
           mat-icon {
-            color: #4caf50;
+            color: var(--success-text);
           }
         }
 
         &.validation-failed {
-          color: #c62828;
+          color: var(--error-text);
 
           mat-icon {
-            color: #ef5350;
+            color: var(--error-text);
           }
         }
 
+        // Not tokenized - see the .progress-message .avatar-circle comment
+        // above re: no vivid warning-accent token existing; reusing
+        // --warn-color here would make "running" indistinguishable from
+        // "pending" below.
         &.validation-running {
           color: #f57c00;
 
@@ -571,24 +638,24 @@
         }
 
         &.validation-pending {
-          color: #757575;
+          color: var(--text-secondary);
 
           mat-icon {
-            color: #9e9e9e;
+            color: var(--text-tertiary);
           }
         }
 
         &.validation-skipped {
-          color: #757575;
+          color: var(--text-secondary);
 
           mat-icon {
-            color: #9e9e9e;
+            color: var(--text-tertiary);
           }
         }
       }
 
       .revalidate-button {
-        color: #1565c0;
+        color: var(--link-color);
         font-size: 13px;
 
         mat-icon {
@@ -599,7 +666,7 @@
         }
 
         &:hover {
-          background-color: rgba(21, 101, 192, 0.1);
+          background-color: color-mix(in srgb, var(--link-color) 10%, transparent);
         }
       }
     }
@@ -609,8 +676,8 @@
   .deployment-error-card {
     margin-top: 16px;
     padding: 20px;
-    background: linear-gradient(135deg, #ffebee 0%, #fce4ec 100%);
-    border: 1px solid #ffcdd2;
+    background: linear-gradient(135deg, var(--error-bg) 0%, var(--error-bg-alt) 100%);
+    border: 1px solid var(--error-border);
     border-radius: 12px;
 
     .error-header {
@@ -620,21 +687,21 @@
       margin-bottom: 12px;
       font-weight: 600;
       font-size: 16px;
-      color: #c62828;
+      color: var(--error-text);
 
       .error-icon {
         font-size: 24px;
         width: 24px;
         height: 24px;
-        color: #ef5350;
+        color: var(--error-text);
       }
     }
 
     .error-message {
       margin: 0 0 16px 0;
       font-size: 14px;
-      color: #b71c1c;
-      background-color: rgba(255, 255, 255, 0.5);
+      color: var(--error-text);
+      background-color: rgba(0, 0, 0, 0.06);
       padding: 12px;
       border-radius: 6px;
     }
@@ -645,7 +712,7 @@
       gap: 8px;
 
       .retry-button {
-        color: #c62828;
+        color: var(--error-text);
 
         mat-icon {
           font-size: 18px;
@@ -655,7 +722,7 @@
         }
 
         &:hover {
-          background-color: rgba(198, 40, 40, 0.1);
+          background-color: color-mix(in srgb, var(--error-text) 10%, transparent);
         }
       }
     }
@@ -664,8 +731,8 @@
 
 // Input Area
 .input-area {
-  border-top: 1px solid #e5e5e5;
-  background-color: white;
+  border-top: 1px solid var(--border-medium);
+  background-color: var(--surface-color);
   padding: 16px 0 24px 0;
 }
 
@@ -680,20 +747,20 @@
   display: flex;
   align-items: flex-end;
   gap: 8px;
-  background-color: white;
-  border: 1px solid #d1d1d1;
+  background-color: var(--surface-color);
+  border: 1px solid var(--border-dark);
   border-radius: 24px;
   padding: 8px 12px;
   transition: all 0.2s ease;
   box-shadow: 0 0 0 0 rgba(45, 45, 45, 0);
 
   &:focus-within {
-    border-color: #6b6b6b;
+    border-color: var(--text-secondary);
     box-shadow: 0 0 0 3px rgba(45, 45, 45, 0.1);
   }
 
   .input-icon-button {
-    color: #6b6b6b;
+    color: var(--text-secondary);
     flex-shrink: 0;
 
     mat-icon {
@@ -703,7 +770,7 @@
     }
 
     &:hover {
-      background-color: #f5f5f5;
+      background-color: var(--background-hover);
     }
   }
 
@@ -719,10 +786,10 @@
     font-family: inherit;
     line-height: 1.5;
     background: transparent;
-    color: #1f1f1f;
+    color: var(--text-primary);
 
     &::placeholder {
-      color: #8e8e8e;
+      color: var(--text-tertiary);
     }
 
     &:disabled {
@@ -732,15 +799,15 @@
   }
 
   .send-button {
-    color: #6b6b6b;
+    color: var(--text-secondary);
     flex-shrink: 0;
     transition: all 0.2s ease;
 
     &:not(:disabled) {
-      color: #1f1f1f;
+      color: var(--text-primary);
 
       &:hover {
-        background-color: #f5f5f5;
+        background-color: var(--background-hover);
       }
     }
 
@@ -754,6 +821,14 @@
       width: 22px;
       height: 22px;
     }
+
+    // While loading, the button is disabled (there's no backend cancel
+    // path) - show a spinner rather than a stop icon, which would
+    // misleadingly imply the disabled button could cancel the in-flight
+    // request.
+    ::ng-deep mat-spinner circle {
+      stroke: var(--text-secondary);
+    }
   }
 }
 
@@ -761,7 +836,7 @@
   margin-top: 12px;
   text-align: center;
   font-size: 12px;
-  color: #8e8e8e;
+  color: var(--text-tertiary);
 }
 
 // Animations
@@ -781,15 +856,15 @@
   }
 
   &::-webkit-scrollbar-track {
-    background: #f9f9f9;
+    background: var(--surface-alt);
   }
 
   &::-webkit-scrollbar-thumb {
-    background: #d1d1d1;
+    background: var(--scrollbar-thumb);
     border-radius: 4px;
 
     &:hover {
-      background: #b8b8b8;
+      background: var(--scrollbar-thumb-hover);
     }
   }
 }

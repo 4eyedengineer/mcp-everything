@@ -82,19 +82,11 @@ export const MCP_SERVER_STATUSES: McpServerStatus[] = [
  */
 export type McpServerVisibility = 'public' | 'private' | 'unlisted';
 
-export const MCP_SERVER_VISIBILITIES: McpServerVisibility[] = [
-  'public',
-  'private',
-  'unlisted',
-];
+export const MCP_SERVER_VISIBILITIES: McpServerVisibility[] = ['public', 'private', 'unlisted'];
 
 /**
  * MCP Server Language
  */
 export type McpServerLanguage = 'typescript' | 'python' | 'javascript';
 
-export const MCP_SERVER_LANGUAGES: McpServerLanguage[] = [
-  'typescript',
-  'python',
-  'javascript',
-];
+export const MCP_SERVER_LANGUAGES: McpServerLanguage[] = ['typescript', 'python', 'javascript'];

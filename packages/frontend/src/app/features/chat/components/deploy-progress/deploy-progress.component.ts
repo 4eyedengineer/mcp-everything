@@ -10,6 +10,10 @@ import {
   HostedServerStatus,
   ServerStatusResponse
 } from '../../../../core/services/hosting-api.service';
+import {
+  buildClaudeDesktopConfigJson,
+  claudeDesktopApiKeyHint
+} from '../../../../shared/utils/claude-desktop-config.util';
 
 /**
  * Deployment step status
@@ -56,9 +60,23 @@ export class DeployProgressComponent implements OnInit, OnDestroy {
   @Output() deploymentComplete = new EventEmitter<DeploymentCompleteEvent>();
   @Output() retry = new EventEmitter<void>();
 
+  /**
+   * The stages a deploy actually passes through.
+   *
+   * 'building' and 'pushing' used to be shown here. They described the backend
+   * building and pushing a per-server container image, which no longer
+   * happens and cannot: the backend runs as a pod with no docker daemon.
+   * Every hosted server now runs one shared runner image that fetches and
+   * compiles its own source in an initContainer, so the backend's whole
+   * contribution is "apply the objects" and the cluster does the rest.
+   *
+   * Keeping stages nothing can ever set is not cosmetic - a bar that shows
+   * 'Pushing to registry' as a step which never completes reads as a hung
+   * deploy. That bug already shipped here once (nothing set 'pushing' before
+   * the build/push split); this removes the possibility rather than papering
+   * over it. `statusOrder` below must stay in sync with this list.
+   */
   steps: DeploymentStep[] = [
-    { id: 'building', label: 'Building container', status: 'pending' },
-    { id: 'pushing', label: 'Pushing to registry', status: 'pending' },
     { id: 'deploying', label: 'Deploying to cluster', status: 'pending' },
     { id: 'running', label: 'Server ready', status: 'pending' }
   ];
@@ -122,12 +140,7 @@ export class DeployProgressComponent implements OnInit, OnDestroy {
     // Check for terminal states
     if (status.status === 'running') {
       this.deployed = true;
-      this.endpointUrl = `https://${this.serverId}.mcp.example.com`; // Placeholder
-      this.deploymentComplete.emit({
-        success: true,
-        serverId: this.serverId,
-        endpointUrl: this.endpointUrl
-      });
+      this.loadEndpointUrl();
     } else if (status.status === 'failed') {
       this.failed = true;
       this.error = status.message || 'Deployment failed';
@@ -140,10 +153,43 @@ export class DeployProgressComponent implements OnInit, OnDestroy {
   }
 
   /**
+   * The `/status` polling response (`ServerStatusResponse`) intentionally
+   * does not carry `endpointUrl` - only the full server record
+   * (`GET /servers/:serverId`, via `getServer`) does. Fetch that once the
+   * server reaches 'running' rather than fabricating a URL. If this call
+   * fails, the deployment itself still succeeded (status polling already
+   * confirmed 'running'); we just honestly show no endpoint rather than
+   * inventing one.
+   */
+  private loadEndpointUrl(): void {
+    this.hostingApiService.getServer(this.serverId).subscribe({
+      next: (server) => {
+        this.endpointUrl = server.endpointUrl || undefined;
+        this.emitComplete();
+      },
+      error: () => {
+        this.endpointUrl = undefined;
+        this.emitComplete();
+      }
+    });
+  }
+
+  private emitComplete(): void {
+    this.deploymentComplete.emit({
+      success: true,
+      serverId: this.serverId,
+      endpointUrl: this.endpointUrl
+    });
+  }
+
+  /**
    * Update step statuses based on server status
    */
   private updateSteps(status: HostedServerStatus): void {
-    const statusOrder: HostedServerStatus[] = ['pending', 'building', 'pushing', 'deploying', 'running'];
+    // Index 0 is the implicit "queued" state, which is not a rendered step;
+    // every later entry lines up 1:1 with `steps`. 'building'/'pushing' are
+    // deliberately absent - see the comment on `steps`.
+    const statusOrder: HostedServerStatus[] = ['pending', 'deploying', 'running'];
     const currentIndex = statusOrder.indexOf(status);
 
     for (let i = 0; i < this.steps.length; i++) {
@@ -209,21 +255,22 @@ export class DeployProgressComponent implements OnInit, OnDestroy {
   }
 
   /**
-   * Get Claude Desktop configuration snippet
+   * Get Claude Desktop configuration snippet. Claude Desktop can only launch
+   * local stdio processes, so a hosted server is reached through the local
+   * `mcp-connect` proxy (see claude-desktop-config.util.ts) - this does not
+   * depend on `endpointUrl` at all, only on `serverId`.
+   *
+   * The snippet now carries an API key placeholder, because hosted servers sit
+   * behind the authenticating MCP gateway; see `claudeDesktopApiKeyHint`, which
+   * must be shown alongside it.
    */
   get claudeDesktopConfig(): string {
-    return JSON.stringify(
-      {
-        mcpServers: {
-          [this.serverName.toLowerCase().replace(/\s+/g, '-')]: {
-            transport: 'sse',
-            url: this.endpointUrl
-          }
-        }
-      },
-      null,
-      2
-    );
+    return buildClaudeDesktopConfigJson(this.serverName, this.serverId);
+  }
+
+  /** Instruction to render next to the snippet: it is not usable unedited. */
+  get claudeDesktopApiKeyHint(): string {
+    return claudeDesktopApiKeyHint(this.serverId);
   }
 
   /**

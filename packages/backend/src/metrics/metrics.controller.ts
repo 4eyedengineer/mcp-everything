@@ -1,10 +1,14 @@
-import { Controller, Get, Header, Res } from '@nestjs/common';
+import { Controller, Get, Res } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { Response } from 'express';
+import { SkipThrottle } from '@nestjs/throttler';
 import { MetricsService } from './metrics.service';
+import { Public } from '../auth/decorators/public.decorator';
 
 @ApiTags('metrics')
 @Controller('metrics')
+@Public() // Prometheus cannot send a JWT; restrict at the network layer instead
+@SkipThrottle() // Prometheus scrapes on a fixed interval; do not rate limit
 export class MetricsController {
   constructor(private readonly metricsService: MetricsService) {}
 
