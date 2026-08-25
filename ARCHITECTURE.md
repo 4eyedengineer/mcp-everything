@@ -766,7 +766,7 @@ Input → analyzeIntent → research → planTools → clarify → refine (Docke
 
 Each generated server now emits its own `Dockerfile` and `.dockerignore` (previously optional); `GENERATED_SERVERS_DIR` configures where output is written on disk, and `Deployment` records persist `serverName`/`localPath` for later redeploy. `.github/workflows/deploy.yml` builds and pushes `:latest` for the backend/frontend images on every push to `main`.
 
-**Unvalidated**: Kubernetes manifests exist under `k8s/` (base + overlays for production/development, monitoring stack, cert-manager, ingress) and CI publishes images, but the actual cloud/k8s deploy path has not been exercised end-to-end.
+**Verified 2026-08-25**: Kubernetes manifests exist under `k8s/` (base + overlays for production/development, monitoring stack, cert-manager, ingress) and CI publishes images. The cloud/k8s deploy path was exercised end-to-end on the self-hosted homelab k3s cluster (not a commercial cloud): a generated server was deployed via "Host on Cloud," its `mcp-runner` pod fetched source, ran `npm install` + `tsc`, came up 1/1 Running, and served MCP over HTTP through the gateway. Auto-scaling/HPA behavior under real load remains unverified.
 
 ### Generated MCP Server Transport
 

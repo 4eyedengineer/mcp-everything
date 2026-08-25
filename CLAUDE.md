@@ -18,15 +18,15 @@ This is **MCP Everything** - an AI-native platform for automatically generating 
 - **Implementation**: GenerationPipeline (analyzeIntent → research → planTools → clarify → refine → persist) fully coded and validated ✅
 - **Frontend**: Fully standalone Angular 20 (no NgModules), LibreChat-inspired design ✅
 - **Architecture**: AI-first conversational interface with an explicit, single-file pipeline (no LangGraph)
-- **Backend**: All core services implemented (research, planning, refinement, Docker-sandboxed validation) ✅
+- **Backend**: All core services implemented (research, planning, refinement, Docker-sandboxed (local) or Kubernetes-sandboxed (production) validation) ✅
 - **Database**: PostgreSQL schema defined, including `pipeline_runs` for per-step observability ✅
-- **Reality Check**: E2E-validated on 2026-07-29 — the pipeline generated two working MCP servers (JSONPlaceholder: 7/7 and 10/10 tools passing), independently verified via stdio JSON-RPC. "Never run end-to-end" is no longer accurate. Cloud hosting deploy path and the Kubernetes manifests remain unexercised end-to-end.
-- **Transport**: Generated servers are dual-transport via `MCP_TRANSPORT` (`stdio` default — unchanged for Claude Desktop/GitHub/Gist; `http` — real MCP Streamable HTTP on `POST /mcp` + `GET /health`, high-level `McpServer`/`registerTool` API, SDK pinned `1.30.0`, protocol `2025-11-25`). K8s manifests set `MCP_TRANSPORT=http` so probes target a real listener — this closes the transport mismatch that previously guaranteed K8s deploys would fail probes, but the cluster path itself is still unexercised end-to-end (no Docker daemon on the dev machine either, so the container path is unverified too)
-- **Security**: Global JWT guard + ownership checks on all conversations/deployments; single-use SSE stream tickets; Docker-sandboxed code execution; the 5 unauthenticated debug endpoints have been deleted
+- **Reality Check**: E2E-validated on 2026-07-29 in local dev (two working MCP servers, JSONPlaceholder: 7/7 and 10/10 tools passing, independently verified via stdio JSON-RPC). Verified again on **2026-08-25, this time live in production on the homelab k3s cluster**: a chat request for a JSONPlaceholder MCP server ran research → tool planning → codegen → validation inside an isolated, hardened Kubernetes test pod (all tools passed on iteration 1) → persisted; the generated server was then hosted on the cluster ("Host on Cloud") and reached live through the platform's own aggregator MCP server. See `ROADMAP.md` for details. "Never run end-to-end" and "cloud/k8s path unexercised" are no longer accurate.
+- **Transport**: Generated servers are dual-transport via `MCP_TRANSPORT` (`stdio` default — unchanged for Claude Desktop/GitHub/Gist; `http` — real MCP Streamable HTTP on `POST /mcp` + `GET /health`, high-level `McpServer`/`registerTool` API, SDK pinned `1.30.0`, protocol `2025-11-25`). K8s manifests set `MCP_TRANSPORT=http` so probes target a real listener; the mcp-runner pod for a hosted server was verified 2026-08-25 to fetch source, `npm install` + `tsc`, come up 1/1 Running, and serve MCP over HTTP through the gateway
+- **Security**: Global JWT guard + ownership checks on all conversations/deployments; single-use SSE stream tickets; untrusted LLM-generated code is validated in a throwaway, hardened Kubernetes pod in production (`K8sTestSandboxService`: no service account token, non-root, read-only rootfs, all capabilities dropped, seccomp, resource limits, always torn down) with a Docker-sandboxed path for local dev; the backend fails closed with no sandbox and hard-disables the old unsandboxed escape hatch under `NODE_ENV=production`; the 5 unauthenticated debug endpoints have been deleted
 - **Marketplace**: Real backend, seeded with 6 servers, frontend Explore uses the real API (not placeholder data)
-- **Platform MCP Server**: `POST /mcp` exposes the platform to agents; tools are registered in `packages/backend/src/mcp-server/mcp-tools.service.ts` and now include the aggregator pair `search_tools` / `call_tool`, which let one connection discover and invoke the tools of the caller's own hosted servers via `HostedMcpClientService` (`packages/backend/src/hosting/services/hosted-mcp-client.service.ts`) ✅
-- **Vision Alignment**: Business infrastructure (auth, hosting, marketplace) now largely in place; quota/usage-limit enforcement is in progress
-- **Next Milestone**: Finish quota enforcement, exercise the cloud hosting/k8s deploy path end-to-end
+- **Platform MCP Server**: `POST /mcp` exposes the platform to agents; 8 tools are registered in `packages/backend/src/mcp-server/mcp-tools.service.ts`, including the aggregator pair `search_tools` / `call_tool`, which let one connection discover and invoke the tools of the caller's own hosted servers via `HostedMcpClientService` (`packages/backend/src/hosting/services/hosted-mcp-client.service.ts`). Verified 2026-08-25 with a real `mcpe_` API key: `search_tools` discovered a hosted server's tools and `call_tool` invoked one and returned real data ✅
+- **Vision Alignment**: Business infrastructure (auth, hosting, marketplace) in place and, as of 2026-08-25, verified working end-to-end on the cluster; real payments remain outstanding
+- **Next Milestone**: Configure Stripe products/prices and exercise billing with real payments; the cloud hosting/k8s deploy path itself is now verified
 
 ## Architecture Decisions Made
 
@@ -98,7 +98,7 @@ The 8-node LangGraph state machine and the 4-agent ensemble it used to route thr
     GenerationPipeline,     // Orchestrates the full pipeline below
     ResearchService,        // Input-agnostic research (GitHub/web/APIs/docs)
     RefinementService,      // Generate-Test-Refine loop (max 5 iterations)
-    McpTestingService,      // Docker-sandboxed MCP server validation
+    McpTestingService,      // Docker- or Kubernetes-sandboxed MCP server validation
     GitHubAnalysisService,  // Repository analysis with Octokit
     AnthropicService,       // Single seam to Claude (structured outputs, retries, cost telemetry)
   ],
@@ -112,7 +112,7 @@ export class ChatModule {}
 2. **research**: Multi-source research (GitHub, web, APIs, docs)
 3. **planTools**: One structured Claude call that turns research findings into the concrete tool set — replaces the deleted 4-agent ensemble
 4. **clarify**: Gap detection; pauses and persists state on the conversation row, resumes without re-running research when the user replies
-5. **refine**: Generate-Test-Refine loop, max 5 iterations, Docker-sandboxed validation
+5. **refine**: Generate-Test-Refine loop, max 5 iterations, Docker- or Kubernetes-sandboxed validation
 6. **persist**: Save final generated server + `pipeline_runs` record
 7. **provideHelp** / **handleError**: Side paths for help requests and failures
 
@@ -134,17 +134,17 @@ Every step writes a `pipeline_runs` row (status, timings, tokens) for observabil
 
 ## Current Priorities
 
-### Phase 1: Validate Core ✅ DONE (2026-07-29)
+### Phase 1: Validate Core ✅ DONE (2026-07-29, local; reverified in production 2026-08-25)
 
-The pipeline generated working MCP servers twice (JSONPlaceholder, 7/7 and 10/10 tools passing), independently verified via stdio JSON-RPC. The 8-node LangGraph state machine, EnsembleService, McpGenerationService, ToolDiscoveryService, and the old in-memory conversation engine have been deleted and replaced by `GenerationPipeline`.
+The pipeline generated working MCP servers twice (JSONPlaceholder, 7/7 and 10/10 tools passing), independently verified via stdio JSON-RPC. The 8-node LangGraph state machine, EnsembleService, McpGenerationService, ToolDiscoveryService, and the old in-memory conversation engine have been deleted and replaced by `GenerationPipeline`. On 2026-08-25 the same loop was verified live on the cluster, validating untrusted generated code inside a hardened Kubernetes test pod instead of local Docker.
 
 ### Phase 2: Business Foundation — Largely Done ✅
 
 - **User Authentication**: Global JWT guard, ownership checks on conversations/deployments/hosting, password reset flow ✅
 - **Marketplace**: Real backend, seeded with 6 servers, interim `AdminGuard` via `ADMIN_USER_EMAILS` ✅
-- **Hosting Infrastructure**: Generated servers emit Dockerfile/.dockerignore, deployments persist `serverName`/`localPath`, `GENERATED_SERVERS_DIR` config, `deploy.yml` builds `:latest` on main ✅ — the cloud/k8s deploy path itself has not been exercised end-to-end
+- **Hosting Infrastructure**: Generated servers emit Dockerfile/.dockerignore, deployments persist `serverName`/`localPath`, `GENERATED_SERVERS_DIR` config, `deploy.yml` builds `:latest` on main ✅. The cloud/k8s deploy path was verified end-to-end 2026-08-25 (generate → sandbox-validate → host → reach via the aggregator), running on the homelab k3s cluster, not a commercial cloud
 - **Quota/Billing**: Tier-based monthly generation limits enforced in the pipeline (writing `UsageRecord`) ✅
-- **Stripe**: Checkout/portal/webhooks implemented; now connected to limits via quota enforcement — end-to-end billing flow still unexercised with real payments
+- **Stripe**: Checkout/portal/webhooks implemented, with webhook idempotency and an API-version/period bug fixed; still no Stripe products/prices configured, so nothing is purchasable and the end-to-end billing flow remains unexercised with real payments
 
 ### Phase 3: Marketplace Frontend — Done ✅
 
@@ -152,9 +152,9 @@ Explore page connects to the real marketplace API (previously placeholder data).
 
 ### Remaining Work
 
-1. Finish quota enforcement
-2. Add Stripe/payment integration
-3. Exercise the cloud hosting and Kubernetes deploy path end-to-end (manifests exist under `k8s/` but are untested)
+1. Configure Stripe products/prices and exercise billing with real payments
+2. Provide a fresh `GITHUB_TOKEN` (current one is unset/expired, so GitHub research runs unauthenticated/rate-limited) and an email provider (password reset has none configured)
+3. Move off the self-hosted homelab k3s cluster if a commercial-cloud target is desired; add database backups in this repo (any snapshots today live in separate homelab infra)
 
 **See [ROADMAP.md](ROADMAP.md) for the fuller status breakdown.**
 

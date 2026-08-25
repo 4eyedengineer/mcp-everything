@@ -964,14 +964,13 @@ from real cloud hosting):
 - No registry push, no multi-host scheduling, no ingress/TLS, no horizontal
   scaling - it proves the container image and the MCP server inside it are
   correct, not that the cluster deployment path works.
-- Getting from here to a real cluster deployment still needs: a reachable
-  image registry to push to, and a running Kubernetes cluster (or KinD via
-  the existing `LOCAL_DEV=true` + `scripts/kind/setup.sh` workflow) for
-  `kubectl apply`/ArgoCD to reconcile against. Generated servers implementing
-  the HTTP transport the K8s manifests' probes expect is no longer the
-  blocker it used to be, but nothing in this codebase has exercised that
-  combination (real image, real push, real cluster, real probe) together -
-  the K8s hosting path remains untested end-to-end.
+- **Verified 2026-08-25**: the real cluster deployment path (real image, real
+  push, real cluster, real probe) has since been exercised end-to-end on the
+  self-hosted homelab k3s cluster - a generated server was deployed via
+  "Host on Cloud," its `mcp-runner` pod fetched source, ran `npm install` +
+  `tsc`, came up 1/1 Running, and served MCP over HTTP through the gateway.
+  This runs on a homelab cluster, not a commercial cloud, and auto-scaling/HPA
+  under real load is still unverified.
 - No client authentication for hosted servers either way: `HostedServer` has
   no API key column, and the current security posture is unguessable UUIDs
   for `serverId`/`endpointUrl`, not credentials. Hosting is also not metered

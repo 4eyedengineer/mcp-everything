@@ -2,29 +2,33 @@
 
 AI-native conversational platform for automatically generating and hosting Model Context Protocol (MCP) servers through natural language chat.
 
-## Status (July 2026)
+## Status (August 2026)
 
-**E2E-Validated — Core Generator Proven, Business Infrastructure Largely Built**
+**E2E-Validated in Production: Generator, Sandboxed Validation, Hosting, and Aggregator All Proven on the Cluster**
 
 ### ✅ What's Built and Validated
 - `GenerationPipeline`: an explicit orchestration service (analyzeIntent → research → planTools → clarify → refine → persist) that replaced the old 8-node LangGraph state machine and 4-agent ensemble; `@langchain/*` dependencies fully removed
 - Fully standalone Angular 20 frontend (no NgModules), functional interceptors/guards, signals-based chat state, SSE streaming
 - Single `AnthropicService` AI layer: claude-sonnet-5 (default) / claude-haiku-4-5 (small tier), structured outputs, retries, token/cost telemetry in Prometheus
 - PostgreSQL schema for conversations, deployments, and per-step `pipeline_runs` observability
-- Global JWT guard with ownership checks on conversations/deployments/hosting; single-use 60s SSE stream tickets; Docker-sandboxed code execution (`npm --ignore-scripts`, no host env, resource limits); the 5 unauthenticated debug endpoints have been deleted
+- Global JWT guard with ownership checks on conversations/deployments/hosting; single-use 60s SSE stream tickets; untrusted, LLM-generated code validated in a throwaway, hardened Kubernetes pod in production (`K8sTestSandboxService`: no service account token, non-root, read-only rootfs, all capabilities dropped, seccomp, resource limits) with a Docker-sandboxed path for local dev; the backend fails closed with no sandbox available; the 5 unauthenticated debug endpoints have been deleted
+- Tier-based monthly generation quota enforced in the pipeline (writing `UsageRecord`)
 - Real marketplace backend, seeded with 6 servers; Explore page connects to the real API
-- **Validated on 2026-07-29**: the pipeline generated two working MCP servers (JSONPlaceholder, 7/7 and 10/10 tools passing), independently verified via stdio JSON-RPC
-- **Dual-transport generated servers**: `MCP_TRANSPORT` env var selects `stdio` (default - Claude Desktop, GitHub/Gist downloads) or `http` (real MCP Streamable HTTP on `POST /mcp` + `GET /health`, protocol `2025-11-25`, high-level `McpServer`/`registerTool` API, `@modelcontextprotocol/sdk` pinned to `1.30.0`); K8s manifests now set `MCP_TRANSPORT=http` so liveness/readiness probes target a real listener
+- **Validated on 2026-07-29 in local dev**: the pipeline generated two working MCP servers (JSONPlaceholder, 7/7 and 10/10 tools passing), independently verified via stdio JSON-RPC
+- **Dual-transport generated servers**: `MCP_TRANSPORT` env var selects `stdio` (default - Claude Desktop, GitHub/Gist downloads) or `http` (real MCP Streamable HTTP on `POST /mcp` + `GET /health`, protocol `2025-11-25`, high-level `McpServer`/`registerTool` API, `@modelcontextprotocol/sdk` pinned to `1.30.0`); K8s manifests set `MCP_TRANSPORT=http` so liveness/readiness probes target a real listener
+- **Verified 2026-08-25, live in production on the self-hosted homelab k3s cluster**: a chat request for a JSONPlaceholder MCP server ran the full pipeline including validation inside an isolated Kubernetes test pod (all tools passing on iteration 1); the generated server was then deployed via "Host on Cloud" and came up serving MCP over HTTP through the gateway; the platform's own aggregator MCP server (`search_tools` / `call_tool` on `POST /mcp`) discovered and invoked that hosted server's tools through a single API-key connection
 
 ### ⚠️ What Still Needs Validation
-- **Cloud/Kubernetes deploy path** - manifests exist under `k8s/` and generated servers now implement the HTTP transport those manifests' probes expect, but the deploy has never been exercised end-to-end against a real cluster; there's also no Docker daemon on the dev machine, so the container build/run path itself is unverified
-- **Quota enforcement** - tier-based monthly usage limits are in progress
-- **Payments** - no Stripe/billing integration yet
+- **Payments** - Stripe checkout/portal/webhooks are implemented and correctness-fixed, but no products/prices are configured, so nothing is purchasable yet; the end-to-end billing flow is unexercised with real payments
+- **Homelab, not commercial cloud** - the verified deploy above runs on a self-hosted k3s cluster; no database backups are configured in this repo (any volume snapshots live in separate homelab infra); the deploy workflow that tracks this branch runs without the CI lint/typecheck/test gate that `main` has
+- **Credential/ops gaps** - the server-wide `GITHUB_TOKEN` is unset/expired (GitHub research runs unauthenticated and rate-limited until refreshed); no email provider is configured for password reset
+- **Auto-scaling under load** - HPA manifests exist but scaling behavior under real traffic is unverified
+- **Cold start** - each hosted or test-sandbox pod pays a from-scratch `npm install` + `tsc` cold start (~50-60s observed for the test sandbox); there is no pre-warming or dependency caching for that path
 
 ### 🎯 Next Steps
-1. Finish quota enforcement (tier monthly limits)
-2. Add Stripe/payment integration
-3. Exercise the cloud hosting and Kubernetes deploy path end-to-end
+1. Configure Stripe products/prices and exercise billing with real payments
+2. Provide a fresh `GITHUB_TOKEN` and an email provider
+3. Marketplace polish and advanced features (semantic search, auth passthrough) - largely unstarted
 
 See [ROADMAP.md](ROADMAP.md) for the fuller status breakdown.
 

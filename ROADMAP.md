@@ -1,19 +1,19 @@
 # MCP Everything - Roadmap & Vision Alignment
 
-**Last Updated**: July 2026 (post rework/2026-07-review)
-**Vision Alignment**: Core generator validated end-to-end; most business infrastructure now built. Remaining: quota enforcement (in progress), payments, and a real cloud/k8s deploy exercise.
+**Last Updated**: August 2026 (post rework/2026-07-review; cloud/k8s hosting verified 2026-08-25)
+**Vision Alignment**: Core generator validated end-to-end, in production, including the cloud/Kubernetes hosting and aggregator path. Most business infrastructure is built. Remaining: real payments (no Stripe products/prices configured yet), plus a handful of ops/credential gaps.
 
 ---
 
 ## Executive Summary
 
-The 8-node LangGraph state machine and 4-agent ensemble described below have been **deleted** and replaced by `GenerationPipeline`, an explicit orchestration service (analyzeIntent → research → planTools → clarify → refine → persist). On 2026-07-29 the pipeline generated two working MCP servers end-to-end (JSONPlaceholder: 7/7 and 10/10 tools passing), independently verified via stdio JSON-RPC — the "never run end-to-end" gap called out throughout this document is closed.
+The 8-node LangGraph state machine and 4-agent ensemble described below have been **deleted** and replaced by `GenerationPipeline`, an explicit orchestration service (analyzeIntent → research → planTools → clarify → refine → persist). On 2026-07-29 the pipeline generated two working MCP servers end-to-end in local dev (JSONPlaceholder: 7/7 and 10/10 tools passing), independently verified via stdio JSON-RPC — the "never run end-to-end" gap called out throughout this document is closed.
 
-Since then, authentication (global JWT guard + ownership checks), a real marketplace backend (seeded with 6 servers), and a hosting/deployment pathway (Dockerfile generation, CI image publishing) have also been built. What remains: finishing quota/usage-limit enforcement, adding payments, and exercising the cloud hosting/Kubernetes deploy path end-to-end (the manifests exist but are untested).
+Since then, authentication (global JWT guard + ownership checks), a real marketplace backend (seeded with 6 servers), and a hosting/deployment pathway (Dockerfile generation, CI image publishing) have also been built. **On 2026-08-25 the full loop was verified live in production** on the self-hosted homelab k3s cluster: a chat request generated a JSONPlaceholder MCP server (research → tool planning → codegen → validation inside a hardened, throwaway Kubernetes test pod, all tools passing on iteration 1 → persisted), the generated server was hosted on the cluster and came up serving MCP over HTTP, and the platform's own aggregator MCP server (`search_tools` / `call_tool`) discovered and called that hosted server's tools through a single API-key connection. What remains: real payments (Stripe code is implemented and correctness-fixed, but no products/prices are configured, so nothing is purchasable), and a few credential/ops gaps (expired `GITHUB_TOKEN`, no email provider, no database backups in this repo). See the per-section 2026-08 notes below for detail.
 
 The sections below are preserved largely as originally written, with status notes added where the rework changed the picture — treat percentages/estimates as historical unless a note says otherwise.
 
-**Analogy**: We built a sophisticated Ferrari engine, and have since bolted on a chassis, wheels, and most of a dealership — payment system and a real test drive around the block are still missing.
+**Analogy**: We built a sophisticated Ferrari engine, and have since bolted on a chassis, wheels, and a dealership, and taken it for a real test drive around the block. The payment system at the register is still not switched on.
 
 ---
 
@@ -49,6 +49,8 @@ The sections below are preserved largely as originally written, with status note
 **Gap (as originally written)**: Never run end-to-end with real repositories ⚠️
 
 > **2026-07 update**: The LangGraph state machine, its multi-agent architecture, `ToolDiscoveryService`, and `McpGenerationService` have all been **deleted** and replaced by `GenerationPipeline` (analyzeIntent → research → planTools → clarify → refine → persist), a single explicit orchestration service. The "never run end-to-end" gap is **closed**: on 2026-07-29 the pipeline generated two working MCP servers (JSONPlaceholder, 7/7 and 10/10 tools passing), independently verified via stdio JSON-RPC. AI now runs through a single `AnthropicService` (claude-sonnet-5 default / claude-haiku-4-5 small tier) with token/cost telemetry — ~$0.22 tracked cost observed per full generation, not $0.001/turn.
+>
+> **2026-08-25 update**: The 2026-07-29 run was local dev only. On 2026-08-25 the pipeline was verified running live in production on the homelab k3s cluster, with untrusted, LLM-generated code validated inside an isolated, hardened Kubernetes test pod (`K8sTestSandboxService`) rather than local Docker: `automountServiceAccountToken: false`, non-root, read-only rootfs, all capabilities dropped, seccomp, CPU/memory limits, torn down after each run. The backend fails closed with no sandbox available and hard-disables the old unsandboxed host-execution escape hatch under `NODE_ENV=production`.
 
 ---
 
@@ -131,7 +133,7 @@ Missing Frontend Components:
 
 ---
 
-#### 6. Containerization ⚠️ 30% (historical estimate — manifests now exist, untested)
+#### 6. Containerization ⚠️ 30% (historical estimate — manifests now exist and were verified end-to-end 2026-08-25)
 **Original Vision**: "Built for Docker/Kubernetes, scalable and highly available"
 
 **Current State (as originally written)**:
@@ -143,7 +145,9 @@ Missing Frontend Components:
 - ❌ No auto-scaling configuration
 - ❌ No health checks/readiness probes
 
-> **2026-07 update**: Kubernetes manifests now exist under `k8s/` (base + production/development overlays, HPA, ingress, cert-manager, monitoring namespace with Prometheus/Grafana), and `.github/workflows/deploy.yml` builds and pushes `:latest` images on every push to `main`. **This has not been exercised end-to-end** — no real cluster deploy has been run and verified.
+> **2026-07 update**: Kubernetes manifests now exist under `k8s/` (base + production/development overlays, HPA, ingress, cert-manager, monitoring namespace with Prometheus/Grafana), and `.github/workflows/deploy.yml` builds and pushes `:latest` images on every push to `main`.
+>
+> **2026-08-25 update**: The cluster deploy path **has now been exercised and verified end-to-end**, running on the self-hosted homelab k3s cluster (not a commercial cloud). A generated server was deployed via "Host on Cloud"; the `mcp-runner` pod fetched its source, ran `npm install` + `tsc`, came up 1/1 Running, and served MCP over HTTP, reachable through the gateway. Note the CI workflow that builds `:latest` on `main` runs lint/typecheck/tests only on `main`; the homelab ArgoCD deploy tracks `rework/2026-07-review` directly, without that CI gate.
 
 **Gap Analysis**:
 ```
@@ -641,6 +645,8 @@ Original percentages, preserved for history:
 
 **2026-07 status**: Phase 1 (validation) is done. Phase 2 is done except payments. Phase 3 is done except upload/polish. Phases 4-5 remain largely unstarted (no vector search, auth passthrough, agent-first APIs, or verified k8s scaling). We are not assigning a new single percentage here — the phases don't map cleanly onto what actually got built (e.g., k8s manifests exist per Phase 5 but are untested, while marketplace per Phase 3 is functionally done) — but the practical state is closer to "Phase 3 done, Phase 2 payments outstanding" than a 60% snapshot suggests.
 
+**2026-08-25 status**: The k8s deploy path called out above as "untested" has since been exercised and verified end-to-end (generation, hosting, and aggregator access all confirmed working on the cluster). Auto-scaling/HPA under real load is still unverified, and Phases 4-5 (vector search, auth passthrough, agent-first APIs beyond the aggregator, enterprise features) remain largely unstarted. Payments (Phase 2) remain the largest outstanding gap.
+
 ---
 
 ## Risk Assessment
@@ -676,7 +682,7 @@ Original percentages, preserved for history:
 ### Infrastructure Requirements
 - [x] PostgreSQL database
 - [ ] Redis (for sessions, caching)
-- [ ] Kubernetes cluster (manifests exist under `k8s/`, but no cluster deploy has been run/verified)
+- [x] Kubernetes cluster (self-hosted homelab k3s; manifests under `k8s/` deployed and verified 2026-08-25, not a commercial cloud)
 - [x] Docker registry (GitHub Container Registry, via `deploy.yml`)
 - [ ] Load balancer
 - [x] Monitoring stack (Prometheus, Grafana — configured under `k8s/monitoring/`)
@@ -686,9 +692,10 @@ Original percentages, preserved for history:
 ## Success Metrics
 
 ### Phase 1 (Validation)
-- ⚠️ 2 working MCP servers generated (2026-07-29), not the original 3+ target, both against the same JSONPlaceholder input
+- ⚠️ 2 working MCP servers generated (2026-07-29, local dev), not the original 3+ target, both against the same JSONPlaceholder input
 - ✅ Zero critical bugs blocking generation flow at time of validation
 - ✅ All pipeline steps (analyzeIntent, research, planTools, refine, persist) functional — this replaces the old "all LangGraph nodes" criterion
+- ✅ Verified again 2026-08-25, live in production on the cluster: generation, sandboxed validation, hosting, and aggregator discovery/invocation all working end-to-end for a JSONPlaceholder server
 
 ### Phase 2 (Business)
 - 🎯 10 paying users
@@ -718,14 +725,16 @@ Original percentages, preserved for history:
 
 **2026-07 State**: The generator is validated end-to-end (`GenerationPipeline` replaced LangGraph/ensemble). Authentication, marketplace, and a first-pass hosting/deployment pathway are built. The remaining critical gap is narrower than before: **payments** (no Stripe integration) and **proving the cloud/Kubernetes deploy path actually works** (manifests exist, untested).
 
+**2026-08-25 State**: The cloud/Kubernetes deploy path gap above is closed, verified live in production on the homelab k3s cluster: generation (with untrusted code validated in a hardened, throwaway Kubernetes test pod, not local Docker), hosting (a generated server deployed and served MCP over HTTP through the gateway), and the platform's own aggregator MCP server (`search_tools` / `call_tool` discovering and invoking a hosted server's tools through one API-key connection) all ran end-to-end and were independently observed. Several supporting fixes shipped alongside this (Gist publishing now uses the signed-in user's own GitHub account, an SSRF guard on research URLs, Stripe webhook idempotency and an API-version/period bug fix, real `/terms` and `/privacy` pages, a sealed `TAVILY_API_KEY` in the cluster, a dropped unused-Redis health probe). The remaining critical gap is now narrower still: **real payments**. Stripe's code is implemented and correctness-fixed, but no products/prices are configured, so nothing is purchasable yet. A handful of smaller ops/credential gaps also remain (expired `GITHUB_TOKEN`, no email provider for password reset, no database backups configured in this repo, CI runs lint/typecheck/tests on `main` only while the homelab deploy tracks a branch without that gate, a ~50-60s cold start with no pre-warming/caching for hosted/test pods since each does a from-scratch `npm install` + `tsc`, and the platform runs on a self-hosted homelab cluster rather than a commercial cloud).
+
 **Path Forward (remaining)**:
-1. Finish quota enforcement (in progress)
-2. Add Stripe/payment integration
-3. Exercise the cloud hosting and Kubernetes deploy path end-to-end
+1. Configure Stripe products/prices and exercise billing with real payments
+2. Provide a fresh `GITHUB_TOKEN` and configure an email provider for password reset
+3. Add database backups for this repo's data (distinct from any homelab-level volume snapshots)
 4. Marketplace polish (ratings, featured/trending, download analytics)
 5. Advanced features (semantic search, auth passthrough, agent-first APIs) — unstarted
 
-**Recommendation**: Prioritize payments and a real cloud deploy test before advanced features — the generator and most of the business plumbing now work, but revenue collection and infrastructure reliability are still unproven.
+**Recommendation**: Prioritize real payments before advanced features. The generator, hosting, and aggregator now work end-to-end in production, but revenue collection is still unproven and a few ops/credential gaps remain.
 
 ---
 
