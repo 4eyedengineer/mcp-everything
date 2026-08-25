@@ -70,17 +70,25 @@ export class GitHubService {
    * a client - so callers can distinguish "not connected" from "connected,
    * but currently unusable".
    */
-  private async resolveUserOctokit(
+  /**
+   * Look up and decrypt the given user's stored GitHub OAuth token, if any.
+   * Shared by `resolveUserOctokit` (below) and `getUserAccessToken` (the
+   * public entry point other modules use when they need the raw token
+   * rather than an Octokit client already scoped to this service's own
+   * defaults - e.g. DeploymentModule's GistProvider, which must create
+   * Gists under the user's own account, not a platform-owned one).
+   */
+  private async resolveUserToken(
     userId: string | undefined,
-  ): Promise<{ octokit: Octokit | undefined; connected: boolean }> {
+  ): Promise<{ token: string | undefined; connected: boolean }> {
     if (!userId) {
-      return { octokit: undefined, connected: false };
+      return { token: undefined, connected: false };
     }
 
     const user = await this.userService.findByIdWithGithubToken(userId);
     const encrypted = user?.githubAccessTokenEncrypted;
     if (!encrypted) {
-      return { octokit: undefined, connected: false };
+      return { token: undefined, connected: false };
     }
 
     const token = this.tokenEncryption.decrypt(encrypted);
@@ -88,13 +96,39 @@ export class GitHubService {
       this.logger.warn(
         `Stored GitHub token for user ${userId} could not be decrypted - degrading as if not connected`,
       );
-      return { octokit: undefined, connected: true };
+      return { token: undefined, connected: true };
+    }
+
+    return { token, connected: true };
+  }
+
+  private async resolveUserOctokit(
+    userId: string | undefined,
+  ): Promise<{ octokit: Octokit | undefined; connected: boolean }> {
+    const { token, connected } = await this.resolveUserToken(userId);
+    if (!token) {
+      return { octokit: undefined, connected };
     }
 
     return {
       octokit: new Octokit({ auth: token, request: { timeout: 15_000 } }),
       connected: true,
     };
+  }
+
+  /**
+   * Decrypt and return the given user's stored GitHub OAuth access token,
+   * or `undefined` when the user has no usable stored token (never
+   * connected GitHub, or the stored token couldn't be decrypted). Unlike
+   * `resolveUserOctokit`, this does not build an Octokit client - callers
+   * that need a client scoped to a specific purpose (e.g. Gist creation)
+   * build their own from the returned token. There is deliberately no
+   * server-wide-PAT fallback here: a token returned from this method is
+   * always the calling user's own, never the platform's.
+   */
+  async getUserAccessToken(userId: string | undefined): Promise<string | undefined> {
+    const { token } = await this.resolveUserToken(userId);
+    return token;
   }
 
   /**

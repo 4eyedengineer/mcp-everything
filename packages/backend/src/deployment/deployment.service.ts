@@ -14,6 +14,7 @@ import { join } from 'path';
 
 import { Deployment } from '../database/entities/deployment.entity';
 import { Conversation } from '../database/entities/conversation.entity';
+import { GitHubService } from '../github/github.service';
 import { GitHubRepoProvider } from './providers/github-repo.provider';
 import { GistProvider, McpToolInfo } from './providers/gist.provider';
 import { DevContainerProvider } from './providers/devcontainer.provider';
@@ -51,6 +52,7 @@ export class DeploymentOrchestratorService {
     private readonly conversationRepository: Repository<Conversation>,
     private readonly gitHubRepoProvider: GitHubRepoProvider,
     private readonly gistProvider: GistProvider,
+    private readonly githubService: GitHubService,
     private readonly devContainerProvider: DevContainerProvider,
     private readonly gitignoreProvider: GitignoreProvider,
     private readonly ciWorkflowProvider: CIWorkflowProvider,
@@ -325,6 +327,37 @@ export class DeploymentOrchestratorService {
     const savedDeployment = await this.deploymentRepository.save(deployment);
 
     try {
+      // Resolve the acting user's own GitHub OAuth token up front - a Gist
+      // published on their behalf must land in their own account, never a
+      // platform-owned one, so there is deliberately no server-token
+      // fallback here. Fail clearly (not a 500, not a silent fallback) when
+      // the user hasn't connected GitHub, or connected before the `gist`
+      // scope existed and hasn't reconnected.
+      const githubToken = await this.githubService.getUserAccessToken(owner?.userId);
+
+      if (!githubToken) {
+        await this.deploymentRepository.update(savedDeployment.id, {
+          status: 'failed',
+          errorMessage: ERROR_USER_MESSAGES[DeploymentErrorCode.GITHUB_NOT_CONNECTED],
+          deployedAt: new Date(),
+          metadata: {
+            ...(savedDeployment.metadata || {}),
+            errorCode: DeploymentErrorCode.GITHUB_NOT_CONNECTED,
+            retryStrategy: ERROR_RETRY_CONFIG[DeploymentErrorCode.GITHUB_NOT_CONNECTED].strategy,
+          } as Record<string, any>,
+        });
+
+        return {
+          success: false,
+          deploymentId: savedDeployment.id,
+          type: 'gist',
+          urls: {},
+          error: ERROR_USER_MESSAGES[DeploymentErrorCode.GITHUB_NOT_CONNECTED],
+          errorCode: DeploymentErrorCode.GITHUB_NOT_CONNECTED,
+          retryStrategy: ERROR_RETRY_CONFIG[DeploymentErrorCode.GITHUB_NOT_CONNECTED].strategy,
+        };
+      }
+
       // Get generated files
       const files = await this.getGeneratedFiles(conversationId);
 
@@ -369,8 +402,10 @@ export class DeploymentOrchestratorService {
         options,
       );
 
-      // Deploy to Gist using single-file bundled format
+      // Deploy to Gist using single-file bundled format, under the user's
+      // own GitHub account (githubToken resolved above).
       const result = await this.gistProvider.deploySingleFile(
+        githubToken,
         serverName,
         files,
         options.description || `MCP server generated from conversation ${conversationId}`,
@@ -677,6 +712,24 @@ export class DeploymentOrchestratorService {
       throw new Error('Gist ID not found in deployment metadata');
     }
 
+    // Only the Gist's owner can update it - resolve the caller's own
+    // GitHub token rather than any server-wide credential. Note: a
+    // deployment created before this fix (server-token era) is owned by
+    // the platform's GitHub account, not this user's, so updating it will
+    // still fail even with a valid user token - that's a pre-existing gist
+    // this fix cannot retroactively re-own.
+    const githubToken = await this.githubService.getUserAccessToken(userId);
+    if (!githubToken) {
+      return {
+        success: false,
+        deploymentId,
+        type: 'gist',
+        urls: {},
+        error: ERROR_USER_MESSAGES[DeploymentErrorCode.GITHUB_NOT_CONNECTED],
+        errorCode: DeploymentErrorCode.GITHUB_NOT_CONNECTED,
+      };
+    }
+
     try {
       // Get the conversation to re-read files if needed
       const conversation = await this.conversationRepository.findOneBy({
@@ -689,7 +742,7 @@ export class DeploymentOrchestratorService {
 
       // Re-read files and update gist
       const files = await this.getGeneratedFiles(deployment.conversationId);
-      const result = await this.gistProvider.updateGist(gistId, files, description);
+      const result = await this.gistProvider.updateGist(githubToken, gistId, files, description);
 
       if (result.success) {
         // Update deployment metadata
@@ -751,8 +804,18 @@ export class DeploymentOrchestratorService {
       return { success: true };
     }
 
+    // Only the Gist's owner can delete it - resolve the caller's own
+    // GitHub token rather than any server-wide credential.
+    const githubToken = await this.githubService.getUserAccessToken(userId);
+    if (!githubToken) {
+      return {
+        success: false,
+        error: ERROR_USER_MESSAGES[DeploymentErrorCode.GITHUB_NOT_CONNECTED],
+      };
+    }
+
     try {
-      const deleted = await this.gistProvider.deleteGist(gistId);
+      const deleted = await this.gistProvider.deleteGist(githubToken, gistId);
       if (deleted) {
         await this.deploymentRepository.delete(deploymentId);
         return { success: true };

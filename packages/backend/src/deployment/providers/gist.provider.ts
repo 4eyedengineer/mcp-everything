@@ -1,5 +1,4 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { Octokit } from '@octokit/rest';
 import { GistResult, DeploymentFile } from '../types/deployment.types';
 
@@ -22,14 +21,33 @@ export interface SingleFileGistOptions {
   isPublic?: boolean;
 }
 
+/**
+ * Creates/updates/deletes Gists under the CALLING USER's own GitHub
+ * account. Every public method here takes the user's decrypted GitHub
+ * OAuth token as its first argument (see GitHubService.getUserAccessToken)
+ * rather than holding a shared, server-wide credential - a Gist published
+ * on someone's behalf must land in their own account, never a
+ * platform-owned one. There is deliberately no server-token fallback: if
+ * `githubToken` is empty, every method here fails clearly instead of
+ * silently authenticating as the platform.
+ */
 @Injectable()
 export class GistProvider {
   private readonly logger = new Logger(GistProvider.name);
-  private octokit: Octokit;
 
-  constructor(private configService: ConfigService) {
-    const githubToken = this.configService.get<string>('GITHUB_TOKEN');
-    this.octokit = new Octokit({
+  /**
+   * Build a per-call Octokit client authenticated as the given user. Throws
+   * (rather than falling back to any shared/server credential) when no
+   * token is supplied, so every caller either gets a client scoped to the
+   * right user or a clear, catchable failure - never a silently-wrong one.
+   */
+  private buildOctokit(githubToken: string): Octokit {
+    if (!githubToken) {
+      throw new Error(
+        'GitHub account not connected. Connect your GitHub account to deploy to a Gist, or use Download instead.',
+      );
+    }
+    return new Octokit({
       auth: githubToken,
       request: {
         timeout: 30000,
@@ -96,14 +114,18 @@ export class GistProvider {
   }
 
   /**
-   * Create a new GitHub Gist with multiple files
+   * Create a new GitHub Gist with multiple files, under the given user's
+   * own GitHub account.
    */
   async createGist(
+    githubToken: string,
     files: DeploymentFile[],
     description: string,
     isPublic: boolean = true,
   ): Promise<GistResult> {
     try {
+      const octokit = this.buildOctokit(githubToken);
+
       // Convert files array to Gist files format
       const gistFiles: Record<string, { content: string }> = {};
 
@@ -114,7 +136,7 @@ export class GistProvider {
       }
 
       const { data } = await this.withRateLimitRetry(() =>
-        this.octokit.rest.gists.create({
+        octokit.rest.gists.create({
           description,
           public: isPublic,
           files: gistFiles,
@@ -144,14 +166,18 @@ export class GistProvider {
   }
 
   /**
-   * Create a single-file Gist with bundled MCP server code
-   * This is the primary method for free tier deployments
+   * Create a single-file Gist with bundled MCP server code, under the given
+   * user's own GitHub account. This is the primary method for free tier
+   * deployments.
    */
   async createSingleFileGist(
+    githubToken: string,
     files: DeploymentFile[],
     options: SingleFileGistOptions,
   ): Promise<GistResult> {
     try {
+      const octokit = this.buildOctokit(githubToken);
+
       // Bundle all files into a single TypeScript file
       const bundledCode = this.bundleServerCode(files, options);
 
@@ -162,7 +188,7 @@ export class GistProvider {
       const fileName = `${this.sanitizeFileName(options.serverName)}.ts`;
 
       const { data } = await this.withRateLimitRetry(() =>
-        this.octokit.rest.gists.create({
+        octokit.rest.gists.create({
           description: comprehensiveDescription,
           public: options.isPublic ?? true,
           files: {
@@ -302,14 +328,18 @@ ${toolsList || ' *   (none defined)'}
   }
 
   /**
-   * Update an existing GitHub Gist
+   * Update an existing GitHub Gist. `githubToken` must be the owning user's
+   * own token - only the Gist's owner (or a collaborator) can update it.
    */
   async updateGist(
+    githubToken: string,
     gistId: string,
     files: DeploymentFile[],
     description?: string,
   ): Promise<GistResult> {
     try {
+      const octokit = this.buildOctokit(githubToken);
+
       // Convert files array to Gist files format
       const gistFiles: Record<string, { content: string }> = {};
 
@@ -331,9 +361,7 @@ ${toolsList || ' *   (none defined)'}
         updateData.description = description;
       }
 
-      const { data } = await this.withRateLimitRetry(() =>
-        this.octokit.rest.gists.update(updateData),
-      );
+      const { data } = await this.withRateLimitRetry(() => octokit.rest.gists.update(updateData));
 
       // Extract raw URL from the first file
       const firstFile = data.files ? Object.values(data.files)[0] : null;
@@ -360,10 +388,11 @@ ${toolsList || ' *   (none defined)'}
   /**
    * Get a Gist by ID
    */
-  async getGist(gistId: string): Promise<GistResult> {
+  async getGist(githubToken: string, gistId: string): Promise<GistResult> {
     try {
+      const octokit = this.buildOctokit(githubToken);
       const { data } = await this.withRateLimitRetry(() =>
-        this.octokit.rest.gists.get({ gist_id: gistId }),
+        octokit.rest.gists.get({ gist_id: gistId }),
       );
 
       // Extract raw URL from the first file
@@ -387,11 +416,13 @@ ${toolsList || ' *   (none defined)'}
   }
 
   /**
-   * Delete a Gist
+   * Delete a Gist. `githubToken` must be the owning user's own token - only
+   * the Gist's owner (or a collaborator) can delete it.
    */
-  async deleteGist(gistId: string): Promise<boolean> {
+  async deleteGist(githubToken: string, gistId: string): Promise<boolean> {
     try {
-      await this.withRateLimitRetry(() => this.octokit.rest.gists.delete({ gist_id: gistId }));
+      const octokit = this.buildOctokit(githubToken);
+      await this.withRateLimitRetry(() => octokit.rest.gists.delete({ gist_id: gistId }));
       this.logger.log(`Deleted Gist: ${gistId}`);
       return true;
     } catch (error) {
@@ -406,27 +437,29 @@ ${toolsList || ' *   (none defined)'}
    * @deprecated Use deploySingleFile for free tier deployments
    */
   async deploy(
+    githubToken: string,
     serverName: string,
     files: DeploymentFile[],
     description: string,
     isPublic: boolean = true,
   ): Promise<GistResult> {
     const gistDescription = `MCP Server: ${serverName} - ${description}`;
-    return this.createGist(files, gistDescription, isPublic);
+    return this.createGist(githubToken, files, gistDescription, isPublic);
   }
 
   /**
-   * Deploy files as a single bundled file to a new Gist
-   * Primary method for free tier deployments
+   * Deploy files as a single bundled file to a new Gist, under the given
+   * user's own GitHub account. Primary method for free tier deployments.
    */
   async deploySingleFile(
+    githubToken: string,
     serverName: string,
     files: DeploymentFile[],
     description: string,
     tools: McpToolInfo[],
     isPublic: boolean = true,
   ): Promise<GistResult> {
-    return this.createSingleFileGist(files, {
+    return this.createSingleFileGist(githubToken, files, {
       serverName,
       description,
       tools,

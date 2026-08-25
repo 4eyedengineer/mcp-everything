@@ -14,6 +14,7 @@ import { GitignoreProvider } from './providers/gitignore.provider';
 import { CIWorkflowProvider } from './providers/ci-workflow.provider';
 import { ValidationModule } from '../validation/validation.module';
 import { UserModule } from '../user/user.module';
+import { GitHubModule } from '../github/github.module';
 
 import { DeploymentRetryService } from './services/retry.service';
 import { DeploymentRollbackService } from './services/rollback.service';
@@ -28,6 +29,11 @@ import { DeploymentRouterService } from './services/deployment-router.service';
     forwardRef(() => ValidationModule),
     // Import UserModule for tier-based routing
     forwardRef(() => UserModule),
+    // GitHubService.getUserAccessToken resolves the acting user's own
+    // GitHub OAuth token for GistProvider - Gists must be created under the
+    // user's own account, never a platform-owned one. GitHubModule doesn't
+    // depend on DeploymentModule, so this doesn't need forwardRef.
+    GitHubModule,
   ],
   controllers: [DeploymentController],
   providers: [

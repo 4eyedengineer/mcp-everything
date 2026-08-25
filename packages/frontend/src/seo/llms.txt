@@ -5,7 +5,7 @@
 > Each generated server is compiled, started inside a Docker container and driven over JSON-RPC
 > (initialise, list tools, call them) before the run is allowed to succeed, with up to five
 > automatic repair rounds. The generated source is published to a public Gist on your own
-> GitHub account, or downloaded, and runs without this platform.
+> GitHub account once you connect it, or downloaded, and runs without this platform.
 
 MCP Everything is itself an MCP server, so an AI agent can drive generation without a human
 using the web interface. Details are under "MCP endpoint for agents" below.

@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Deployment } from '../../database/entities/deployment.entity';
+import { GitHubService } from '../../github/github.service';
 import { GitHubRepoProvider } from '../providers/github-repo.provider';
 import { GistProvider } from '../providers/gist.provider';
 
@@ -23,6 +24,7 @@ export class DeploymentRollbackService {
     private readonly deploymentRepository: Repository<Deployment>,
     private readonly gitHubRepoProvider: GitHubRepoProvider,
     private readonly gistProvider: GistProvider,
+    private readonly githubService: GitHubService,
   ) {}
 
   /**
@@ -108,8 +110,17 @@ export class DeploymentRollbackService {
       return;
     }
 
+    // The Gist was created under the owning user's own GitHub account, so
+    // it can only be deleted with that same user's token - no server-wide
+    // credential to fall back to here.
+    const githubToken = await this.githubService.getUserAccessToken(deployment.userId);
+    if (!githubToken) {
+      result.errors.push(`Cannot roll back gist ${gistId}: owning user has no usable GitHub token`);
+      return;
+    }
+
     try {
-      const deleted = await this.gistProvider.deleteGist(gistId);
+      const deleted = await this.gistProvider.deleteGist(githubToken, gistId);
       if (deleted) {
         result.resourcesDeleted.push(`Gist: ${gistId}`);
         this.logger.log(`Rolled back gist: ${gistId}`);

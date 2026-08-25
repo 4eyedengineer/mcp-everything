@@ -28,6 +28,16 @@ export enum DeploymentErrorCode {
   // === NO RETRY (Fatal) ===
   AUTHENTICATION_FAILED = 'AUTHENTICATION_FAILED',
   INSUFFICIENT_PERMISSIONS = 'INSUFFICIENT_PERMISSIONS',
+  /**
+   * The acting user has no usable stored GitHub OAuth token (never
+   * connected GitHub, or connected before the `gist` scope was requested
+   * and hasn't reconnected). Distinct from AUTHENTICATION_FAILED, which
+   * means GitHub rejected a token we did try - this means we never had one
+   * to try, so there is deliberately no platform-token fallback: a Gist
+   * created for this user must be created under their own account or not
+   * at all. See GistProvider / GitHubService.getUserAccessToken.
+   */
+  GITHUB_NOT_CONNECTED = 'GITHUB_NOT_CONNECTED',
   REPOSITORY_NAME_CONFLICT = 'REPOSITORY_NAME_CONFLICT',
   GIST_NOT_FOUND = 'GIST_NOT_FOUND',
   REPOSITORY_NOT_FOUND = 'REPOSITORY_NOT_FOUND',
@@ -168,6 +178,11 @@ export const ERROR_RETRY_CONFIG: Record<DeploymentErrorCode, RetryConfig> = {
     maxRetries: 0,
     baseDelayMs: 0,
   },
+  [DeploymentErrorCode.GITHUB_NOT_CONNECTED]: {
+    strategy: RetryStrategy.MANUAL,
+    maxRetries: 0,
+    baseDelayMs: 0,
+  },
   [DeploymentErrorCode.REPOSITORY_NAME_CONFLICT]: {
     strategy: RetryStrategy.NONE,
     maxRetries: 0,
@@ -222,6 +237,8 @@ export const ERROR_USER_MESSAGES: Record<DeploymentErrorCode, string> = {
     'GitHub authentication failed. Please check your credentials.',
   [DeploymentErrorCode.INSUFFICIENT_PERMISSIONS]:
     'Insufficient GitHub permissions for this operation.',
+  [DeploymentErrorCode.GITHUB_NOT_CONNECTED]:
+    'Connect your GitHub account to publish to a Gist under your own account, or download the server instead.',
   [DeploymentErrorCode.REPOSITORY_NAME_CONFLICT]:
     'Repository name already exists. Try a different name.',
   [DeploymentErrorCode.GIST_NOT_FOUND]: 'Gist not found. It may have been deleted.',
