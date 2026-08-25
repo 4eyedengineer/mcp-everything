@@ -9,7 +9,7 @@ AI-native conversational platform for automatically generating and hosting Model
 ### ✅ What's Built and Validated
 - `GenerationPipeline`: an explicit orchestration service (analyzeIntent → research → planTools → clarify → refine → persist) that replaced the old 8-node LangGraph state machine and 4-agent ensemble; `@langchain/*` dependencies fully removed
 - Fully standalone Angular 20 frontend (no NgModules), functional interceptors/guards, signals-based chat state, SSE streaming
-- Single `AnthropicService` AI layer: claude-sonnet-5 (default) / claude-haiku-4-5 (small tier), structured outputs, retries, token/cost telemetry in Prometheus
+- Single provider-aware AI seam (`AnthropicService`): default tier claude-sonnet-5 (reasoning/codegen); small tier routed to OpenRouter `deepseek/deepseek-v4-flash` in production (~25-60x cheaper than Haiku 4.5); structured outputs, retries, token/cost telemetry in Prometheus. Both tiers default to Anthropic in code — routing is an explicit env decision, and the default/codegen tier is one env var from OpenRouter Qwen3 Coder for A/B
 - PostgreSQL schema for conversations, deployments, and per-step `pipeline_runs` observability
 - Global JWT guard with ownership checks on conversations/deployments/hosting; single-use 60s SSE stream tickets; untrusted, LLM-generated code validated in a throwaway, hardened Kubernetes pod in production (`K8sTestSandboxService`: no service account token, non-root, read-only rootfs, all capabilities dropped, seccomp, resource limits) with a Docker-sandboxed path for local dev; the backend fails closed with no sandbox available; the 5 unauthenticated debug endpoints have been deleted
 - Tier-based monthly generation quota enforced in the pipeline (writing `UsageRecord`)
@@ -17,6 +17,7 @@ AI-native conversational platform for automatically generating and hosting Model
 - **Validated on 2026-07-29 in local dev**: the pipeline generated two working MCP servers (JSONPlaceholder, 7/7 and 10/10 tools passing), independently verified via stdio JSON-RPC
 - **Dual-transport generated servers**: `MCP_TRANSPORT` env var selects `stdio` (default - Claude Desktop, GitHub/Gist downloads) or `http` (real MCP Streamable HTTP on `POST /mcp` + `GET /health`, protocol `2025-11-25`, high-level `McpServer`/`registerTool` API, `@modelcontextprotocol/sdk` pinned to `1.30.0`); K8s manifests set `MCP_TRANSPORT=http` so liveness/readiness probes target a real listener
 - **Verified 2026-08-25, live in production on the self-hosted homelab k3s cluster**: a chat request for a JSONPlaceholder MCP server ran the full pipeline including validation inside an isolated Kubernetes test pod (all tools passing on iteration 1); the generated server was then deployed via "Host on Cloud" and came up serving MCP over HTTP through the gateway; the platform's own aggregator MCP server (`search_tools` / `call_tool` on `POST /mcp`) discovered and invoked that hosted server's tools through a single API-key connection
+- **Agent-drivable end-to-end, verified 2026-08-25**: over one `mcpe_`-key MCP connection an agent ran `generate_mcp_server` → `host_server` → `get_hosted_server` (polled to ready, ~57s cold start) → `search_tools` → `call_tool` and got real data back — the whole generate→host→poll→discover→call loop with no human and no context switch (`host_server`/`get_hosted_server` are two of the 10 tools on `POST /mcp`)
 
 ### ⚠️ What Still Needs Validation
 - **Payments** - Stripe checkout/portal/webhooks are implemented and correctness-fixed, but no products/prices are configured, so nothing is purchasable yet; the end-to-end billing flow is unexercised with real payments
@@ -138,7 +139,7 @@ An explicit orchestration service (`packages/backend/src/orchestration/pipeline.
 - **RefinementService**: Generate-Test-Refine loop (max 5 iterations)
 - **McpTestingService**: Docker-sandboxed MCP server validation
 - **GitHubAnalysisService**: Repository analysis with Octokit
-- **AnthropicService**: Single seam to Claude — structured outputs, retries, token/cost telemetry
+- **AnthropicService**: Single provider-aware AI seam (Anthropic + OpenRouter, per-tier routing) — structured outputs, retries, token/cost telemetry
 
 ## Technology Stack
 
@@ -187,7 +188,7 @@ Alternative paths:
 - **PipelineRuns**: Per-step observability record (step, status, timing, input/output summary, error) — replaced the old write-only LangGraph checkpoints
 
 ### Cost Optimization
-- claude-haiku-4-5 for cheap classification/extraction, claude-sonnet-5 for reasoning/synthesis/codegen
+- Small tier (cheap classification/extraction) routed to OpenRouter `deepseek/deepseek-v4-flash` in production; claude-sonnet-5 for reasoning/synthesis/codegen (default tier is one env var from OpenRouter Qwen3 Coder for A/B)
 - Token/cost telemetry tracked in Prometheus (`ai_calls_total`, `ai_tokens_total`, `ai_cost_usd_total`); ~$0.22 tracked cost observed per full generation
 - Intelligent caching for repository analysis
 - Local Docker builds minimize cloud costs
