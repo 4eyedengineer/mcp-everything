@@ -37,15 +37,14 @@ export class HealthService {
    * Perform all health checks and return comprehensive status
    */
   async checkAll(): Promise<HealthResponse> {
-    const [database, redis, anthropic, github, tavily] = await Promise.all([
+    const [database, anthropic, github, tavily] = await Promise.all([
       this.checkDatabase(),
-      this.checkRedis(),
       this.checkAnthropic(),
       this.checkGitHub(),
       this.checkTavily(),
     ]);
 
-    const checks: HealthChecks = { database, redis, anthropic, github, tavily };
+    const checks: HealthChecks = { database, anthropic, github, tavily };
     const status = this.calculateOverallStatus(checks);
 
     return {
@@ -71,67 +70,6 @@ export class HealthService {
       };
     } catch (error) {
       this.logger.error(`Database health check failed: ${error.message}`);
-      return {
-        status: 'down',
-        message: error.message,
-        lastCheck: new Date().toISOString(),
-      };
-    }
-  }
-
-  /**
-   * Check Redis connectivity by sending PING command
-   */
-  private async checkRedis(): Promise<ServiceHealth> {
-    const start = Date.now();
-    const redisHost = this.configService.get<string>('REDIS_HOST', 'localhost');
-    const redisPort = this.configService.get<number>('REDIS_PORT', 6379);
-
-    try {
-      // Use native net module for a lightweight connection test
-      const net = await import('net');
-
-      const isConnected = await new Promise<boolean>((resolve) => {
-        const client = new net.Socket();
-        const timeout = setTimeout(() => {
-          client.destroy();
-          resolve(false);
-        }, 3000);
-
-        client.connect(redisPort, redisHost, () => {
-          // Send PING command
-          client.write('*1\r\n$4\r\nPING\r\n');
-        });
-
-        client.on('data', (data) => {
-          clearTimeout(timeout);
-          client.destroy();
-          // Redis responds with +PONG\r\n
-          resolve(data.toString().includes('PONG'));
-        });
-
-        client.on('error', () => {
-          clearTimeout(timeout);
-          client.destroy();
-          resolve(false);
-        });
-      });
-
-      if (isConnected) {
-        return {
-          status: 'up',
-          latency: Date.now() - start,
-          lastCheck: new Date().toISOString(),
-        };
-      } else {
-        return {
-          status: 'down',
-          message: 'Redis connection failed',
-          lastCheck: new Date().toISOString(),
-        };
-      }
-    } catch (error) {
-      this.logger.error(`Redis health check failed: ${error.message}`);
       return {
         status: 'down',
         message: error.message,
@@ -347,9 +285,9 @@ export class HealthService {
       return 'unhealthy';
     }
 
-    // Redis is a cache; GitHub only gates repo-input research; Tavily is
-    // optional. Any of them failing degrades capability, not availability.
-    const degrading: ServiceHealth[] = [checks.redis, checks.github, checks.tavily];
+    // GitHub only gates repo-input research; Tavily is optional. Either
+    // failing degrades capability, not availability.
+    const degrading: ServiceHealth[] = [checks.github, checks.tavily];
     if (degrading.some((check) => check.status === 'down' || check.status === 'not_configured')) {
       return 'degraded';
     }

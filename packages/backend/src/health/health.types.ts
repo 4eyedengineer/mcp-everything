@@ -35,7 +35,6 @@ export interface ServiceHealth {
 
 export interface HealthChecks {
   database: ServiceHealth;
-  redis: ServiceHealth;
   anthropic: ServiceHealth;
   github: ServiceHealth;
   tavily: ServiceHealth;
