@@ -22,7 +22,6 @@ import { HostedServer } from '../database/entities/hosted-server.entity';
 import { HostedServerApiKey } from '../database/entities/hosted-server-api-key.entity';
 import { HostedServerSourceToken } from '../database/entities/hosted-server-source-token.entity';
 import { Conversation } from '../database/entities/conversation.entity';
-import { Deployment } from '../database/entities/deployment.entity';
 import { TokenEncryptionModule } from '../common/token-encryption/token-encryption.module';
 import { UserModule } from '../user/user.module';
 
@@ -37,7 +36,6 @@ import { UserModule } from '../user/user.module';
       HostedServerApiKey,
       HostedServerSourceToken,
       Conversation,
-      Deployment,
     ]),
     // TokenEncryptionModule: HostingService encrypts the env vars a hosted
     // server was deployed with so a restart can reproduce it - see

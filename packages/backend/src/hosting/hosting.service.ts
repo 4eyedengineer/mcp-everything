@@ -9,6 +9,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import { randomBytes } from 'crypto';
+import { join } from 'path';
 
 /**
  * Lowercase-alphanumeric-only random suffix generator for serverId, built on
@@ -40,7 +41,7 @@ function generateSuffix(length = 8): string {
   return suffix;
 }
 import { HostedServer, HostedServerStatus } from '../database/entities/hosted-server.entity';
-import { Deployment } from '../database/entities/deployment.entity';
+import { Conversation } from '../database/entities/conversation.entity';
 import { ManifestGeneratorService, objectNameFor } from './services/manifest-generator.service';
 import { K8sControlPlaneService } from './services/k8s-control-plane.service';
 import { LocalDockerHostingService } from './services/local-docker-hosting.service';
@@ -141,6 +142,7 @@ export class HostingService implements OnModuleDestroy {
   private readonly hostingMode: HostingMode;
   private readonly gatewayBaseUrl: string;
   private readonly sourceBaseUrl: string;
+  private readonly generatedServersDir: string;
 
   /** How long buffered request counts may sit unwritten. See trackRequest(). */
   static readonly REQUEST_COUNT_FLUSH_INTERVAL_MS = 5_000;
@@ -151,8 +153,8 @@ export class HostingService implements OnModuleDestroy {
   constructor(
     @InjectRepository(HostedServer)
     private hostedServerRepo: Repository<HostedServer>,
-    @InjectRepository(Deployment)
-    private deploymentRepo: Repository<Deployment>,
+    @InjectRepository(Conversation)
+    private conversationRepo: Repository<Conversation>,
     private manifestGeneratorService: ManifestGeneratorService,
     private k8sControlPlane: K8sControlPlaneService,
     private localDockerHostingService: LocalDockerHostingService,
@@ -182,6 +184,14 @@ export class HostingService implements OnModuleDestroy {
     this.sourceBaseUrl = this.configService
       .get<string>('MCP_SOURCE_BASE_URL', this.gatewayBaseUrl)
       .replace(/\/+$/, '');
+    // Must match GenerationPipeline's resolution of this same directory (see
+    // orchestration/pipeline.service.ts) - deployToCloud uses it only to
+    // build docker-run's local build path; the Kubernetes path never reads
+    // it, since a hosted pod fetches its own source from Postgres instead.
+    this.generatedServersDir = this.configService.get<string>(
+      'GENERATED_SERVERS_DIR',
+      join(process.cwd(), 'generated-servers'),
+    );
   }
 
   /**
@@ -212,40 +222,66 @@ export class HostingService implements OnModuleDestroy {
   /**
    * Deploy a generated MCP server to the K8s cluster
    *
-   * @param userId owner of the deployment; when supplied the underlying
-   *               deployment must belong to this user and the resulting hosted
-   *               server is recorded as owned by them
+   * Server metadata (serverName/tools/description/envVarNames) is read off
+   * the CONVERSATION, not a `deployments` row. A chat generation persists
+   * everything it produces onto `conversation.state.generatedCode`
+   * (GenerationPipeline.syncGeneratedCodeToConversation) and never creates a
+   * `deployments` row - nothing in the generation path does - so requiring
+   * one here made every freshly-generated server permanently undeployable
+   * (confirmed in production: the `deployments` table is empty while
+   * generations are fully persisted on their conversations).
+   *
+   * @param userId owner of the conversation; when supplied the conversation
+   *               must belong to this user and the resulting hosted server is
+   *               recorded as owned by them
    */
   async deployToCloud(
     conversationId: string,
     userId?: string,
     envVars?: Record<string, string>,
   ): Promise<DeploymentResult> {
-    // 1. Get deployment info from conversation (scoped to the owner)
-    const deployment = await this.deploymentRepo.findOne({
-      where: userId ? { conversationId, userId } : { conversationId },
-      order: { createdAt: 'DESC' },
+    // 1. Get the conversation (scoped to the owner) - this is where a
+    // generation's output durably lives. See syncGeneratedCodeToConversation.
+    const conversation = await this.conversationRepo.findOne({
+      where: userId ? { id: conversationId, userId } : { id: conversationId },
     });
 
-    if (!deployment) {
-      throw new NotFoundException(`No deployment found for conversation ${conversationId}`);
+    if (!conversation) {
+      throw new NotFoundException(`No conversation found for id ${conversationId}`);
     }
 
-    if (!deployment.serverName) {
-      throw new BadRequestException(
-        'Deployment does not have server metadata (serverName required)',
-      );
+    const generatedCode = conversation.state?.generatedCode;
+    if (!generatedCode) {
+      throw new BadRequestException('This conversation has not generated a server yet');
     }
+
+    const metadata = (generatedCode.metadata ?? {}) as {
+      serverName?: string;
+      tools?: Array<{ name: string; description?: string; inputSchema?: unknown }>;
+    };
+    const title: string | undefined = conversation.state?.metadata?.title;
+    const serverName = metadata.serverName || this.slugify(title) || 'mcp-server';
+    const rawTools = metadata.tools ?? conversation.state?.tools ?? [];
+    const tools = rawTools.map((t) => ({
+      name: t.name,
+      description: t.description || `Tool: ${t.name}`,
+      inputSchema: t.inputSchema ?? null,
+    }));
+    const description = title || `MCP server generated from conversation ${conversationId}`;
+    // Nothing in `generatedCode.metadata` currently lists required env var
+    // names (see PipelineState['generatedCode'] in orchestration/types.ts) -
+    // this stays an empty array until something does.
+    const envVarNames: string[] = [];
 
     // 1b. Enforce the per-user concurrent hosted-server cap before doing any
     // expensive work (image build, registry push, GitOps commit).
-    const owner = userId ?? deployment.userId;
+    const owner = userId ?? conversation.userId;
     if (owner) {
       await this.assertHostedServerQuota(owner);
     }
 
     // 2. Generate unique server ID
-    const serverId = this.generateServerId(deployment.serverName);
+    const serverId = this.generateServerId(serverName);
 
     // Every hosting mode now advertises the same gateway URL. The mode-specific
     // upstream address (ClusterIP service DNS, or the deterministic loopback
@@ -256,20 +292,21 @@ export class HostingService implements OnModuleDestroy {
     // 3. Create hosted server record
     const hostedServer = this.hostedServerRepo.create({
       conversationId,
-      userId: userId ?? deployment.userId,
-      serverName: deployment.serverName,
+      userId: userId ?? conversation.userId,
+      serverName,
       serverId,
-      description: deployment.description,
+      description,
       dockerImage: '', // Will be set after build
       endpointUrl,
       status: 'pending',
-      tools: deployment.tools,
-      envVarNames: deployment.envVars?.map((e) => e.name) || [],
-      // Copied off the Deployment rather than referenced, because Deployment
-      // is ON DELETE CASCADE from conversations while this row is only
-      // SET NULL - deleting the chat must not destroy a live hosted server's
-      // only pointer to its own source. See HostedServer.localPath.
-      localPath: deployment.localPath ?? null,
+      tools,
+      envVarNames,
+      // Deterministic, not read off a row: matches GenerationPipeline's own
+      // resolution of GENERATED_SERVERS_DIR (see the constructor). Copied
+      // onto this row (SET NULL on conversation delete) rather than derived
+      // again later, so a live hosted server keeps its source path even
+      // after the originating conversation is gone. See HostedServer.localPath.
+      localPath: join(this.generatedServersDir, conversationId),
     });
 
     await this.hostedServerRepo.save(hostedServer);
@@ -290,19 +327,19 @@ export class HostingService implements OnModuleDestroy {
     // A local source directory is required ONLY by docker-run, which builds an
     // image from it on this host. The Kubernetes path no longer reads it at
     // all: the pod fetches its own source from MCP_SOURCE_URL, which
-    // HostedServerSourceService serves out of Postgres. Insisting on
-    // `localPath` there would fail deploys for a reason that stopped being
-    // real - GENERATED_SERVERS_DIR is an emptyDir on the backend pod, so it is
-    // empty for any server generated before the last backend restart.
-    const serverDir = deployment.localPath;
+    // HostedServerSourceService serves out of Postgres. Insisting on it there
+    // would fail deploys for a reason that stopped being real -
+    // GENERATED_SERVERS_DIR is an emptyDir on the backend pod, so it is empty
+    // for any server generated before the last backend restart.
+    const serverDir = hostedServer.localPath;
     if (this.isDockerRunMode() && !serverDir) {
-      await this.updateStatus(hostedServer, 'failed', 'Deployment does not have localPath');
+      await this.updateStatus(hostedServer, 'failed', 'No local source directory available');
       return {
         success: false,
         serverId,
         endpointUrl,
         status: 'failed',
-        error: 'Deployment does not have localPath',
+        error: 'No local source directory available',
         sourceTokenId: sourceEnv.tokenId,
         sourceTokenExpiresAt: sourceEnv.expiresAt,
       };
@@ -310,7 +347,7 @@ export class HostingService implements OnModuleDestroy {
 
     const result = this.isDockerRunMode()
       ? await this.deployToLocalDocker(hostedServer, serverDir as string, envVarsWithSource)
-      : await this.deployToKubernetes(hostedServer, deployment, envVarsWithSource);
+      : await this.deployToKubernetes(hostedServer, serverName, envVarsWithSource);
 
     return {
       ...result,
@@ -393,7 +430,7 @@ export class HostingService implements OnModuleDestroy {
    */
   private async deployToKubernetes(
     hostedServer: HostedServer,
-    deployment: Deployment,
+    serverName: string,
     envVars?: Record<string, string>,
   ): Promise<DeploymentResult> {
     const serverId = hostedServer.serverId;
@@ -434,7 +471,7 @@ export class HostingService implements OnModuleDestroy {
 
       await this.k8sControlPlane.applyServer({
         serverId,
-        serverName: deployment.serverName,
+        serverName,
         envVars,
         replicas: 1,
       });
@@ -932,6 +969,22 @@ export class HostingService implements OnModuleDestroy {
   }
 
   // --- Helper Methods ---
+
+  /**
+   * Fallback source of a display `serverName` when a generation's own
+   * `metadata.serverName` is missing: the conversation's title, lowercased
+   * and reduced to `[a-z0-9-]`. Returns '' (never undefined/null) when there
+   * is nothing usable, so callers can `||` it straight into a final default.
+   * Deliberately not the DNS-safety pass generateServerId() does for
+   * `serverId` - this only feeds the human-facing `serverName` column.
+   */
+  private slugify(input?: string): string {
+    if (!input) return '';
+    return input
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '');
+  }
 
   private generateServerId(serverName: string): string {
     const prefix =

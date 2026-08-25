@@ -9,7 +9,7 @@ import { HostedServerSourceTokenService } from './hosted-server-source-token.ser
 import { HostedMcpClientService } from './services/hosted-mcp-client.service';
 import { UserTier } from '../subscription/tier-config';
 import { HostedServer } from '../database/entities/hosted-server.entity';
-import { Deployment } from '../database/entities/deployment.entity';
+import { Conversation } from '../database/entities/conversation.entity';
 import { ContainerRegistryService } from './services/container-registry.service';
 import { ManifestGeneratorService } from './services/manifest-generator.service';
 import { K8sControlPlaneService } from './services/k8s-control-plane.service';
@@ -27,7 +27,7 @@ describe('HostingService', () => {
     update: jest.Mock;
   };
   let userService: { findById: jest.Mock };
-  let deploymentRepo: { findOne: jest.Mock };
+  let conversationRepo: { findOne: jest.Mock };
   let tokenEncryptionService: { enabled: boolean; encrypt: jest.Mock; decrypt: jest.Mock };
   let sourceTokenService: { mintToken: jest.Mock; revokeAllForServer: jest.Mock };
   let containerRegistryService: {
@@ -57,20 +57,34 @@ describe('HostingService', () => {
   const mockConfigService = {
     get: jest.fn((key: string, defaultValue?: unknown) => {
       if (key === 'HOSTING_MODE') return hostingMode;
+      // Pinned so 'copies localPath onto the hosted server' can assert on an
+      // exact value instead of one derived from process.cwd() at test time.
+      if (key === 'GENERATED_SERVERS_DIR') return '/generated-servers';
       return defaultValue;
     }),
   };
 
-  const baseDeployment = {
-    id: 'deploy-1',
-    conversationId: 'conv-1',
+  // What a real chat generation persists onto the conversation row - see
+  // GenerationPipeline.syncGeneratedCodeToConversation. deployToCloud reads
+  // server metadata from here, not from a `deployments` row (that table is
+  // empty in production; nothing in the generation path ever writes to it).
+  const baseConversation = {
+    id: 'conv-1',
     userId: 'user-1',
-    serverName: 'github-api-mcp',
-    description: 'A generated server',
-    localPath: '/generated-servers/conv-1',
-    tools: [{ name: 'get_user', description: 'Fetch a user', inputSchema: {} }],
-    envVars: [{ name: 'GITHUB_TOKEN', required: false }],
-  } as unknown as Deployment;
+    state: {
+      metadata: { title: 'A generated server' },
+      tools: [{ name: 'get_user', description: 'Fetch a user', inputSchema: {} }],
+      generatedCode: {
+        mainFile: '// ...',
+        supportingFiles: {},
+        metadata: {
+          serverName: 'github-api-mcp',
+          tools: [{ name: 'get_user', description: 'Fetch a user', inputSchema: {} }],
+          iteration: 1,
+        },
+      },
+    },
+  } as unknown as Conversation;
 
   beforeEach(async () => {
     jest.clearAllMocks();
@@ -89,7 +103,7 @@ describe('HostingService', () => {
     userService = {
       findById: jest.fn().mockResolvedValue({ id: 'user-1', tier: UserTier.FREE }),
     };
-    deploymentRepo = { findOne: jest.fn() };
+    conversationRepo = { findOne: jest.fn() };
     /**
      * A real-behaviour fake rather than a pass-through: encrypt/decrypt must
      * actually round-trip (and must be able to fail, via `enabled = false`,
@@ -161,7 +175,7 @@ describe('HostingService', () => {
       providers: [
         HostingService,
         { provide: getRepositoryToken(HostedServer), useValue: hostedServerRepo },
-        { provide: getRepositoryToken(Deployment), useValue: deploymentRepo },
+        { provide: getRepositoryToken(Conversation), useValue: conversationRepo },
         { provide: ContainerRegistryService, useValue: containerRegistryService },
         { provide: ManifestGeneratorService, useValue: manifestGeneratorService },
         { provide: K8sControlPlaneService, useValue: k8sControlPlane },
@@ -181,21 +195,48 @@ describe('HostingService', () => {
   }
 
   describe('deployToCloud', () => {
-    it('throws NotFoundException when no deployment exists for the conversation', async () => {
-      deploymentRepo.findOne.mockResolvedValue(null);
+    it('throws NotFoundException when no conversation exists for the id', async () => {
+      conversationRepo.findOne.mockResolvedValue(null);
 
       await expect(service.deployToCloud('conv-1', 'user-1')).rejects.toThrow(NotFoundException);
     });
 
-    it('throws BadRequestException when the deployment has no serverName', async () => {
-      deploymentRepo.findOne.mockResolvedValue({ ...baseDeployment, serverName: undefined });
+    it('throws NotFoundException when the conversation is not owned by the caller', async () => {
+      // Scoped lookup (id + userId) - a real repo would return null for a
+      // conversation that exists but belongs to someone else.
+      conversationRepo.findOne.mockResolvedValue(null);
+
+      await expect(service.deployToCloud('conv-1', 'someone-else')).rejects.toThrow(
+        NotFoundException,
+      );
+      expect(conversationRepo.findOne).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'conv-1', userId: 'someone-else' } }),
+      );
+    });
+
+    it('throws BadRequestException when the conversation has not generated a server yet', async () => {
+      conversationRepo.findOne.mockResolvedValue({ ...baseConversation, state: {} });
 
       await expect(service.deployToCloud('conv-1', 'user-1')).rejects.toThrow(BadRequestException);
     });
 
+    it('deploys using the conversations own serverName/tools when generatedCode is present', async () => {
+      conversationRepo.findOne.mockResolvedValue(baseConversation);
+
+      const result = await service.deployToCloud('conv-1', 'user-1');
+
+      expect(result.success).toBe(true);
+      expect(hostedServerRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          serverName: 'github-api-mcp',
+          tools: [{ name: 'get_user', description: 'Fetch a user', inputSchema: {} }],
+        }),
+      );
+    });
+
     describe('per-user concurrent hosted-server cap', () => {
       beforeEach(() => {
-        deploymentRepo.findOne.mockResolvedValue(baseDeployment);
+        conversationRepo.findOne.mockResolvedValue(baseConversation);
       });
 
       it('allows the deploy that fills the last free slot (free tier: limit 1, currently 0)', async () => {
@@ -281,7 +322,7 @@ describe('HostingService', () => {
     });
 
     it('always generates a serverId that is a valid Docker tag / K8s DNS label component (never ending in a separator)', async () => {
-      deploymentRepo.findOne.mockResolvedValue(baseDeployment);
+      conversationRepo.findOne.mockResolvedValue(baseConversation);
 
       // Run many times since the suffix is random - regression guard for the
       // nanoid-default-alphabet bug (suffix could end in '-' or '_').
@@ -294,7 +335,7 @@ describe('HostingService', () => {
 
     describe('kubernetes mode (default)', () => {
       it('applies the server to the cluster without building or pushing any image', async () => {
-        deploymentRepo.findOne.mockResolvedValue(baseDeployment);
+        conversationRepo.findOne.mockResolvedValue(baseConversation);
 
         const result = await service.deployToCloud('conv-1', 'user-1');
 
@@ -318,7 +359,7 @@ describe('HostingService', () => {
        * build moved into the deployed pod's initContainer.
        */
       it('never invokes the container registry at all', async () => {
-        deploymentRepo.findOne.mockResolvedValue(baseDeployment);
+        conversationRepo.findOne.mockResolvedValue(baseConversation);
 
         await service.deployToCloud('conv-1', 'user-1');
 
@@ -329,7 +370,7 @@ describe('HostingService', () => {
 
       /** No image is built, so no image reference belongs to this server. */
       it('passes no per-server image to the control plane and records none', async () => {
-        deploymentRepo.findOne.mockResolvedValue(baseDeployment);
+        conversationRepo.findOne.mockResolvedValue(baseConversation);
 
         await service.deployToCloud('conv-1', 'user-1');
 
@@ -343,13 +384,12 @@ describe('HostingService', () => {
       /**
        * GENERATED_SERVERS_DIR is an emptyDir on the backend pod, so it is
        * empty for anything generated before the last restart. The Kubernetes
-       * path reads the source from Postgres via the pod's own fetch, so
-       * requiring a local directory here would fail deploys for a reason that
-       * stopped being real. docker-run, which really does build from disk,
-       * still requires it.
+       * path reads the source from Postgres via the pod's own fetch, so it
+       * never reads the (always-computed) local directory at all. docker-run,
+       * which really does build from disk, is the one that cares.
        */
       it('does not require a local source directory', async () => {
-        deploymentRepo.findOne.mockResolvedValue({ ...baseDeployment, localPath: null });
+        conversationRepo.findOne.mockResolvedValue(baseConversation);
 
         const result = await service.deployToCloud('conv-1', 'user-1');
 
@@ -359,12 +399,13 @@ describe('HostingService', () => {
       });
 
       /**
-       * Deployment is ON DELETE CASCADE from conversations while HostedServer
-       * is only SET NULL, so the source path has to be copied onto the hosted
-       * server or deleting the chat leaves a live, unrebuildable server.
+       * The conversation row is only SET NULL on HostedServer, so the source
+       * path has to be copied onto the hosted server (deterministically, from
+       * GENERATED_SERVERS_DIR + conversationId - see the constructor) or
+       * deleting the chat leaves a live, unrebuildable server.
        */
-      it('copies localPath onto the hosted server instead of relying on the deployment row', async () => {
-        deploymentRepo.findOne.mockResolvedValue(baseDeployment);
+      it('copies a deterministic localPath onto the hosted server', async () => {
+        conversationRepo.findOne.mockResolvedValue(baseConversation);
 
         await service.deployToCloud('conv-1', 'user-1');
 
@@ -381,7 +422,7 @@ describe('HostingService', () => {
        * to match; this is the backend half of that contract.
        */
       it('reports only pending -> deploying, never building or pushing', async () => {
-        deploymentRepo.findOne.mockResolvedValue(baseDeployment);
+        conversationRepo.findOne.mockResolvedValue(baseConversation);
 
         // save() is handed the same mutated entity every time, so the status
         // has to be snapshotted at call time rather than read back off
@@ -407,7 +448,7 @@ describe('HostingService', () => {
        * the cluster ACCEPTED them - readiness is the reconciler's call.
        */
       it('reports deploying, NOT running - readiness is the reconcilers job', async () => {
-        deploymentRepo.findOne.mockResolvedValue(baseDeployment);
+        conversationRepo.findOne.mockResolvedValue(baseConversation);
 
         const result = await service.deployToCloud('conv-1', 'user-1');
 
@@ -432,7 +473,7 @@ describe('HostingService', () => {
        * plane, which puts them in a Secret.
        */
       it('passes user env vars through to the control plane', async () => {
-        deploymentRepo.findOne.mockResolvedValue(baseDeployment);
+        conversationRepo.findOne.mockResolvedValue(baseConversation);
 
         await service.deployToCloud('conv-1', 'user-1', { GITHUB_TOKEN: 'ghp_secret' });
 
@@ -451,7 +492,7 @@ describe('HostingService', () => {
        * ManifestGeneratorService or K8sControlPlaneService.
        */
       it('injects the source URL and a minted source token into the pod env', async () => {
-        deploymentRepo.findOne.mockResolvedValue(baseDeployment);
+        conversationRepo.findOne.mockResolvedValue(baseConversation);
 
         const result = await service.deployToCloud('conv-1', 'user-1');
 
@@ -472,7 +513,7 @@ describe('HostingService', () => {
        * correlate a pod's 401s with a specific credential.
        */
       it('reports the source token identity but never the token itself', async () => {
-        deploymentRepo.findOne.mockResolvedValue(baseDeployment);
+        conversationRepo.findOne.mockResolvedValue(baseConversation);
 
         const result = await service.deployToCloud('conv-1', 'user-1');
 
@@ -482,7 +523,7 @@ describe('HostingService', () => {
       });
 
       it('records where the objects live so the reconciler can find them', async () => {
-        deploymentRepo.findOne.mockResolvedValue(baseDeployment);
+        conversationRepo.findOne.mockResolvedValue(baseConversation);
 
         const result = await service.deployToCloud('conv-1', 'user-1');
 
@@ -493,7 +534,7 @@ describe('HostingService', () => {
       });
 
       it('reports failed when the cluster rejects the objects', async () => {
-        deploymentRepo.findOne.mockResolvedValue(baseDeployment);
+        conversationRepo.findOne.mockResolvedValue(baseConversation);
         k8sControlPlane.applyServer.mockRejectedValue(
           new Error('HTTP 403: deployments.apps is forbidden'),
         );
@@ -506,7 +547,7 @@ describe('HostingService', () => {
       });
 
       it('fails fast with an actionable message when no cluster is configured', async () => {
-        deploymentRepo.findOne.mockResolvedValue(baseDeployment);
+        conversationRepo.findOne.mockResolvedValue(baseConversation);
         k8sControlPlane.isEnabled.mockReturnValue(false);
 
         const result = await service.deployToCloud('conv-1', 'user-1');
@@ -524,7 +565,7 @@ describe('HostingService', () => {
       });
 
       it('builds locally, starts+verifies the container, and reports running with handshake evidence in config', async () => {
-        deploymentRepo.findOne.mockResolvedValue(baseDeployment);
+        conversationRepo.findOne.mockResolvedValue(baseConversation);
         localDockerHostingService.buildImage.mockResolvedValue('mcp-local/x:latest');
         localDockerHostingService.startAndVerify.mockResolvedValue({
           containerName: 'mcp-hosted-x',
@@ -566,7 +607,7 @@ describe('HostingService', () => {
       });
 
       it('advertises the gateway URL (not the loopback port) for an HTTP-transport server', async () => {
-        deploymentRepo.findOne.mockResolvedValue(baseDeployment);
+        conversationRepo.findOne.mockResolvedValue(baseConversation);
         localDockerHostingService.buildImage.mockResolvedValue('mcp-local/x:latest');
         localDockerHostingService.startAndVerify.mockResolvedValue({
           containerName: 'mcp-hosted-x',
@@ -595,7 +636,7 @@ describe('HostingService', () => {
       });
 
       it('reports failed with the real handshake error when the container never becomes a working MCP server', async () => {
-        deploymentRepo.findOne.mockResolvedValue(baseDeployment);
+        conversationRepo.findOne.mockResolvedValue(baseConversation);
         localDockerHostingService.buildImage.mockResolvedValue('mcp-local/x:latest');
         localDockerHostingService.startAndVerify.mockRejectedValue(
           new Error('Timed out waiting for response to \'initialize\' after 15000ms'),
@@ -609,7 +650,7 @@ describe('HostingService', () => {
       });
 
       it('reports failed with a clear build error and never calls startAndVerify', async () => {
-        deploymentRepo.findOne.mockResolvedValue(baseDeployment);
+        conversationRepo.findOne.mockResolvedValue(baseConversation);
         localDockerHostingService.buildImage.mockRejectedValue(
           new Error('Docker build failed: invalid reference format'),
         );
@@ -805,7 +846,7 @@ describe('HostingService', () => {
     it('deployToCloud persists the deploy-time env vars for a later restart', async () => {
       hostingMode = 'docker-run';
       service = await buildService();
-      deploymentRepo.findOne.mockResolvedValue(baseDeployment);
+      conversationRepo.findOne.mockResolvedValue(baseConversation);
       localDockerHostingService.buildImage.mockResolvedValue('mcp-local/x:latest');
       localDockerHostingService.startAndVerify.mockResolvedValue({
         containerName: 'mcp-hosted-x',
