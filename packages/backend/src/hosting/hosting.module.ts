@@ -24,7 +24,9 @@ import { HostedServerSourceToken } from '../database/entities/hosted-server-sour
 import { Conversation } from '../database/entities/conversation.entity';
 import { TokenEncryptionModule } from '../common/token-encryption/token-encryption.module';
 import { UserModule } from '../user/user.module';
-import { CREDENTIAL_RESOLVER, CredentialResolver } from './credential-resolver';
+import { CREDENTIAL_RESOLVER } from './credential-resolver';
+import { CredentialVaultModule } from '../credential-vault/credential-vault.module';
+import { CredentialVaultService } from '../credential-vault/credential-vault.service';
 
 @Module({
   imports: [
@@ -45,6 +47,11 @@ import { CREDENTIAL_RESOLVER, CredentialResolver } from './credential-resolver';
     // For UserService: HostingService reads the caller's tier to enforce the
     // concurrent hosted-server cap.
     UserModule,
+    // Provides CredentialVaultService, bound below to the CREDENTIAL_RESOLVER
+    // token so deployToCloud can resolve a caller's `credentialRefs` (env var
+    // name -> stored credential name) into real secrets at deploy time -
+    // secrets never transit the agent/tool call, only the reference does.
+    CredentialVaultModule,
   ],
   // Three controllers share the `api/hosting` prefix but no routes:
   //   HostingController            - control plane (deploy/stop/keys), user-authenticated
@@ -68,18 +75,12 @@ import { CREDENTIAL_RESOLVER, CredentialResolver } from './credential-resolver';
     HostedMcpClientService,
     HostedServerGatewayGuard,
     HostedServerSourceGuard,
-    // MERGE: the merge master binds this to CredentialVaultService
-    // (`{ provide: CREDENTIAL_RESOLVER, useExisting: CredentialVaultService }`
-    //  + import CredentialVaultModule). This placeholder keeps the module valid
-    //  standalone and makes an unbound deploy fail loudly rather than silently.
-    {
-      provide: CREDENTIAL_RESOLVER,
-      useValue: {
-        resolveForDeploy: async () => {
-          throw new Error('CREDENTIAL_RESOLVER not bound');
-        },
-      } satisfies CredentialResolver,
-    },
+    // Binds the CREDENTIAL_RESOLVER seam (see credential-resolver.ts) to the
+    // real vault. CredentialVaultService implements resolveForDeploy; imported
+    // via CredentialVaultModule above. HostingService depends on the interface,
+    // not the concrete class, so the vault stays a leaf the hosting layer never
+    // reaches into directly.
+    { provide: CREDENTIAL_RESOLVER, useExisting: CredentialVaultService },
   ],
   exports: [
     ContainerRegistryService,
