@@ -26,6 +26,7 @@ import { UsageStatsModule } from './usage-stats/usage-stats.module';
 import { GitHubModule } from './github/github.module';
 import { McpServerModule } from './mcp-server/mcp-server.module';
 import { MyServersModule } from './my-servers/my-servers.module';
+import { CredentialVaultModule } from './credential-vault/credential-vault.module';
 import {
   Conversation,
   PipelineRun,
@@ -40,6 +41,7 @@ import {
   ErrorLog,
   McpServer,
   ApiKey,
+  UserCredential,
 } from './database/entities';
 
 /**
@@ -87,6 +89,7 @@ export class AppController {
         ErrorLog,
         McpServer,
         ApiKey,
+        UserCredential,
       ],
       synchronize: process.env.NODE_ENV !== 'production', // Auto-sync in development
       logging: process.env.NODE_ENV === 'development',
@@ -119,6 +122,7 @@ export class AppController {
     GitHubModule,
     McpServerModule,
     MyServersModule,
+    CredentialVaultModule,
   ],
   controllers: [AppController],
   providers: [
