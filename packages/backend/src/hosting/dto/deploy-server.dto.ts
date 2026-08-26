@@ -23,4 +23,16 @@ export class DeployServerDto {
   @IsOptional()
   @IsObject()
   envVars?: Record<string, string>;
+
+  /**
+   * Map of environment-variable name to the NAME of one of the caller's
+   * stored vault credentials (e.g. `{ "GITHUB_TOKEN": "my-github-pat" }`).
+   * `HostingService.deployToCloud` resolves each referenced credential to its
+   * real secret value server-side and injects it into the deploy env - the
+   * raw secret never has to pass through this request body. Preferred over
+   * putting a raw secret directly in `envVars`.
+   */
+  @IsOptional()
+  @IsObject()
+  credentialRefs?: Record<string, string>;
 }

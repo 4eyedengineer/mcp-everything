@@ -68,6 +68,7 @@ export class HostingController {
         conversationId,
         user.id,
         dto.envVars,
+        dto.credentialRefs,
       );
 
       return {

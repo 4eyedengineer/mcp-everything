@@ -1,4 +1,5 @@
 import {
+  Inject,
   Injectable,
   Logger,
   NotFoundException,
@@ -51,6 +52,7 @@ import { HostedMcpClientService } from './services/hosted-mcp-client.service';
 import { ConfigService } from '@nestjs/config';
 import { UserService } from '../user/user.service';
 import { TIER_CONFIG, TIER_DISPLAY_NAMES, UserTier } from '../subscription/tier-config';
+import { CREDENTIAL_RESOLVER, CredentialResolver } from './credential-resolver';
 
 /**
  * Env vars that are pure operational/transport configuration rather than
@@ -163,6 +165,7 @@ export class HostingService implements OnModuleDestroy {
     private userService: UserService,
     private sourceTokenService: HostedServerSourceTokenService,
     private hostedMcpClientService: HostedMcpClientService,
+    @Inject(CREDENTIAL_RESOLVER) private readonly credentialResolver: CredentialResolver,
   ) {
     this.domain = this.configService.get('MCP_HOSTING_DOMAIN', 'mcp.example.com');
     this.namespace = this.configService.get('K8S_NAMESPACE', 'mcp-servers');
@@ -234,11 +237,19 @@ export class HostingService implements OnModuleDestroy {
    * @param userId owner of the conversation; when supplied the conversation
    *               must belong to this user and the resulting hosted server is
    *               recorded as owned by them
+   * @param credentialRefs map of ENV_VAR_NAME -> the NAME of one of the
+   *               owner's stored vault credentials. Resolved server-side via
+   *               `CredentialResolver` (see credential-resolver.ts) and
+   *               merged into the deploy env - the raw secret value is never
+   *               supplied by, or returned to, the caller. On a key
+   *               collision with `envVars`, the vault-resolved value wins:
+   *               see the merge below.
    */
   async deployToCloud(
     conversationId: string,
     userId?: string,
     envVars?: Record<string, string>,
+    credentialRefs?: Record<string, string>,
   ): Promise<DeploymentResult> {
     // 1. Get the conversation (scoped to the owner) - this is where a
     // generation's output durably lives. See syncGeneratedCodeToConversation.
@@ -278,6 +289,23 @@ export class HostingService implements OnModuleDestroy {
     const owner = userId ?? conversation.userId;
     if (owner) {
       await this.assertHostedServerQuota(owner);
+    }
+
+    // 1c. Resolve any credential-vault references into their real secret
+    // values, server-side, BEFORE anything else happens. This is deliberately
+    // fatal on failure (a missing/foreign credential rejects here rather than
+    // silently deploying without it) and deliberately scoped to `owner`, the
+    // same id the quota check above just used - resolving against the
+    // conversation's userId or an unauthenticated call would let a
+    // credentialRef be resolved without a real owner behind it.
+    let resolvedCredentials: Record<string, string> = {};
+    if (credentialRefs && Object.keys(credentialRefs).length > 0) {
+      if (!owner) {
+        throw new BadRequestException(
+          'credentialRefs requires an authenticated owner to resolve vault credentials against',
+        );
+      }
+      resolvedCredentials = await this.credentialResolver.resolveForDeploy(owner, credentialRefs);
     }
 
     // 2. Generate unique server ID
@@ -322,7 +350,18 @@ export class HostingService implements OnModuleDestroy {
     // ManifestGeneratorService or K8sControlPlaneService. Only non-secret
     // metadata (id, expiry) travels back out on the DeploymentResult.
     const sourceEnv = await this.mintSourceAccessEnv(hostedServer);
-    const envVarsWithSource = { ...(envVars ?? {}), ...sourceEnv.env };
+    // Merge order matters and is deliberate:
+    //   1. plaintext envVars (lowest precedence - the "old" way to supply a
+    //      value)
+    //   2. resolvedCredentials (wins over envVars on a name collision - the
+    //      vault reference is the more deliberate, more recently supplied
+    //      instruction, so it should win over a stale plaintext value under
+    //      the same key)
+    //   3. sourceEnv (always wins - MCP_SOURCE_URL/MCP_SOURCE_TOKEN are
+    //      platform-owned reserved keys; neither a plaintext envVar nor a
+    //      resolved credential may ever clobber the source-fetch credential
+    //      this deploy just minted)
+    const envVarsWithSource = { ...(envVars ?? {}), ...resolvedCredentials, ...sourceEnv.env };
 
     // A local source directory is required ONLY by docker-run, which builds an
     // image from it on this host. The Kubernetes path no longer reads it at

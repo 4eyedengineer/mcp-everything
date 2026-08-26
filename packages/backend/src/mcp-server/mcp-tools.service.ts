@@ -220,7 +220,10 @@ export class McpToolsService {
           'ASYNC NOTE: it returns as soon as the deployment is accepted, with a status like ' +
           '"pending" or "deploying"; a cold start (fetch source, install, compile, come up) ' +
           'typically takes about a minute. Poll get_hosted_server with the returned serverId ' +
-          'until it reports ready before calling its tools.',
+          'until it reports ready before calling its tools. ' +
+          'SECRETS: prefer credentialRefs over envVars for anything sensitive - it references a ' +
+          "secret already stored in your vault instead of putting the secret's raw value in " +
+          'this call.',
         inputSchema: {
           conversationId: z
             .string()
@@ -234,9 +237,18 @@ export class McpToolsService {
                 'the generated server needs). Values are stored as a Kubernetes Secret. Omit if ' +
                 'the server needs none.',
             ),
+          credentialRefs: z
+            .record(z.string(), z.string())
+            .optional()
+            .describe(
+              'Map of environment-variable name to the NAME of one of your stored vault ' +
+                'credentials. The secret value is injected server-side at deploy time and never ' +
+                'passes through this call. Use this instead of putting raw secrets in envVars.',
+            ),
         },
       },
-      async ({ conversationId, envVars }) => this.hostServer(userId, conversationId, envVars),
+      async ({ conversationId, envVars, credentialRefs }) =>
+        this.hostServer(userId, conversationId, envVars, credentialRefs),
     );
 
     server.registerTool(
@@ -583,9 +595,15 @@ export class McpToolsService {
     userId: string,
     conversationId: string,
     envVars: Record<string, string> | undefined,
+    credentialRefs?: Record<string, string>,
   ): Promise<CallToolResult> {
     try {
-      const result = await this.hostingService.deployToCloud(conversationId, userId, envVars);
+      const result = await this.hostingService.deployToCloud(
+        conversationId,
+        userId,
+        envVars,
+        credentialRefs,
+      );
 
       const lines: string[] = [
         `serverId: ${result.serverId}`,
