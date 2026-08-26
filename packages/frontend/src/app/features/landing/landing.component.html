@@ -45,8 +45,8 @@
         </h1>
 
         <p class="hero-subtitle">
-          Name a service, paste a repo, or just describe it. You get a working MCP server &mdash;
-          the tools an AI assistant needs to actually call your API &mdash; and the code behind it.
+          Point it at your database, your repos, Stripe, Slack &mdash; anything with an API &mdash;
+          and your assistant stops describing what it would do and starts doing it.
         </p>
 
         <!--
@@ -109,9 +109,7 @@
           <a routerLink="/explore" class="mcp-btn-secondary">Browse the catalogue</a>
         </div>
 
-        <p class="hero-note">
-          Free to start &mdash; five generations a month, one server hosted here, no card.
-        </p>
+        <p class="hero-note">Free to start &mdash; no credit card.</p>
       </div>
     </section>
 
@@ -140,22 +138,16 @@
       </div>
     </section>
 
-    <!-- What you get -->
-    <section class="landing-section status" id="features" aria-labelledby="features-heading">
+    <!-- Breadth + trust, framed as potential rather than a feature list -->
+    <section class="landing-section" id="reach" aria-labelledby="reach-heading">
       <div class="landing-shell">
-        <h2 class="section-heading" id="features-heading">What you get</h2>
-
-        <div class="ledger">
-          <div class="ledger-col ledger-col-ready">
-            <ul>
-              <li>One server hosted here, free &mdash; or take the code and run it anywhere.</li>
-              <li>Every server is run and tested before you get it, and fixed if a tool call fails.</li>
-              <li>Drops straight into Claude Desktop, or runs behind HTTP wherever you put it.</li>
-              <li>The full source, tests and docs &mdash; pushed to a Gist on your own GitHub, or downloaded.</li>
-              <li>A public catalogue you can browse without an account.</li>
-            </ul>
-          </div>
-        </div>
+        <h2 class="section-heading" id="reach-heading">If it has an API, your assistant can use it</h2>
+        <p class="section-intro">
+          Name a service, paste a repo, point at some docs, or just say what you need. You get back
+          real tools your assistant can call &mdash; run and tested before they reach you, hosted
+          here for you or yours to take as code and run anywhere. They work in Claude Desktop, or
+          anything that speaks MCP.
+        </p>
       </div>
     </section>
 
@@ -163,12 +155,12 @@
     <section class="landing-section" id="agents" aria-labelledby="agents-heading">
       <div class="landing-shell agent-grid">
         <div>
-          <h2 class="section-heading" id="agents-heading">It&rsquo;s an MCP server, too</h2>
+          <h2 class="section-heading" id="agents-heading">One connection to all of it</h2>
           <p class="section-intro">
-            <code>POST /mcp</code> speaks MCP Streamable HTTP, authenticated with an API key. One
-            connection generates a server, answers its own clarifying questions, fetches the code,
-            searches the catalogue, and discovers and calls the tools of every server you host here
-            &mdash; no browser in the loop.
+            MCP Everything is an MCP server itself. Point an agent at one endpoint and it can build
+            new tools on demand, then find and call every tool you&rsquo;ve made here &mdash; no
+            browser, no glue code between them. <code>POST /mcp</code> speaks MCP Streamable HTTP,
+            authenticated with an API key.
           </p>
 
           <dl class="facts">

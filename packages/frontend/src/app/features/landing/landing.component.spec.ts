@@ -109,14 +109,11 @@ describe('LandingComponent', () => {
       expect(text).toContain('description');
     });
 
-    it('promises the servers are tested and repaired before delivery', () => {
-      // The underlying mechanism (a Docker sandbox, JSON-RPC tool calls, five
-      // refinement iterations) is real - see mcp-testing.service.ts and
-      // MAX_REFINEMENT_ITERATIONS - but it is deliberately NOT named on the
-      // page any more. What must survive is the promise itself.
-      const lower = text.toLowerCase();
-      expect(lower).toContain('tested');
-      expect(lower).toMatch(/fixed|repair/);
+    it('promises the tools are run and tested before delivery', () => {
+      // The refine/repair mechanism is real but deliberately not described -
+      // the pitch sells the outcome ("they actually work"), not the process.
+      // What must survive is the trust promise itself.
+      expect(text.toLowerCase()).toContain('tested');
     });
   });
 
@@ -228,18 +225,23 @@ describe('LandingComponent', () => {
       expect(el.querySelector('.ideas-link')).toBeTruthy();
     });
 
-    it('presents Gist, not repository push, as the code destination', () => {
-      // tier-config.ts gives the free tier deploymentTypes: ['gist'] and
-      // deployment-router.service.ts throws TIER_RESTRICTION for 'repo'. Since
-      // no paid tier is purchasable, no real account can push to a repo, so the
-      // "what you get" list must offer Gist/download and never a repository
-      // push. (The precise "gated to a paid tier" wording now lives in the FAQ
-      // and /llms.txt, not on the pitch.)
-      const whatYouGet =
-        (fixture.nativeElement as HTMLElement).querySelector('.ledger-col-ready')?.textContent ?? '';
+    it('does not offer GitHub repository push as a destination', () => {
+      // Free-tier deployment is Gist/download only; repo push is gated to an
+      // unpurchasable tier. The pitch simply never claims a repository push
+      // (the precise gating lives in the FAQ and /llms.txt). A repo as a
+      // generation *input* ("paste a repo") is fine - this guards the *act of
+      // pushing to* a repository.
+      expect(text.toLowerCase()).not.toMatch(/push[a-z]*\s+(to\s+)?(a\s+)?(your\s+)?(github\s+)?repo/);
+    });
 
-      expect(whatYouGet).toContain('Gist');
-      expect(whatYouGet.toLowerCase()).not.toContain('repository');
+    it('does not advertise usage quotas or caps on the pitch', () => {
+      // Metered limits (generations per month, the one-server cap) are enforced
+      // in-app and documented in the FAQ + /llms.txt. The marketing page sells
+      // the outcome, not the rate limits - so no "N generations a month" and no
+      // server-count cap on the pitch.
+      const lower = text.toLowerCase();
+      expect(lower).not.toMatch(/\d+\s+generation/);
+      expect(lower).not.toMatch(/generations?\s+(a|per)\s+month/);
     });
   });
 });
