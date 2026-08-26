@@ -77,7 +77,7 @@ export class DeployProgressComponent implements OnInit, OnDestroy {
    * over it. `statusOrder` below must stay in sync with this list.
    */
   steps: DeploymentStep[] = [
-    { id: 'deploying', label: 'Deploying to cluster', status: 'pending' },
+    { id: 'deploying', label: 'Deploying', status: 'pending' },
     { id: 'running', label: 'Server ready', status: 'pending' }
   ];
 

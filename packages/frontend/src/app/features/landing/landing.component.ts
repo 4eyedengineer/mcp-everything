@@ -7,10 +7,8 @@ import { ThemeToggleComponent } from '../../shared/components/theme-toggle/theme
  * Public marketing landing page served at `/`.
  *
  * Everything on this page must map to a feature that actually works today.
- * Where something is planned but not working (cloud hosting, billing,
- * authentication for hosted servers) it is confined to the "Not available
- * yet" section and phrased in the future tense. See the component template
- * for the per-claim notes.
+ * Anything gated or not-yet-available is kept off the pitch and documented
+ * precisely in the FAQ (index.html) and /llms.txt instead.
  *
  * Rendering note: this SPA has no SSR or prerendering, so crawlers that do
  * not execute JavaScript never see this component. The same marketing copy
@@ -33,10 +31,7 @@ export class LandingComponent {
    * Public MCP endpoint agents connect to. Mirrored in index.html + llms.txt.
    *
    * This is `/mcp`, NOT `/api/mcp` - the backend mounts the MCP controller
-   * outside the `/api/v1` global prefix, and the homelab Ingress routes `/mcp`
-   * straight to the backend Service. Verified live 2026-08-03: a POST with a
-   * bogus key returns 401 "Invalid or revoked API key" (route + key check both
-   * reached), while `/api/mcp` returns 404.
+   * outside the `/api/v1` global prefix, so `/api/mcp` returns 404.
    */
   readonly mcpEndpoint = 'https://mcpeverything.com/mcp';
 

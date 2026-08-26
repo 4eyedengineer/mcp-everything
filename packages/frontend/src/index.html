@@ -83,7 +83,7 @@
         "operatingSystem": "Web",
         "publisher": { "@id": "https://mcpeverything.com/#organization" },
         "isAccessibleForFree": true,
-        "description": "Generates Model Context Protocol (MCP) servers from a GitHub repository, a documentation site, a service name or a plain-English description. Each generated server is built and tested, and fixed if it fails, before the run is allowed to succeed.",
+        "description": "Generates Model Context Protocol (MCP) servers from a GitHub repository, a documentation site, a service name or a plain-English description. Each generated server is built and tested - and fixed if a tool call fails - before you receive it.",
         "featureList": [
           "Generate an MCP server from a GitHub repository URL",
           "Generate an MCP server from a documentation site URL",
@@ -131,7 +131,7 @@
             "name": "How do I know the generated server actually works?",
             "acceptedAnswer": {
               "@type": "Answer",
-              "text": "Because it was run, not just written. Every candidate server is started and its tools are actually called; if that fails, the code is repaired and tested again before the run gives up."
+              "text": "Because it's run, not just written. Every server's tools are actually called before you receive it, and the code is fixed and retested if a call fails."
             }
           },
           {

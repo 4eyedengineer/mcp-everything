@@ -168,12 +168,16 @@ describe('LandingComponent', () => {
       expect(lower).not.toContain('scales to zero');
     });
 
-    it('keeps an explicit "not available yet" disclosure on the page', () => {
-      expect(text).toContain('Not available yet');
-      expect(text.toLowerCase()).toContain('nothing is for sale');
-      // The one-server cap is a real limit and has to be stated, now that
-      // hosting is sold on the page rather than denied.
-      expect(text).toContain('More than one hosted server');
+    it('keeps the pitch free of a build-status ledger', () => {
+      // Removed 2026-08-26: the "Straight talk / Not available yet" ledger
+      // read like a changelog and led the reader with limitations. The precise
+      // gated / not-for-sale disclosures now live where someone looks for them
+      // - the FAQ in index.html and /llms.txt - not in the landing pitch. This
+      // guard fails the build if the ledger (or its status-report voice) comes
+      // back, or if the page starts quoting a price.
+      expect(text).not.toContain('Not available yet');
+      expect(text.toLowerCase()).not.toContain('active development');
+      expect(text).not.toMatch(/\$\s?\d/);
     });
 
     /**
@@ -224,19 +228,18 @@ describe('LandingComponent', () => {
       expect(el.querySelector('.ideas-link')).toBeTruthy();
     });
 
-    it('does not offer GitHub repository push as an available destination', () => {
+    it('presents Gist, not repository push, as the code destination', () => {
       // tier-config.ts gives the free tier deploymentTypes: ['gist'] and
-      // deployment-router.service.ts throws TIER_RESTRICTION for 'repo'.
-      // Since no paid tier is purchasable, no real account can push to a repo,
-      // so the page must present it as gated rather than as a destination.
-      const worksToday =
+      // deployment-router.service.ts throws TIER_RESTRICTION for 'repo'. Since
+      // no paid tier is purchasable, no real account can push to a repo, so the
+      // "what you get" list must offer Gist/download and never a repository
+      // push. (The precise "gated to a paid tier" wording now lives in the FAQ
+      // and /llms.txt, not on the pitch.)
+      const whatYouGet =
         (fixture.nativeElement as HTMLElement).querySelector('.ledger-col-ready')?.textContent ?? '';
 
-      // ("repo" alone is fine there - it's also a generation *input*, which is
-      // exactly why this checks for the *act of pushing* rather than the noun.)
-      expect(worksToday.toLowerCase()).not.toContain('push');
-      expect(worksToday).toContain('Gist');
-      expect(text.toLowerCase()).toContain('gated to a paid tier');
+      expect(whatYouGet).toContain('Gist');
+      expect(whatYouGet.toLowerCase()).not.toContain('repository');
     });
   });
 });

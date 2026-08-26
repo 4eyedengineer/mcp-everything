@@ -1,43 +1,13 @@
 <!--
   Public marketing landing page.
 
-  EVERY user-facing claim below is traceable to working code:
-
-    the four rotating inputs
-        -> research.service.ts routeResearchStrategy(): four real strategies.
-           There is deliberately no "OpenAPI spec" input - no OpenAPI or
-           GraphQL parser exists anywhere in the backend.
-    "built, tested and fixed until it works"
-        -> testing/mcp-testing.service.ts (real `docker run`, initialize ->
-           tools/list -> tools/call) and pipeline.service.ts
-           MAX_REFINEMENT_ITERATIONS = 5.
-    "Claude Desktop, or ... behind HTTP"
-        -> refinement.service.ts reference implementation + MCP_TRANSPORT
-           (stdio default, Streamable HTTP opt-in).
-    the MCP endpoint block
-        -> mcp-server/mcp-server.controller.ts + mcp-tools.service.ts.
-           Verified live on 2026-08-03: POST https://mcpeverything.com/mcp
-           answers 401 "Invalid or revoked API key" for a bogus key, so the
-           route and the key check are both reachable on the public domain.
-    "Gist" as the only destination
-        -> tier-config.ts gives the free tier deploymentTypes: ['gist'] and
-           deployment-router.service.ts throws TIER_RESTRICTION for 'repo',
-           and no tier above free is purchasable - so repo push is stated as
-           gated, never as available.
-    "five generations a month"
-        -> subscription/tier-config.ts, enforced in pipeline.service.ts.
-
-  Anything not working yet lives in the "Not available yet" column, in the
-  future tense, and nowhere else. Keep this page short: it lost an FAQ, six
-  feature cards and a five-step walkthrough on 2026-08-03 because a landing
-  page that reads like a manual does not convert.
-
-  SAY WHAT THE BUYER GETS, NOT HOW WE BUILT IT. On 2026-08-03 this page was
-  stripped of Docker, JSON-RPC, "repair rounds", stdio/Streamable HTTP and
-  Kubernetes - our plumbing, leaking into the pitch. Every claim is unchanged
-  and still traceable above; only the vocabulary is now the reader's. The
-  "For agents" section is the deliberate exception: it is API documentation,
-  where the protocol details ARE the product surface.
+  Rule for this page: say what the buyer gets, not how it's built. No
+  infrastructure vocabulary, no build-status ledger, no dates. The precise,
+  hedged details (what's gated, what's not for sale) live in the FAQ in
+  index.html and in /llms.txt, where someone looking for them can find them -
+  the pitch stays a pitch. Every claim here maps to working code; the
+  machine-readable mirror in index.html and landing.component.spec.ts keep the
+  factual strings honest.
 -->
 <div class="landing">
   <a class="skip-link" href="#main">Skip to content</a>
@@ -51,7 +21,6 @@
 
       <nav class="header-nav" aria-label="Primary">
         <a href="#agents">For agents</a>
-        <a href="#status">Status</a>
         <a routerLink="/explore">Explore</a>
       </nav>
 
@@ -63,18 +32,11 @@
   </header>
 
   <main id="main">
-    <!-- Hero: the grid, the headline, and the machine ---------------------- -->
+    <!-- Hero -->
     <section class="hero">
       <div class="grid-field" aria-hidden="true"></div>
 
       <div class="landing-shell hero-inner">
-        <!--
-          "open source" was removed on 2026-08-04. The repo is public but has
-          no LICENSE file, GitHub reports no licence, and the README links to
-          one that 404s - only package.json declares MIT. A public repo with
-          no licence is all-rights-reserved, so the claim described an
-          intention rather than a grant. Do not restore it without the file.
-        -->
         <p class="hero-eyebrow">Model Context Protocol</p>
 
         <h1 class="hero-title">
@@ -83,14 +45,14 @@
         </h1>
 
         <p class="hero-subtitle">
-          Name a service, paste a repo, or say what you want. You get a working server and the code
-          behind it.
+          Name a service, paste a repo, or just describe it. You get a working MCP server &mdash;
+          the tools an AI assistant needs to actually call your API &mdash; and the code behind it.
         </p>
 
         <!--
-          The machine. One element replaces what used to be three sections:
-          the four accepted inputs (rotating), and the pipeline (the rail).
-          Purely decorative motion - the same facts are in the text.
+          The machine: the accepted inputs (top, rotating) and example tools
+          that come out (bottom, rotating in lockstep). Decorative motion; the
+          same facts are in the text. Tool names are illustrative.
         -->
         <div class="machine">
           <div class="machine-bar" aria-hidden="true">
@@ -117,21 +79,6 @@
             </span>
           </div>
 
-          <!--
-            What came OUT, rotating in lockstep with the input above (same
-            keyframes, same duration, so row N of each always lines up).
-
-            This replaced a numbered Research/Design/Build/Test/Deliver rail -
-            i.e. pipeline.service.ts's own step names, animated, in the hero.
-            Nobody wants an MCP server; they want their assistant to be able
-            to refund a charge. Showing the tools makes the reader think
-            "I could point that at OUR API", which the rail never did.
-
-            The tool names are illustrative, exactly as the input examples
-            above them are. If you want them to be evidence rather than
-            illustration, seed them from the real catalogue via the
-            marketplace API.
-          -->
           <div class="machine-output" aria-label="Example tools produced">
             <span class="rotator rotator-tools">
               <span class="rotator-track">
@@ -163,17 +110,12 @@
         </div>
 
         <p class="hero-note">
-          Five servers a month. One hosted here. No card, because there is nothing to buy.
+          Free to start &mdash; five generations a month, one server hosted here, no card.
         </p>
       </div>
     </section>
 
-    <!--
-      Ideas strip. This replaced a stat band of 4/5/6/0 - three of whose four
-      numbers counted our own surface area rather than anything the reader
-      gets. A landing page has to make someone think "I could use this for
-      ___", and nothing else on the page was doing that job.
-    -->
+    <!-- Ideas: use cases, to make the reader think "I'd point that at ___" -->
     <section class="ideas" aria-labelledby="ideas-heading">
       <div class="landing-shell">
         <h2 class="ideas-heading" id="ideas-heading">Things you could ask for</h2>
@@ -198,16 +140,35 @@
       </div>
     </section>
 
-    <!-- For AI agents ----------------------------------------------------- -->
+    <!-- What you get -->
+    <section class="landing-section status" id="features" aria-labelledby="features-heading">
+      <div class="landing-shell">
+        <h2 class="section-heading" id="features-heading">What you get</h2>
+
+        <div class="ledger">
+          <div class="ledger-col ledger-col-ready">
+            <ul>
+              <li>One server hosted here, free &mdash; or take the code and run it anywhere.</li>
+              <li>Every server is run and tested before you get it, and fixed if a tool call fails.</li>
+              <li>Drops straight into Claude Desktop, or runs behind HTTP wherever you put it.</li>
+              <li>The full source, tests and docs &mdash; pushed to a Gist on your own GitHub, or downloaded.</li>
+              <li>A public catalogue you can browse without an account.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- For AI agents (API documentation: protocol detail IS the product here) -->
     <section class="landing-section" id="agents" aria-labelledby="agents-heading">
       <div class="landing-shell agent-grid">
         <div>
-          <h2 class="section-heading" id="agents-heading">It is an MCP server too</h2>
+          <h2 class="section-heading" id="agents-heading">It&rsquo;s an MCP server, too</h2>
           <p class="section-intro">
-            <code>POST /mcp</code> speaks MCP Streamable HTTP, authenticated with an API key. An
-            agent can generate a server, answer its own clarifying questions, fetch the code and
-            search the catalogue without a browser in the loop, and the same connection reaches the
-            servers you host here.
+            <code>POST /mcp</code> speaks MCP Streamable HTTP, authenticated with an API key. One
+            connection generates a server, answers its own clarifying questions, fetches the code,
+            searches the catalogue, and discovers and calls the tools of every server you host here
+            &mdash; no browser in the loop.
           </p>
 
           <dl class="facts">
@@ -237,13 +198,9 @@
         </div>
 
         <!--
-          The snippet lives in the component rather than inline because the
-          JSON-RPC body contains braces, which Angular's template parser
-          treats as an ICU message and refuses to compile.
-
-          The fineprint sits under the terminal rather than under the copy so
-          the two columns end at roughly the same depth - the terminal is four
-          lines tall and left an obvious void beside it otherwise.
+          The snippet lives in the component (curlExample) rather than inline
+          because the JSON-RPC body contains braces, which Angular's template
+          parser treats as an ICU message and refuses to compile.
         -->
         <div>
           <div class="terminal">
@@ -253,63 +210,11 @@
             </div>
             <pre><code>{{ curlExample }}</code></pre>
           </div>
-
-          <!--
-            The polling/CORS fineprint that used to close this column moved to
-            /llms.txt, which is where an implementer looks and where it was
-            already documented. A landing page should not end on a caveat
-            about client timeouts.
-          -->
         </div>
       </div>
     </section>
 
-    <!-- Straight talk ----------------------------------------------------- -->
-    <section class="landing-section status" id="status" aria-labelledby="status-heading">
-      <div class="landing-shell">
-        <h2 class="section-heading" id="status-heading">Straight talk</h2>
-        <p class="section-intro">Active development, so here is exactly where it stands.</p>
-
-        <div class="ledger">
-          <div class="ledger-col ledger-col-ready">
-            <h3>Works today</h3>
-            <ul>
-              <li>One server hosted here, free. Or take the code and run it anywhere.</li>
-              <li>Tested before you get it, and fixed if something fails</li>
-              <li>Drops into Claude Desktop, or runs behind HTTP wherever you put it</li>
-              <li>Code published to a Gist on your own GitHub account once you connect it, or downloaded</li>
-              <li>A public catalogue you can browse without an account</li>
-            </ul>
-          </div>
-
-          <!--
-            Hosting used to sit in THIS column, reading "we don't run your
-            server for you yet". That was false: tier-config.ts gives the free
-            tier hostedServerLimit: 1, chat has a "Host on Cloud" button wired
-            to deployToCloud, and hosted servers are running in production. It
-            was the strongest thing on the page, filed under apologies.
-          -->
-          <div class="ledger-col ledger-col-pending">
-            <h3>Not available yet</h3>
-            <ul>
-              <li>
-                <strong>Paid plans.</strong> Nothing is for sale, so no price is quoted anywhere.
-              </li>
-              <li>
-                <strong>Pushing straight to a GitHub repo.</strong> Gated to a paid tier, and there
-                is no paid tier to buy. Free accounts publish a Gist.
-              </li>
-              <li>
-                <strong>More than one hosted server.</strong> Free accounts get one. Raising that
-                needs a paid tier, and there isn&rsquo;t one.
-              </li>
-            </ul>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- Closing ----------------------------------------------------------- -->
+    <!-- Closing -->
     <section class="closing">
       <div class="grid-field grid-field-bottom" aria-hidden="true"></div>
       <div class="landing-shell">

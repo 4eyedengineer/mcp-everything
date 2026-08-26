@@ -2,18 +2,17 @@
 
 > A platform that generates working Model Context Protocol (MCP) servers from a
 > GitHub repository, a documentation site, a service name, or a plain-English description.
-> Each generated server is compiled, started inside a Docker container and driven over JSON-RPC
-> (initialise, list tools, call them) before the run is allowed to succeed, with up to five
-> automatic repair rounds. The generated source is published to a public Gist on your own
-> GitHub account once you connect it, or downloaded, and runs without this platform.
+> Each generated server is run and tested - its tools are actually called, and the code is
+> fixed if a call fails - before you receive it. The source is published to a public Gist on
+> your own GitHub account once you connect it, or downloaded, and runs without this platform.
 
 MCP Everything is itself an MCP server, so an AI agent can drive generation without a human
 using the web interface. Details are under "MCP endpoint for agents" below.
 
-This file is maintained by hand and is kept consistent with the landing page. If it disagrees
-with the site, the site is correct. Last reviewed: 2026-08.
+This file is maintained by hand and kept consistent with the site. If the two disagree, the
+site is correct.
 
-## What actually works today
+## The site
 
 - [Home](https://mcpeverything.com/): what the product does, how a generation runs, and an
   explicit list of what is and is not implemented.
@@ -28,9 +27,8 @@ with the site, the site is correct. Last reviewed: 2026-08.
 Supported generation inputs: a GitHub repository URL; a documentation or developer-portal URL;
 a bare service name such as "Stripe API"; a plain-English description of the tools you want.
 
-Generated servers implement both MCP transports (stdio by default, and MCP Streamable HTTP
-when the environment variable MCP_TRANSPORT is set to "http") and ship with tests, a
-Dockerfile, a devcontainer definition and documentation.
+Generated servers speak MCP over stdio (for clients like Claude Desktop) or over HTTP, and
+ship with tests and documentation.
 
 ## MCP endpoint for agents
 
@@ -64,7 +62,7 @@ Tools exposed:
 
 Practical notes for implementers:
 
-- `generate_mcp_server` runs the entire pipeline before returning, which takes minutes. Many
+- `generate_mcp_server` runs the full generation before returning, which takes minutes. Many
   clients will time out. Start the run, then poll `get_generation_status` and retrieve the
   result with `get_generated_server`.
 - One connection reaches every server you host here: call `search_tools` to find a tool, then
@@ -79,7 +77,7 @@ Practical notes for implementers:
   unmerged draft that has since moved away from `.well-known`), so publishing one here would be
   inventing a convention. Configure the endpoint and key manually.
 
-## Not implemented: do not describe these as available
+## Not available yet
 
 - More than one hosted server per account. Hosting IS available. Free accounts can host one
   server on MCP Everything infrastructure, via the "Host on Cloud" action after a generation.
