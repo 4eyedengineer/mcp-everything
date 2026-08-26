@@ -24,6 +24,7 @@ import { HostedServerSourceToken } from '../database/entities/hosted-server-sour
 import { Conversation } from '../database/entities/conversation.entity';
 import { TokenEncryptionModule } from '../common/token-encryption/token-encryption.module';
 import { UserModule } from '../user/user.module';
+import { CREDENTIAL_RESOLVER, CredentialResolver } from './credential-resolver';
 
 @Module({
   imports: [
@@ -67,6 +68,18 @@ import { UserModule } from '../user/user.module';
     HostedMcpClientService,
     HostedServerGatewayGuard,
     HostedServerSourceGuard,
+    // MERGE: the merge master binds this to CredentialVaultService
+    // (`{ provide: CREDENTIAL_RESOLVER, useExisting: CredentialVaultService }`
+    //  + import CredentialVaultModule). This placeholder keeps the module valid
+    //  standalone and makes an unbound deploy fail loudly rather than silently.
+    {
+      provide: CREDENTIAL_RESOLVER,
+      useValue: {
+        resolveForDeploy: async () => {
+          throw new Error('CREDENTIAL_RESOLVER not bound');
+        },
+      } satisfies CredentialResolver,
+    },
   ],
   exports: [
     ContainerRegistryService,

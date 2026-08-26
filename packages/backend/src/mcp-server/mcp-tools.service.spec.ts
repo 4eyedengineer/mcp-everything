@@ -338,9 +338,7 @@ describe('McpToolsService', () => {
       serverName: 'Billing Tools',
       status: 'stopped',
       deletedAt: null,
-      tools: [
-        { name: 'create_invoice', description: 'Creates an invoice', inputSchema: {} },
-      ],
+      tools: [{ name: 'create_invoice', description: 'Creates an invoice', inputSchema: {} }],
     };
 
     it('flattens tools across all of the user`s hosted servers', async () => {
@@ -410,9 +408,7 @@ describe('McpToolsService', () => {
     it('restricts to a single server by serverId', async () => {
       hostingService.getServers.mockResolvedValue([runningServer, stoppedServer] as any);
 
-      const payload = parsePayload(
-        await service.searchTools(userId, { serverId: 'srv-stopped' }),
-      );
+      const payload = parsePayload(await service.searchTools(userId, { serverId: 'srv-stopped' }));
 
       expect(payload.count).toBe(1);
       expect(payload.tools[0].serverId).toBe('srv-stopped');
@@ -496,9 +492,7 @@ describe('McpToolsService', () => {
     });
 
     it('turns a NotFound (not owned/missing) into a clean tool error', async () => {
-      hostingService.getServer.mockRejectedValue(
-        new NotFoundException('Server not found: srv-x'),
-      );
+      hostingService.getServer.mockRejectedValue(new NotFoundException('Server not found: srv-x'));
 
       const result = await service.callTool(userId, 'srv-x', 'do_thing', undefined);
 
@@ -542,14 +536,34 @@ describe('McpToolsService', () => {
 
       const result = await service.hostServer(userId, conversationId, { API_TOKEN: 'x' });
 
-      expect(hostingService.deployToCloud).toHaveBeenCalledWith(conversationId, userId, {
-        API_TOKEN: 'x',
-      });
+      expect(hostingService.deployToCloud).toHaveBeenCalledWith(
+        conversationId,
+        userId,
+        { API_TOKEN: 'x' },
+        undefined,
+      );
       expect(result.isError).toBeFalsy();
       const text = (result.content[0] as any).text as string;
       expect(text).toContain('serverId: srv-new');
       expect(text).toContain('status: pending');
       expect(text).toContain('get_hosted_server');
+    });
+
+    it('passes credentialRefs through to deployToCloud as the 4th argument', async () => {
+      hostingService.deployToCloud.mockResolvedValue({
+        success: true,
+        serverId: 'srv-new',
+        endpointUrl: 'http://gw/api/hosting/servers/srv-new/mcp',
+        status: 'pending',
+      } as any);
+
+      await service.hostServer(userId, conversationId, undefined, {
+        GITHUB_TOKEN: 'my-github-pat',
+      });
+
+      expect(hostingService.deployToCloud).toHaveBeenCalledWith(conversationId, userId, undefined, {
+        GITHUB_TOKEN: 'my-github-pat',
+      });
     });
 
     it('marks a resolved { success: false } deploy as a tool error', async () => {
@@ -661,9 +675,7 @@ describe('McpToolsService', () => {
     });
 
     it('turns a NotFound (not owned/missing) into a clean tool error', async () => {
-      hostingService.getServer.mockRejectedValue(
-        new NotFoundException('Server not found: srv-x'),
-      );
+      hostingService.getServer.mockRejectedValue(new NotFoundException('Server not found: srv-x'));
 
       const result = await service.getHostedServer(userId, 'srv-x');
 
@@ -705,10 +717,13 @@ describe('McpToolsService', () => {
           ].sort(),
         );
 
-        // host_server's inputSchema must expose the two params an agent needs.
+        // host_server's inputSchema must expose the params an agent needs,
+        // including credentialRefs - the vault-by-reference alternative to
+        // putting a raw secret in envVars.
         const hostServer = tools.find((t) => t.name === 'host_server')!;
         expect(hostServer.inputSchema.properties).toHaveProperty('conversationId');
         expect(hostServer.inputSchema.properties).toHaveProperty('envVars');
+        expect(hostServer.inputSchema.properties).toHaveProperty('credentialRefs');
         expect(hostServer.inputSchema.required).toEqual(['conversationId']);
       } finally {
         await client.close();

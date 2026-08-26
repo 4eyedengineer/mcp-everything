@@ -14,6 +14,7 @@ import { ContainerRegistryService } from './services/container-registry.service'
 import { ManifestGeneratorService } from './services/manifest-generator.service';
 import { K8sControlPlaneService } from './services/k8s-control-plane.service';
 import { LocalDockerHostingService } from './services/local-docker-hosting.service';
+import { CREDENTIAL_RESOLVER, CredentialResolver } from './credential-resolver';
 
 describe('HostingService', () => {
   let service: HostingService;
@@ -53,6 +54,7 @@ describe('HostingService', () => {
     getLogs: jest.Mock;
   };
   let hostingMode: 'kubernetes' | 'docker-run';
+  let credentialResolver: jest.Mocked<CredentialResolver>;
 
   const mockConfigService = {
     get: jest.fn((key: string, defaultValue?: unknown) => {
@@ -160,6 +162,13 @@ describe('HostingService', () => {
       revokeAllForServer: jest.fn().mockResolvedValue(0),
     };
 
+    // Real binding is CredentialVaultService, owned by a different module -
+    // see credential-resolver.ts. Defaults to resolving nothing so existing
+    // tests (which never pass credentialRefs) are unaffected.
+    credentialResolver = {
+      resolveForDeploy: jest.fn().mockResolvedValue({}),
+    };
+
     service = await buildService();
   });
 
@@ -188,6 +197,7 @@ describe('HostingService', () => {
           provide: HostedMcpClientService,
           useValue: { invalidate: jest.fn().mockResolvedValue(undefined) },
         },
+        { provide: CREDENTIAL_RESOLVER, useValue: credentialResolver },
       ],
     }).compile();
 
@@ -314,7 +324,14 @@ describe('HostingService', () => {
         const where = hostedServerRepo.count.mock.calls[0][0].where;
         // TypeORM In() operator - assert on the value list it was built with.
         expect(where.status.value).toEqual(
-          expect.arrayContaining(['pending', 'building', 'pushing', 'deploying', 'running', 'stopped']),
+          expect.arrayContaining([
+            'pending',
+            'building',
+            'pushing',
+            'deploying',
+            'running',
+            'stopped',
+          ]),
         );
         expect(where.status.value).not.toContain('failed');
         expect(where.status.value).not.toContain('deleted');
@@ -508,6 +525,116 @@ describe('HostingService', () => {
       });
 
       /**
+       * credentialRefs: resolves via the injected CredentialResolver, scoped
+       * to the same owner id the quota check uses, and merges the resolved
+       * values into the deploy env alongside plaintext envVars.
+       */
+      it('resolves credentialRefs against the owner and merges the values into the pod env', async () => {
+        conversationRepo.findOne.mockResolvedValue(baseConversation);
+        credentialResolver.resolveForDeploy.mockResolvedValue({
+          GITHUB_TOKEN: 'ghp_from_vault',
+        });
+
+        await service.deployToCloud(
+          'conv-1',
+          'user-1',
+          { OTHER_VAR: 'plain' },
+          {
+            GITHUB_TOKEN: 'my-github-pat',
+          },
+        );
+
+        expect(credentialResolver.resolveForDeploy).toHaveBeenCalledWith('user-1', {
+          GITHUB_TOKEN: 'my-github-pat',
+        });
+        expect(k8sControlPlane.applyServer).toHaveBeenCalledWith(
+          expect.objectContaining({
+            envVars: expect.objectContaining({
+              OTHER_VAR: 'plain',
+              GITHUB_TOKEN: 'ghp_from_vault',
+            }),
+          }),
+        );
+      });
+
+      /**
+       * On a name collision, the vault-resolved value must win over a
+       * plaintext envVars entry under the same key - the credential
+       * reference is the more deliberate, more recently supplied instruction.
+       */
+      it('lets a vault-resolved credential win over a plaintext envVars value under the same key', async () => {
+        conversationRepo.findOne.mockResolvedValue(baseConversation);
+        credentialResolver.resolveForDeploy.mockResolvedValue({
+          API_TOKEN: 'from-vault',
+        });
+
+        await service.deployToCloud(
+          'conv-1',
+          'user-1',
+          { API_TOKEN: 'stale-plaintext' },
+          {
+            API_TOKEN: 'stored-cred-name',
+          },
+        );
+
+        expect(k8sControlPlane.applyServer).toHaveBeenCalledWith(
+          expect.objectContaining({
+            envVars: expect.objectContaining({ API_TOKEN: 'from-vault' }),
+          }),
+        );
+      });
+
+      /**
+       * The platform's own source-fetch credential is reserved: neither a
+       * plaintext envVar nor a resolved vault credential may ever clobber it,
+       * no matter what name a caller supplies.
+       */
+      it('never lets a resolved credential clobber the reserved source-token env vars', async () => {
+        conversationRepo.findOne.mockResolvedValue(baseConversation);
+        credentialResolver.resolveForDeploy.mockResolvedValue({
+          MCP_SOURCE_TOKEN: 'attacker-supplied',
+        });
+
+        const result = await service.deployToCloud('conv-1', 'user-1', undefined, {
+          MCP_SOURCE_TOKEN: 'some-stored-cred',
+        });
+
+        expect(k8sControlPlane.applyServer).toHaveBeenCalledWith(
+          expect.objectContaining({
+            envVars: expect.objectContaining({
+              MCP_SOURCE_URL: `http://localhost:3000/api/hosting/servers/${result.serverId}/source`,
+              MCP_SOURCE_TOKEN: 'mcpsrc_test-token',
+            }),
+          }),
+        );
+      });
+
+      it('does not call the credential resolver when credentialRefs is omitted or empty', async () => {
+        conversationRepo.findOne.mockResolvedValue(baseConversation);
+
+        await service.deployToCloud('conv-1', 'user-1');
+        await service.deployToCloud('conv-1', 'user-1', undefined, {});
+
+        expect(credentialResolver.resolveForDeploy).not.toHaveBeenCalled();
+      });
+
+      /**
+       * A missing/foreign credential must fail the whole deploy rather than
+       * silently proceed without it - see CredentialResolver's docstring.
+       */
+      it('propagates a resolveForDeploy rejection as a deploy failure', async () => {
+        conversationRepo.findOne.mockResolvedValue(baseConversation);
+        credentialResolver.resolveForDeploy.mockRejectedValue(
+          new Error('Credential "missing-cred" not found'),
+        );
+
+        await expect(
+          service.deployToCloud('conv-1', 'user-1', undefined, { API_TOKEN: 'missing-cred' }),
+        ).rejects.toThrow('Credential "missing-cred" not found');
+        expect(k8sControlPlane.applyServer).not.toHaveBeenCalled();
+      });
+
+      /**
        * The token plaintext must never leave the deploy path. Only its
        * non-secret identity and expiry are reported, so an operator can
        * correlate a pod's 401s with a specific credential.
@@ -639,7 +766,7 @@ describe('HostingService', () => {
         conversationRepo.findOne.mockResolvedValue(baseConversation);
         localDockerHostingService.buildImage.mockResolvedValue('mcp-local/x:latest');
         localDockerHostingService.startAndVerify.mockRejectedValue(
-          new Error('Timed out waiting for response to \'initialize\' after 15000ms'),
+          new Error("Timed out waiting for response to 'initialize' after 15000ms"),
         );
 
         const result = await service.deployToCloud('conv-1', 'user-1');
@@ -1033,5 +1160,4 @@ describe('HostingService', () => {
       );
     });
   });
-
 });
