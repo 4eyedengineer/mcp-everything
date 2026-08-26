@@ -676,6 +676,34 @@ keys for one of their hosted MCP servers:
   client loop cannot hammer the build host. Key create/revoke are capped at
   10/minute.
 
+### Per-User Credential Vault
+
+Users store their own upstream secrets (a personal `GITHUB_TOKEN`, a Stripe key,
+etc.) encrypted at rest, and reference them by name when hosting a server —
+so a raw secret never has to be pasted into a deploy form or a tool call.
+
+- **Storage** (`src/credential-vault/`): `user_credentials` rows hold only
+  AES-256-GCM ciphertext (`TokenEncryptionService`, keyed by
+  `TOKEN_ENCRYPTION_KEY`). The plaintext is *write-only*: accepted once on
+  create, never returned by any read path and never logged. `CredentialVaultService`
+  fails closed — it refuses to store if no encryption key is configured. Managed
+  via `/api/v1/credentials` (create/list/delete), ownership-scoped by the global
+  JWT/API-key guard; names are unique per user.
+- **Injection by reference**: `host_server` / `deployToCloud` accept
+  `credentialRefs` (env-var name → stored credential name). `HostingService`
+  resolves them at deploy time through the `CREDENTIAL_RESOLVER` seam (a
+  dependency-inverted interface bound to `CredentialVaultService`, so hosting
+  never reaches into the vault directly) and merges the decrypted values into
+  the pod's env Secret. The secret value travels platform-side only; the agent
+  passes the *reference*. Merge precedence: plaintext `envVars` < vault-resolved
+  `credentialRefs` < platform source-token env (the reserved `MCP_SOURCE_*` keys
+  can never be clobbered).
+- **Not yet**: per-*request* multi-tenant injection into a *shared* running
+  server (many callers, one pod, each their own key) — that needs generated
+  servers to read credentials from a per-request context. This vault is the
+  foundation for it; today injection is per-deploy, bound to the owner hosting
+  the server.
+
 ### API Key Management
 
 ```typescript

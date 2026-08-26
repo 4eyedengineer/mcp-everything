@@ -66,9 +66,12 @@ describe('HostingController', () => {
         envVars: { GITHUB_TOKEN: 'abc123' },
       });
 
-      expect(hostingService.deployToCloud).toHaveBeenCalledWith('conv-1', 'user-1', {
-        GITHUB_TOKEN: 'abc123',
-      });
+      expect(hostingService.deployToCloud).toHaveBeenCalledWith(
+        'conv-1',
+        'user-1',
+        { GITHUB_TOKEN: 'abc123' },
+        undefined,
+      );
     });
 
     it('works with no envVars supplied', async () => {
@@ -81,7 +84,29 @@ describe('HostingController', () => {
 
       await controller.deployServer(user, 'conv-1', {});
 
-      expect(hostingService.deployToCloud).toHaveBeenCalledWith('conv-1', 'user-1', undefined);
+      expect(hostingService.deployToCloud).toHaveBeenCalledWith(
+        'conv-1',
+        'user-1',
+        undefined,
+        undefined,
+      );
+    });
+
+    it('passes dto.credentialRefs through to hostingService.deployToCloud', async () => {
+      hostingService.deployToCloud.mockResolvedValue({
+        success: true,
+        serverId: 'srv-1',
+        endpointUrl: 'https://srv-1.mcp.example.com',
+        status: 'running',
+      });
+
+      await controller.deployServer(user, 'conv-1', {
+        credentialRefs: { GITHUB_TOKEN: 'my-github-pat' },
+      });
+
+      expect(hostingService.deployToCloud).toHaveBeenCalledWith('conv-1', 'user-1', undefined, {
+        GITHUB_TOKEN: 'my-github-pat',
+      });
     });
   });
 
