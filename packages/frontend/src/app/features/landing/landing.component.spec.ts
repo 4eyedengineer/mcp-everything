@@ -109,14 +109,11 @@ describe('LandingComponent', () => {
       expect(text).toContain('description');
     });
 
-    it('promises the servers are tested and repaired before delivery', () => {
-      // The underlying mechanism (a Docker sandbox, JSON-RPC tool calls, five
-      // refinement iterations) is real - see mcp-testing.service.ts and
-      // MAX_REFINEMENT_ITERATIONS - but it is deliberately NOT named on the
-      // page any more. What must survive is the promise itself.
-      const lower = text.toLowerCase();
-      expect(lower).toContain('tested');
-      expect(lower).toMatch(/fixed|repair/);
+    it('promises the tools are run and tested before delivery', () => {
+      // The refine/repair mechanism is real but deliberately not described -
+      // the pitch sells the outcome ("they actually work"), not the process.
+      // What must survive is the trust promise itself.
+      expect(text.toLowerCase()).toContain('tested');
     });
   });
 
@@ -168,12 +165,16 @@ describe('LandingComponent', () => {
       expect(lower).not.toContain('scales to zero');
     });
 
-    it('keeps an explicit "not available yet" disclosure on the page', () => {
-      expect(text).toContain('Not available yet');
-      expect(text.toLowerCase()).toContain('nothing is for sale');
-      // The one-server cap is a real limit and has to be stated, now that
-      // hosting is sold on the page rather than denied.
-      expect(text).toContain('More than one hosted server');
+    it('keeps the pitch free of a build-status ledger', () => {
+      // Removed 2026-08-26: the "Straight talk / Not available yet" ledger
+      // read like a changelog and led the reader with limitations. The precise
+      // gated / not-for-sale disclosures now live where someone looks for them
+      // - the FAQ in index.html and /llms.txt - not in the landing pitch. This
+      // guard fails the build if the ledger (or its status-report voice) comes
+      // back, or if the page starts quoting a price.
+      expect(text).not.toContain('Not available yet');
+      expect(text.toLowerCase()).not.toContain('active development');
+      expect(text).not.toMatch(/\$\s?\d/);
     });
 
     /**
@@ -224,19 +225,23 @@ describe('LandingComponent', () => {
       expect(el.querySelector('.ideas-link')).toBeTruthy();
     });
 
-    it('does not offer GitHub repository push as an available destination', () => {
-      // tier-config.ts gives the free tier deploymentTypes: ['gist'] and
-      // deployment-router.service.ts throws TIER_RESTRICTION for 'repo'.
-      // Since no paid tier is purchasable, no real account can push to a repo,
-      // so the page must present it as gated rather than as a destination.
-      const worksToday =
-        (fixture.nativeElement as HTMLElement).querySelector('.ledger-col-ready')?.textContent ?? '';
+    it('does not offer GitHub repository push as a destination', () => {
+      // Free-tier deployment is Gist/download only; repo push is gated to an
+      // unpurchasable tier. The pitch simply never claims a repository push
+      // (the precise gating lives in the FAQ and /llms.txt). A repo as a
+      // generation *input* ("paste a repo") is fine - this guards the *act of
+      // pushing to* a repository.
+      expect(text.toLowerCase()).not.toMatch(/push[a-z]*\s+(to\s+)?(a\s+)?(your\s+)?(github\s+)?repo/);
+    });
 
-      // ("repo" alone is fine there - it's also a generation *input*, which is
-      // exactly why this checks for the *act of pushing* rather than the noun.)
-      expect(worksToday.toLowerCase()).not.toContain('push');
-      expect(worksToday).toContain('Gist');
-      expect(text.toLowerCase()).toContain('gated to a paid tier');
+    it('does not advertise usage quotas or caps on the pitch', () => {
+      // Metered limits (generations per month, the one-server cap) are enforced
+      // in-app and documented in the FAQ + /llms.txt. The marketing page sells
+      // the outcome, not the rate limits - so no "N generations a month" and no
+      // server-count cap on the pitch.
+      const lower = text.toLowerCase();
+      expect(lower).not.toMatch(/\d+\s+generation/);
+      expect(lower).not.toMatch(/generations?\s+(a|per)\s+month/);
     });
   });
 });

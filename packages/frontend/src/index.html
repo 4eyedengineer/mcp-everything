@@ -83,7 +83,7 @@
         "operatingSystem": "Web",
         "publisher": { "@id": "https://mcpeverything.com/#organization" },
         "isAccessibleForFree": true,
-        "description": "Generates Model Context Protocol (MCP) servers from a GitHub repository, a documentation site, a service name or a plain-English description. Each generated server is built and tested, and fixed if it fails, before the run is allowed to succeed.",
+        "description": "Generates Model Context Protocol (MCP) servers from a GitHub repository, a documentation site, a service name or a plain-English description. Each generated server is built and tested - and fixed if a tool call fails - before you receive it.",
         "featureList": [
           "Generate an MCP server from a GitHub repository URL",
           "Generate an MCP server from a documentation site URL",
@@ -131,7 +131,7 @@
             "name": "How do I know the generated server actually works?",
             "acceptedAnswer": {
               "@type": "Answer",
-              "text": "Because it was run, not just written. Every candidate server is started and its tools are actually called; if that fails, the code is repaired and tested again before the run gives up."
+              "text": "Because it's run, not just written. Every server's tools are actually called before you receive it, and the code is fixed and retested if a call fails."
             }
           },
           {
@@ -174,24 +174,24 @@
       <main>
         <h1>Your assistant can describe your API. Now let it use it.</h1>
         <p class="boot-lede">
-          Name a service, paste a repository, point at a docs site, or just say what you want.
-          MCP Everything gives your AI assistant the tools to call it: a working Model Context
-          Protocol server, hosted here or run wherever you like.
+          Point it at your database, your repositories, Stripe, Slack - anything with an API - and
+          your AI assistant stops describing what it would do and starts doing it. Name a service,
+          paste a repository, point at some docs, or just say what you need, and you get real tools
+          your assistant can call.
         </p>
 
-        <h2>What you get</h2>
-        <ul>
-          <li>A set of named tools your assistant can call, built and tested before you get it, and fixed if something fails</li>
-          <li>One server hosted here free, or take the code and run it anywhere</li>
-          <li>Something that drops straight into Claude Desktop, or runs behind HTTP wherever you put it</li>
-          <li>Source, tests and documentation, published to a public Gist on your own GitHub account (connect it first) or downloaded</li>
-          <li>Sign-in with GitHub, Google, or an email address and password</li>
-          <li>Five generations a month, free. Nothing is for sale and no card is collected.</li>
-        </ul>
-
-        <h2>For AI agents</h2>
+        <h2>If it has an API, your assistant can use it</h2>
         <p>
-          MCP Everything is itself an MCP server, at
+          The tools are run and tested before they reach you, hosted here for you or yours to take
+          as code and run anywhere. They work in Claude Desktop, or anything that speaks MCP.
+          Free to start, no credit card.
+        </p>
+
+        <h2>One connection to all of it</h2>
+        <p>
+          Point an agent at one endpoint and it can build new tools on demand, then find and call
+          every tool you have made here - no browser, no glue code between them. MCP Everything is
+          itself an MCP server, at
           <code>POST https://mcpeverything.com/mcp</code>. MCP Streamable HTTP, stateless,
           authenticated with an API key prefixed <code>mcpe_</code> sent either as an
           <code>X-API-Key</code> header or as <code>Authorization: Bearer</code>. Keys are created
@@ -203,14 +203,6 @@
           here, so one connection reaches all of them. A machine-readable summary of this site is published at
           <a href="/llms.txt">/llms.txt</a>.
         </p>
-
-        <h2>Not available yet</h2>
-        <ul>
-          <li>Paid plans, billing and subscriptions. Nothing is for sale.</li>
-          <li>More than one hosted server. Free accounts get one, and there is no paid tier to buy.</li>
-          <li>Pushing straight to a GitHub repository. Gated to a paid tier, and there is no paid tier to buy. Free accounts publish to a public Gist.</li>
-          <li>OpenAPI or GraphQL specs. We don&rsquo;t read them; point at the repository or the docs instead.</li>
-        </ul>
 
         <p class="boot-actions">
           <a href="/auth/register">Create a free account</a> &middot;
